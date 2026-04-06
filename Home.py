@@ -6,6 +6,7 @@ import streamlit as st
 
 from src.components.layout import inject_app_style, render_page_header, render_section_title
 from src.components.sidebar import render_primary_nav, render_sidebar
+from src.components.skeletons import render_card_skeleton, render_table_skeleton
 from src.components.tables import is_mobile_client, render_table
 from src.services.auth_service import (
     ensure_auth_cookie_persistence,
@@ -15,6 +16,7 @@ from src.services.auth_service import (
     login_user,
     restore_login_from_cookie,
 )
+from src.services.cache_service import scoped_cache_data
 
 try:
     from src.components.layout import (
@@ -123,7 +125,7 @@ ensure_auth_cookie_persistence()
 inject_app_style()
 
 
-@st.cache_data(ttl=120)
+@scoped_cache_data(ttl=120, scopes=("varieties", "reviews", "scrape"))
 def _load_dashboard_metrics() -> dict:
     client = get_user_client()
     if client is None:
@@ -173,7 +175,7 @@ def _load_dashboard_metrics() -> dict:
     }
 
 
-@st.cache_data(ttl=120)
+@scoped_cache_data(ttl=120, scopes="reviews")
 def _load_latest_reviews(limit: int = 4) -> list[dict]:
     client = get_user_client()
     if client is None:
@@ -190,7 +192,7 @@ def _load_latest_reviews(limit: int = 4) -> list[dict]:
     )
 
 
-@st.cache_data(ttl=120)
+@scoped_cache_data(ttl=120, scopes="scrape")
 def _load_recent_scrape_runs(limit: int = 4) -> list[dict]:
     client = get_user_client()
     if client is None:
@@ -287,6 +289,16 @@ def _build_today_tasks(metrics: dict, *, status_tone: str) -> list[tuple[str, st
     return tasks[:3]
 
 
+def _render_dashboard_loading_skeleton(*, is_mobile: bool, include_feed: bool) -> None:
+    with st.container(border=True):
+        st.caption("ダッシュボードを読み込んでいます…")
+        render_card_skeleton(count=3 if is_mobile else 5, is_mobile=is_mobile)
+    if include_feed:
+        with st.container(border=True):
+            st.caption("最新データを取得しています…")
+            render_table_skeleton(rows=4, columns=4, is_mobile=is_mobile)
+
+
 def _render_login() -> None:
     persistence = get_auth_persistence_status()
     mobile_client = is_mobile_client()
@@ -349,14 +361,6 @@ def _render_dashboard() -> None:
     render_sidebar(active_page="dashboard")
     render_primary_nav(active_page="dashboard")
     mobile_client = is_mobile_client()
-    metrics = _load_dashboard_metrics()
-    pending_reviews = max(metrics["active_varieties"] - metrics["active_reviews"], 0)
-    status_tone, status_icon = _status_badge_theme(metrics["latest_status"])
-    average_hint = (
-        f"直近{metrics['avg_score_sample_size']}件"
-        if metrics["avg_score_sample_size"] > 0
-        else "レビュー未登録"
-    )
 
     render_page_header(
         "ダッシュボード",
@@ -365,6 +369,22 @@ def _render_dashboard() -> None:
             if mobile_client
             else "今日の状況 → 今日やること → 最新ログの順で、必要な操作だけ進めます。"
         ),
+    )
+
+    metrics_loading_placeholder = st.empty()
+    with metrics_loading_placeholder.container():
+        _render_dashboard_loading_skeleton(is_mobile=mobile_client, include_feed=False)
+    try:
+        metrics = _load_dashboard_metrics()
+    finally:
+        metrics_loading_placeholder.empty()
+
+    pending_reviews = max(metrics["active_varieties"] - metrics["active_reviews"], 0)
+    status_tone, status_icon = _status_badge_theme(metrics["latest_status"])
+    average_hint = (
+        f"直近{metrics['avg_score_sample_size']}件"
+        if metrics["avg_score_sample_size"] > 0
+        else "レビュー未登録"
     )
 
     today_tasks = _build_today_tasks(metrics, status_tone=status_tone)
@@ -414,7 +434,13 @@ def _render_dashboard() -> None:
     )
 
     if feed_view == "最新レビュー":
-        reviews = _format_latest_reviews(_load_latest_reviews(limit=4))
+        feed_loading_placeholder = st.empty()
+        with feed_loading_placeholder.container():
+            render_table_skeleton(rows=4, columns=3, is_mobile=mobile_client)
+        try:
+            reviews = _format_latest_reviews(_load_latest_reviews(limit=4))
+        finally:
+            feed_loading_placeholder.empty()
         if reviews:
             render_table(
                 reviews,
@@ -432,7 +458,13 @@ def _render_dashboard() -> None:
             )
     else:
         render_status_badge(f"ステータス: {metrics['latest_status']}", tone=status_tone, icon=status_icon)
-        recent_runs = _format_recent_scrape_runs(_load_recent_scrape_runs(limit=4))
+        feed_loading_placeholder = st.empty()
+        with feed_loading_placeholder.container():
+            render_table_skeleton(rows=4, columns=5, is_mobile=mobile_client)
+        try:
+            recent_runs = _format_recent_scrape_runs(_load_recent_scrape_runs(limit=4))
+        finally:
+            feed_loading_placeholder.empty()
         if recent_runs:
             render_table(
                 recent_runs,

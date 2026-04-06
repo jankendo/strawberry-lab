@@ -23,6 +23,7 @@ from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.tables import is_mobile_client, render_table
 from src.config import get_config
 from src.services.auth_service import get_auth_persistence_status, require_admin_session
+from src.services.cache_service import get_cache_runtime_status
 from src.services.export_service import export_table_csv
 from src.services.scrape_service import (
     clear_scrape_cache,
@@ -403,10 +404,13 @@ elif active_section == "診断情報":
     render_section_title("診断情報", "現在の運用設定と接続前提条件を確認します。")
     render_surface("定期的に接続キー状態と最終成功時刻を確認し、運用停止を早期に検知してください。", tone="soft")
     auth_persistence = get_auth_persistence_status()
+    cache_runtime = get_cache_runtime_status()
     if auth_persistence["code"] in {"ready_ephemeral_secret", "cookie_manager_not_ready_ephemeral_secret", "missing_secret"}:
         st.warning(auth_persistence["message"])
     elif not auth_persistence["available"]:
         st.info(auth_persistence["message"])
+    if cache_runtime["mode"] == "local" and cache_runtime["sticky_sessions_expected"]:
+        st.info(str(cache_runtime["summary"]))
 
     with st.container(border=True):
         render_section_title("主要ステータス")
@@ -430,6 +434,16 @@ elif active_section == "診断情報":
             tone="success" if latest_success else "neutral",
             icon="🕒",
         )
+        render_status_badge(
+            "キャッシュ同期: Redis" if cache_runtime["mode"] == "redis" else "キャッシュ同期: ローカルメモリ",
+            tone="success" if cache_runtime["mode"] == "redis" else "warning",
+            icon="🧠",
+        )
+        render_status_badge(
+            "セッション固定を想定" if cache_runtime["sticky_sessions_expected"] else "セッション固定なしでも運用可",
+            tone="warning" if cache_runtime["sticky_sessions_expected"] else "neutral",
+            icon="🧭",
+        )
 
     if st.toggle("詳細スナップショット(JSON)を読み込む", value=False, key="settings_show_diagnostic_snapshot"):
         diagnostic_snapshot = {
@@ -439,6 +453,10 @@ elif active_section == "診断情報":
             "has_supabase_anon_key": bool(cfg.supabase_anon_key),
             "auth_persistence_available": auth_persistence["available"],
             "auth_persistence_code": auth_persistence["code"],
+            "cache_mode": cache_runtime["mode"],
+            "cache_redis_configured": cache_runtime["redis_configured"],
+            "cache_redis_active": cache_runtime["redis_active"],
+            "sticky_sessions_expected": cache_runtime["sticky_sessions_expected"],
             "scrape_mode": "local_cli_only",
             "last_successful_variety_scrape": latest_success,
             "checked_at": datetime.utcnow().isoformat(),

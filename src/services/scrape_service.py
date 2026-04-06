@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import streamlit as st
-
 from src.services.auth_service import get_user_client
+from src.services.cache_service import bump_cache_scopes, scoped_cache_data
 
 _RUN_SELECT_FIELDS = "id,status,started_at,finished_at,upserted_count,failed_count,processed_count,listed_count"
 
 
-@st.cache_data(ttl=300)
+@scoped_cache_data(ttl=300, scopes="scrape")
 def get_recent_variety_scrape_runs(limit: int = 20) -> list[dict]:
     """Fetch recent MAFF variety scrape run history."""
     client = get_user_client()
@@ -24,7 +23,7 @@ def get_recent_variety_scrape_runs(limit: int = 20) -> list[dict]:
     )
 
 
-@st.cache_data(ttl=300)
+@scoped_cache_data(ttl=300, scopes="scrape")
 def get_variety_scrape_logs(run_id: str, limit: int = 100) -> list[dict]:
     """Fetch latest logs for a specific MAFF variety scrape run."""
     client = get_user_client()
@@ -43,3 +42,4 @@ def clear_scrape_cache() -> None:
     """Clear cached scrape run and log queries."""
     get_recent_variety_scrape_runs.clear()
     get_variety_scrape_logs.clear()
+    bump_cache_scopes("scrape")

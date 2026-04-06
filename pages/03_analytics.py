@@ -24,6 +24,7 @@ from src.components.layout import (
     render_surface,
 )
 from src.components.sidebar import render_primary_nav, render_sidebar
+from src.components.skeletons import render_card_skeleton, render_chart_skeleton, render_table_skeleton
 from src.components.tables import is_mobile_client
 from src.constants.prefectures import PREFECTURES
 from src.services.analytics_service import (
@@ -176,11 +177,15 @@ def _build_analysis_payload(applied_filters: dict[str, Any]) -> dict[str, Any]:
         "timeseries_rows": monthly_timeseries(df).to_dict("records"),
         "radar_rows": radar_data(df, int(applied_filters["min_count"]), selected_varieties or None).to_dict("records"),
         "scatter_rows": scatter_data(df),
-        "prefecture_counts": prefecture_counts(
-            prefecture=applied_filters["prefecture"] or None,
-            tags=applied_filters["tags"] or None,
-        ),
     }
+
+
+def _render_analysis_loading_state(*, is_mobile: bool, message: str) -> None:
+    with st.container(border=True):
+        render_section_title("分析データを準備中", message)
+        render_card_skeleton(count=3 if is_mobile else 4, is_mobile=is_mobile)
+        render_chart_skeleton(height=220 if is_mobile else 280, is_mobile=is_mobile)
+        render_table_skeleton(rows=3, columns=4, is_mobile=is_mobile)
 
 
 st.set_page_config(page_title="分析", layout="wide")
@@ -200,6 +205,7 @@ render_action_bar(
     actions=["フィルタ設定", "分析を実行", "結論サマリー", "チャート詳細"],
 )
 
+mobile_client = is_mobile_client()
 varieties = list_active_varieties()
 variety_ids = [str(variety["id"]) for variety in varieties]
 variety_name_map = {str(variety["id"]): str(variety.get("name") or variety["id"]) for variety in varieties}
@@ -270,10 +276,15 @@ with st.container(border=True):
             st.caption("フィルタ変更後は「分析を実行」を押して反映してください。")
 
 analysis_payload = st.session_state.get(_ANALYTICS_PAYLOAD_KEY)
+analysis_loading_placeholder = st.empty()
 if run_clicked and not invalid_date_range:
     st.session_state[_ANALYTICS_APPLIED_FILTERS_KEY] = current_filters
-    with st.spinner("分析データを集計しています..."):
+    with analysis_loading_placeholder.container():
+        _render_analysis_loading_state(is_mobile=mobile_client, message="フィルタ条件で集計を実行しています。")
+    try:
         analysis_payload = _build_analysis_payload(current_filters)
+    finally:
+        analysis_loading_placeholder.empty()
     st.session_state[_ANALYTICS_PAYLOAD_KEY] = analysis_payload
 
 applied_filters = st.session_state.get(_ANALYTICS_APPLIED_FILTERS_KEY)
@@ -286,8 +297,12 @@ if not applied_filters:
     st.stop()
 
 if not isinstance(analysis_payload, dict) or analysis_payload.get("filters") != applied_filters:
-    with st.spinner("前回実行済みデータを読み込んでいます..."):
+    with analysis_loading_placeholder.container():
+        _render_analysis_loading_state(is_mobile=mobile_client, message="保存済み条件の分析結果を復元しています。")
+    try:
         analysis_payload = _build_analysis_payload(applied_filters)
+    finally:
+        analysis_loading_placeholder.empty()
     st.session_state[_ANALYTICS_PAYLOAD_KEY] = analysis_payload
 
 if applied_filters != current_filters:
@@ -346,7 +361,7 @@ with st.container(border=True):
         _CHART_SECTIONS,
         key="analytics_active_chart",
     )
-    if is_mobile_client():
+    if mobile_client:
         st.caption("iPhoneでは初期表示を1チャートに限定し、必要なときだけ切り替えて描画します。")
     else:
         st.caption("表示中のチャートのみ描画して、再実行時の待ち時間を抑えます。")
@@ -509,10 +524,14 @@ elif active_chart == "E. 都道府県マップ":
     with st.container(border=True):
         render_section_title("E. 都道府県マップ", "都道府県・タグ条件のみを適用した分布です。")
         render_surface("※ 地図は都道府県・タグ条件のみ適用し、レビュー日付範囲は適用しません。", tone="soft")
+        map_counts = prefecture_counts(
+            prefecture=applied_filters["prefecture"] or None,
+            tags=applied_filters["tags"] or None,
+        )
         map_df = pd.DataFrame(
             [
                 {"prefecture": prefecture_name, "count": count}
-                for prefecture_name, count in (analysis_payload.get("prefecture_counts") or {}).items()
+                for prefecture_name, count in map_counts.items()
             ]
         )
         if map_df.empty or len(map_df) < 2:

@@ -7,9 +7,8 @@ import mimetypes
 from pathlib import Path
 from uuid import uuid4
 
-import streamlit as st
-
 from src.services.auth_service import get_user_client
+from src.services.cache_service import bump_cache_scopes, scoped_cache_data
 from src.utils.image_utils import process_image, validate_image_file
 
 
@@ -98,9 +97,10 @@ def _extract_signed_url(payload: dict | None) -> str | None:
 def _clear_image_cache() -> None:
     list_images_with_signed_urls.clear()
     list_primary_variety_images_with_signed_urls.clear()
+    bump_cache_scopes("storage")
 
 
-@st.cache_data(ttl=300)
+@scoped_cache_data(ttl=300, scopes="storage")
 def list_images_with_signed_urls(table_name: str, relation_column: str, relation_id: str) -> list[dict]:
     """List image rows with signed URLs."""
     client = get_user_client()
@@ -114,7 +114,7 @@ def list_images_with_signed_urls(table_name: str, relation_column: str, relation
     return enriched
 
 
-@st.cache_data(ttl=300)
+@scoped_cache_data(ttl=300, scopes="storage")
 def list_primary_variety_images_with_signed_urls(variety_ids: Sequence[str]) -> dict[str, dict]:
     """Return one representative image with signed URL for each variety."""
     ids = [str(variety_id) for variety_id in dict.fromkeys(variety_ids) if variety_id]

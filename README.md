@@ -13,8 +13,10 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
    - `pip install -r requirements-scraper.txt`
    - `pip install -r requirements-dev.txt`
 2. Copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml` and set real values.
-   - `APP_COOKIE_SECRET` を設定すると、ログイン状態を30日安定して保持できます（未設定時は一時ランダム秘密鍵へフォールバックし、再起動/再デプロイで保持がリセットされる場合があります）。
-   - `APP_HIDE_HOST_CHROME` を `true` にすると、Streamlitホスト由来の上部ツールUIを非表示にします（既定値は `true`）。
+    - `APP_COOKIE_SECRET` を設定すると、ログイン状態を30日安定して保持できます（未設定時は一時ランダム秘密鍵へフォールバックし、再起動/再デプロイで保持がリセットされる場合があります）。
+    - `APP_HIDE_HOST_CHROME` を `true` にすると、Streamlitホスト由来の上部ツールUIを非表示にします（既定値は `true`）。
+   - マルチインスタンス運用でキャッシュ無効化を共有したい場合は `CACHE_REDIS_URL`（任意で `CACHE_NAMESPACE`）を設定してください。
+   - Redis未設定時はプロセスローカル無効化で動作します。必要に応じて `APP_EXPECT_STICKY_SESSIONS=true` の前提で同一ユーザーを同一インスタンスへ固定してください。
 3. Apply SQL migrations in Supabase SQL Editor in this order:
    1. `database/000_extensions.sql`
    2. `database/001_functions.sql`
@@ -44,12 +46,23 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 - **Sidebar hierarchy refresh**: active page is highlighted, and account actions (設定/ログアウト) are grouped in the user area.
 - **Information architecture updates**: Home / 品種管理 / 試食評価 / 分析 / 交配図 / 研究メモ / 設定 were reorganized for stronger action priority, clearer empty states, and improved table readability.
 
+## v9 updates (native shell / PWA)
+- **Progressive native shell enhancement**: `inject_app_style()` now injects head metadata (manifest/theme/iOS web-app tags), touch icons, and guarded iOS scroll behavior.
+- **Service worker support**: a conservative static-shell cache worker (`static/app-sw.js`) now uses versioned cache rotation, same-origin matching for `/app/static/` + `/static/`, and lightweight `ichigodb:network-status` messages for optional offline indicators.
+- **Static asset serving**: `.streamlit/config.toml` enables `enableStaticServing = true` for manifest/icon/service-worker delivery.
+
 ## Login persistence (30 days)
 - This app supports login skip on revisit by storing encrypted auth session cookies.
 - For stable persistence across restarts, set:
   - `APP_COOKIE_SECRET` in `.streamlit/secrets.toml` (long random string)
 - If `APP_COOKIE_SECRET` is missing, the app falls back to a process-local temporary random secret and shows a UI warning/diagnostic. Persistence can reset on app restart/redeploy.
 - Logout always clears the persisted cookie.
+
+## Cache invalidation / scale behavior
+- Data caches are partitioned by authenticated user scope and revision tokens.
+- Write operations bump revision tokens and clear local cache entries so cross-page stale UX is reduced immediately.
+- `CACHE_REDIS_URL` を設定すると、複数インスタンス間で無効化トークンを共有できます（未設定時はローカル無効化）。
+- `APP_EXPECT_STICKY_SESSIONS`（既定 `true`）で、Redis未使用時のセッション固定前提を診断表示に反映できます。
 
 ## Run MAFF variety scraper locally (fast mode)
 PowerShell:

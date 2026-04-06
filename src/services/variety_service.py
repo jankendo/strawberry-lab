@@ -7,9 +7,9 @@ from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import networkx as nx
-import streamlit as st
 
 from src.services.auth_service import get_user_client
+from src.services.cache_service import bump_cache_scopes, scoped_cache_data
 from src.services.export_service import clear_export_cache
 from src.services.pedigree_service import clear_pedigree_cache
 from src.utils.validation import validate_variety_payload
@@ -39,7 +39,7 @@ def _apply_variety_filters(
     return query
 
 
-@st.cache_data(ttl=300)
+@scoped_cache_data(ttl=300, scopes="varieties")
 def list_varieties(
     *,
     include_deleted: bool = False,
@@ -77,7 +77,7 @@ def list_varieties(
     return result.data or [], total
 
 
-@st.cache_data(ttl=1800)
+@scoped_cache_data(ttl=900, scopes="varieties")
 def list_varieties_for_list_tab(
     *,
     keyword: str | None = None,
@@ -110,7 +110,7 @@ def list_varieties_for_list_tab(
     return rows, len(rows)
 
 
-@st.cache_data(ttl=120)
+@scoped_cache_data(ttl=120, scopes="varieties")
 def get_variety_detail(variety_id: str) -> dict | None:
     """Fetch single variety detail."""
     client = get_user_client()
@@ -118,7 +118,7 @@ def get_variety_detail(variety_id: str) -> dict | None:
     return result.data
 
 
-@st.cache_data(ttl=300)
+@scoped_cache_data(ttl=300, scopes="varieties")
 def list_active_varieties() -> list[dict]:
     """List active varieties for selectors."""
     client = get_user_client()
@@ -126,7 +126,7 @@ def list_active_varieties() -> list[dict]:
     return result.data or []
 
 
-@st.cache_data(ttl=180)
+@scoped_cache_data(ttl=180, scopes=("varieties", "reviews"))
 def get_review_counts_for_varieties(variety_ids: Sequence[str]) -> dict[str, int]:
     """Return review counts keyed by variety ID for the given IDs."""
     ids = [v for v in dict.fromkeys(variety_ids) if v]
@@ -150,7 +150,7 @@ def get_review_counts_for_varieties(variety_ids: Sequence[str]) -> dict[str, int
     return counts
 
 
-@st.cache_data(ttl=180)
+@scoped_cache_data(ttl=180, scopes=("varieties", "reviews"))
 def get_latest_review_summary_for_varieties(variety_ids: Sequence[str]) -> dict[str, dict]:
     """Return latest review metrics keyed by variety ID."""
     ids = [str(variety_id) for variety_id in dict.fromkeys(variety_ids) if variety_id]
@@ -177,7 +177,7 @@ def get_latest_review_summary_for_varieties(variety_ids: Sequence[str]) -> dict[
     return latest_by_variety
 
 
-@st.cache_data(ttl=180)
+@scoped_cache_data(ttl=180, scopes=("varieties", "reviews"))
 def get_pokedex_progress() -> dict[str, int]:
     """Return encyclopedia progress counts based on review registration."""
     client = get_user_client()
@@ -211,6 +211,7 @@ def _clear_variety_related_caches() -> None:
     get_latest_review_summary_for_varieties.clear()
     clear_pedigree_cache()
     clear_export_cache()
+    bump_cache_scopes("varieties", "pedigree", "exports", "analytics")
 
 
 def create_variety(payload: dict, parent_links: list[dict]) -> str:

@@ -6,6 +6,7 @@ from datetime import date
 
 import streamlit as st
 
+from src.components.draft_buffer import clear_draft_buffer, render_draft_buffer_bridge
 from src.components.layout import (
     inject_app_style,
     render_action_bar,
@@ -30,6 +31,21 @@ from src.utils.validation import normalize_review_tasted_date
 _PENDING_DUPLICATE_PAYLOAD_KEY = "reviews_pending_duplicate_payload"
 _PENDING_DUPLICATE_FILES_KEY = "reviews_pending_duplicate_files"
 _SCORE_GUIDE_TEXT = "1=弱い / 3=普通 / 5=強い"
+_REVIEW_DRAFT_KEY = "reviews-entry-form"
+_REVIEW_DRAFT_CLEAR_KEY = "reviews_clear_draft_on_render"
+_REVIEW_DRAFT_DISCARD_NOTICE_KEY = "reviews_draft_discard_notice"
+_REVIEW_DRAFT_FIELDS = [
+    {"name": "variety_id", "label": "品種 *", "kind": "select"},
+    {"name": "tasted_date", "label": "試食日 *", "kind": "date"},
+    {"name": "sweetness", "label": "甘味 *", "kind": "slider"},
+    {"name": "sourness", "label": "酸味 *", "kind": "slider"},
+    {"name": "aroma", "label": "香り *", "kind": "slider"},
+    {"name": "texture", "label": "食感 *", "kind": "slider"},
+    {"name": "appearance", "label": "見た目 *", "kind": "slider"},
+    {"name": "purchase_place", "label": "購入場所", "kind": "text"},
+    {"name": "price_jpy", "label": "価格（円）", "kind": "number"},
+    {"name": "comment", "label": "コメント", "kind": "textarea"},
+]
 _SCORE_LEVEL_LABELS = {
     1: "弱い",
     2: "やや弱い",
@@ -66,6 +82,47 @@ def _normalize_pending_payload(payload: dict) -> dict:
 def _score_level_label(value: int) -> str:
     return _SCORE_LEVEL_LABELS.get(int(value), "普通")
 
+
+def _inject_mobile_bottom_sheet_style() -> None:
+    st.markdown(
+        """
+        <style>
+        @media (max-width: 820px) {
+            .reviews-mobile-sheet-anchor + div[data-testid="stHorizontalBlock"] {
+                z-index: 64;
+            }
+            .reviews-mobile-sheet-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stPopover"] > button {
+                min-height: 56px !important;
+                border-radius: 12px !important;
+                width: 100%;
+                border: 1px solid var(--sl-border-strong) !important;
+                background: #ffffff !important;
+                font-weight: 700 !important;
+                margin-bottom: 0 !important;
+            }
+            [data-testid="stPopoverContent"],
+            div[data-baseweb="popover"] {
+                position: fixed !important;
+                left: 0.55rem !important;
+                right: 0.55rem !important;
+                top: auto !important;
+                bottom: calc(var(--sl-safe-bottom) + 4.8rem) !important;
+                width: auto !important;
+                max-height: min(72vh, 660px) !important;
+                border-radius: 18px 18px 14px 14px !important;
+                border: 1px solid var(--sl-border) !important;
+                box-shadow: 0 -10px 28px rgba(17, 24, 39, 0.22) !important;
+                overflow-y: auto !important;
+                transform: none !important;
+                z-index: 70 !important;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 st.set_page_config(page_title="試食評価", layout="wide")
 require_admin_session()
 inject_app_style()
@@ -84,15 +141,23 @@ render_action_bar(
 )
 active_varieties = list_active_varieties()
 mobile_client = is_mobile_client()
+if mobile_client:
+    _inject_mobile_bottom_sheet_style()
 
 tab_edit, tab_history, tab_deleted = st.tabs(["レビュー登録", "履歴管理", "削除済み復元"])
 
 with tab_edit:
+    clear_review_draft_before_restore = bool(st.session_state.pop(_REVIEW_DRAFT_CLEAR_KEY, False))
     with st.container(border=True):
         render_section_title("評価登録", "必須項目を入力すると総合スコアを自動算出して保存できます。")
+        st.caption("入力内容はブラウザに自動保存されます。")
+        if st.session_state.pop(_REVIEW_DRAFT_DISCARD_NOTICE_KEY, False):
+            st.caption("🗑️ 下書きを破棄しました。")
         varieties = active_varieties
         variety_names = _variety_name_map(varieties)
         if not varieties:
+            if clear_review_draft_before_restore:
+                clear_draft_buffer(_REVIEW_DRAFT_KEY)
             render_empty_state(
                 f"{EMPTY_STATE_MESSAGE} 先に「品種管理」で品種を登録してください。",
                 title="品種が未登録です",
@@ -104,6 +169,10 @@ with tab_edit:
             if st.session_state.get("review_variety_id") not in variety_options:
                 st.session_state["review_variety_id"] = variety_options[0]
             with st.form("review_entry_form", clear_on_submit=False):
+                purchase_place = str(st.session_state.get("review_purchase_place") or "")
+                price_jpy = int(st.session_state.get("review_price_jpy") or 0)
+                comment = str(st.session_state.get("review_comment") or "")
+                uploaded_files = st.session_state.get("review_uploaded_files")
                 st.caption("※ * は必須項目です。任意項目は空欄でも保存できます。")
                 st.markdown("##### 1) 試食情報")
                 variety_id = st.selectbox(
@@ -119,16 +188,7 @@ with tab_edit:
                     key="review_tasted_date",
                 )
                 if mobile_client:
-                    with st.popover("任意の購入情報を入力"):
-                        purchase_place = st.text_input("購入場所", key="review_purchase_place")
-                        price_jpy = st.number_input(
-                            "価格（円）",
-                            min_value=0,
-                            max_value=1_000_000,
-                            value=0,
-                            step=10,
-                            key="review_price_jpy",
-                        )
+                    st.caption("購入場所・価格は下部の「任意入力シート」から追加できます。")
                 else:
                     purchase_place = st.text_input("購入場所", key="review_purchase_place")
                     price_jpy = st.number_input(
@@ -160,21 +220,7 @@ with tab_edit:
 
                 st.markdown("##### 3) コメント・画像（任意）")
                 if mobile_client:
-                    with st.expander("任意入力を開く", expanded=False):
-                        comment = st.text_area("コメント", height=140, key="review_comment")
-                        uploaded_files = st.file_uploader(
-                            "画像アップロード（最大3枚）",
-                            type=["jpg", "jpeg", "png", "webp"],
-                            accept_multiple_files=True,
-                            key="review_uploaded_files",
-                        )
-                        if uploaded_files:
-                            preview_targets = uploaded_files[:3]
-                            st.image(
-                                [file.getvalue() for file in preview_targets],
-                                caption=[file.name for file in preview_targets],
-                                use_container_width=True,
-                            )
+                    render_status_badge("任意項目は下部の入力シートからまとめて編集できます", tone="info")
                 else:
                     comment = st.text_area("コメント", height=140, key="review_comment")
                     uploaded_files = st.file_uploader(
@@ -190,7 +236,7 @@ with tab_edit:
                             caption=[file.name for file in preview_targets],
                             use_container_width=True,
                         )
-                current_upload_count = len(uploaded_files or [])
+                current_upload_count = len(st.session_state.get("review_uploaded_files") or uploaded_files or [])
 
                 selected_name = variety_names.get(str(variety_id), str(variety_id))
                 render_surface(
@@ -204,8 +250,43 @@ with tab_edit:
                 )
                 render_status_badge("任意項目（購入場所・価格・コメント・画像）は後から追記可能", tone="info")
                 st.page_link("pages/01_varieties.py", label="🍓 品種情報を確認", use_container_width=True)
-                render_sticky_primary_action_anchor("reviews-save")
-                submit = st.form_submit_button("この内容で保存", use_container_width=True, type="primary")
+                if mobile_client:
+                    st.markdown(
+                        '<div class="sl-bottom-nav-anchor reviews-mobile-sheet-anchor" aria-hidden="true"></div>',
+                        unsafe_allow_html=True,
+                    )
+                    sheet_col, submit_col = st.columns([1.35, 1], gap="small")
+                    with sheet_col:
+                        with st.popover("📝 任意入力シート"):
+                            purchase_place = st.text_input("購入場所", key="review_purchase_place")
+                            price_jpy = st.number_input(
+                                "価格（円）",
+                                min_value=0,
+                                max_value=1_000_000,
+                                value=0,
+                                step=10,
+                                key="review_price_jpy",
+                            )
+                            comment = st.text_area("コメント", height=140, key="review_comment")
+                            uploaded_files = st.file_uploader(
+                                "画像アップロード（最大3枚）",
+                                type=["jpg", "jpeg", "png", "webp"],
+                                accept_multiple_files=True,
+                                key="review_uploaded_files",
+                            )
+                            if uploaded_files:
+                                preview_targets = uploaded_files[:3]
+                                st.image(
+                                    [file.getvalue() for file in preview_targets],
+                                    caption=[file.name for file in preview_targets],
+                                    use_container_width=True,
+                                )
+                            st.caption("保存する場合は右の「この内容で保存」をタップしてください。")
+                    with submit_col:
+                        submit = st.form_submit_button("この内容で保存", use_container_width=True, type="primary")
+                else:
+                    render_sticky_primary_action_anchor("reviews-save")
+                    submit = st.form_submit_button("この内容で保存", use_container_width=True, type="primary")
 
             if submit:
                 payload = {
@@ -226,6 +307,7 @@ with tab_edit:
                     review_id, _ = create_or_update_review(payload)
                     _upload_review_images(review_id, files_to_upload)
                     _clear_pending_duplicate()
+                    st.session_state[_REVIEW_DRAFT_CLEAR_KEY] = True
                     st.success("保存しました。")
                     st.rerun()
                 except ValueError as exc:
@@ -238,6 +320,13 @@ with tab_edit:
                 except Exception as exc:
                     _clear_pending_duplicate()
                     st.error(str(exc))
+
+            render_draft_buffer_bridge(
+                _REVIEW_DRAFT_KEY,
+                fields=_REVIEW_DRAFT_FIELDS,
+                notice_message="保存前のレビュー下書きを復元しました。",
+                clear_before_restore=clear_review_draft_before_restore,
+            )
 
             pending_payload = st.session_state.get(_PENDING_DUPLICATE_PAYLOAD_KEY)
             if pending_payload:
@@ -275,6 +364,7 @@ with tab_edit:
                             st.session_state.get(_PENDING_DUPLICATE_FILES_KEY, []),
                         )
                         _clear_pending_duplicate()
+                        st.session_state[_REVIEW_DRAFT_CLEAR_KEY] = True
                         st.success("既存記録を更新しました。")
                         st.rerun()
                     except Exception as exc:
@@ -288,6 +378,22 @@ with tab_edit:
                     _clear_pending_duplicate()
                     st.info("上書きをキャンセルしました。")
                     st.rerun()
+
+            discard_col, discard_hint_col = st.columns([1, 2], gap="small")
+            with discard_col:
+                discard_draft = st.button(
+                    "下書きを破棄",
+                    key="reviews_discard_draft",
+                    use_container_width=True,
+                    type="secondary",
+                )
+            with discard_hint_col:
+                st.caption("ブラウザに保存された入力中の下書きを削除します。")
+            if discard_draft:
+                _clear_pending_duplicate()
+                st.session_state[_REVIEW_DRAFT_CLEAR_KEY] = True
+                st.session_state[_REVIEW_DRAFT_DISCARD_NOTICE_KEY] = True
+                st.rerun()
 
 @st.fragment
 def _render_reviews_history_fragment() -> None:

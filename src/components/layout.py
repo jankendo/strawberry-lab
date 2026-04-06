@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from html import unescape
+import json
 import os
 import re
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 _BADGE_TONE_ALIASES = {
     "default": "neutral",
@@ -50,6 +52,11 @@ _HTML_STRONG_CLOSE_RE = re.compile(r"(?i)</(?:strong|b)>")
 _HTML_TAG_RE = re.compile(r"(?is)<[^>]+>")
 _NON_WORD_RE = re.compile(r"[^A-Za-z0-9_]+")
 _PLACEHOLDER_VALUES = {"unknown", "none", "null", "-"}
+_NATIVE_SHELL_CONFIG = {
+    "app_title": "いちごDB",
+    "theme_color": "#E8334A",
+    "status_bar_style": "default",
+}
 
 
 def _as_bool(value: object | None, default: bool = False) -> bool:
@@ -76,6 +83,324 @@ def _should_hide_host_chrome() -> bool:
     if env_value is not None:
         return _as_bool(env_value, default=True)
     return True
+
+
+def _inject_native_shell_bootstrap() -> None:
+    config_json = json.dumps(_NATIVE_SHELL_CONFIG, ensure_ascii=False)
+    bootstrap_script = """
+    <script>
+    (function () {
+      let parentWindow = null;
+      let doc = null;
+      try {
+        parentWindow = window.parent;
+        doc = parentWindow && parentWindow.document ? parentWindow.document : null;
+      } catch (error) {
+        console.warn("[native-shell] Unable to access parent document:", error);
+        return;
+      }
+      if (!parentWindow || !doc || !doc.head) {
+        return;
+      }
+      const config = __CONFIG_JSON__;
+      const stateKey = "__slNativeShellState";
+      const state = parentWindow[stateKey] || {};
+      parentWindow[stateKey] = state;
+
+      function ensureMeta(name, content) {
+        if (!name || !content) {
+          return;
+        }
+        let element = doc.head.querySelector('meta[name="' + name + '"]');
+        if (!element) {
+          element = doc.createElement("meta");
+          element.setAttribute("name", name);
+          doc.head.appendChild(element);
+        }
+        element.setAttribute("content", content);
+      }
+
+      function ensureLink(rel, attrs) {
+        if (!rel || !attrs || !attrs.href) {
+          return;
+        }
+        let selector = 'link[rel="' + rel + '"]';
+        if (attrs.sizes) {
+          selector += '[sizes="' + attrs.sizes + '"]';
+        }
+        let element = doc.head.querySelector(selector);
+        if (!element) {
+          element = doc.createElement("link");
+          element.setAttribute("rel", rel);
+          doc.head.appendChild(element);
+        }
+        Object.keys(attrs).forEach(function (key) {
+          if (attrs[key]) {
+            element.setAttribute(key, attrs[key]);
+          }
+        });
+      }
+
+      function ensureViewportFitCover() {
+        const viewportMeta = doc.head.querySelector('meta[name="viewport"]');
+        if (!viewportMeta) {
+          return;
+        }
+        const content = viewportMeta.getAttribute("content") || "";
+        if (content.indexOf("viewport-fit=cover") !== -1) {
+          return;
+        }
+        const normalized = content.trim();
+        viewportMeta.setAttribute(
+          "content",
+          normalized
+            ? normalized + ", viewport-fit=cover"
+            : "width=device-width, initial-scale=1, viewport-fit=cover"
+        );
+      }
+
+      function toAbsoluteUrl(pathValue) {
+        if (!pathValue) {
+          return "";
+        }
+        try {
+          return new URL(pathValue, parentWindow.location.origin).href;
+        } catch (error) {
+          console.warn("[native-shell] Failed to build URL:", pathValue, error);
+          return "";
+        }
+      }
+
+      function detectBasePrefix() {
+        const scripts = Array.prototype.slice.call(doc.querySelectorAll("script[src]"));
+        for (let index = 0; index < scripts.length; index += 1) {
+          const src = scripts[index].getAttribute("src") || "";
+          if (src.indexOf("/static/") === -1 && src.indexOf("static/") !== 0) {
+            continue;
+          }
+          try {
+            const scriptUrl = new URL(src, parentWindow.location.href);
+            const marker = "/static/";
+            const markerIndex = scriptUrl.pathname.indexOf(marker);
+            if (markerIndex >= 0) {
+              return scriptUrl.pathname.slice(0, markerIndex + 1);
+            }
+          } catch (error) {
+            console.warn("[native-shell] Failed to infer base prefix from script URL:", src, error);
+          }
+        }
+
+        const pathname = parentWindow.location.pathname || "/";
+        if (pathname === "/") {
+          return "/";
+        }
+        if (pathname.endsWith("/")) {
+          return pathname;
+        }
+        const lastSlash = pathname.lastIndexOf("/");
+        if (lastSlash > 0) {
+          return pathname.slice(0, lastSlash + 1);
+        }
+        return pathname + "/";
+      }
+
+      function buildStaticBaseCandidates() {
+        const prefix = detectBasePrefix();
+        const candidatePaths = [
+          prefix + "app/static/",
+          prefix + "static/",
+          "/app/static/",
+          "/static/",
+        ];
+        const uniqueCandidates = [];
+        const seen = {};
+
+        candidatePaths.forEach(function (candidatePath) {
+          const absolute = toAbsoluteUrl(candidatePath);
+          if (absolute && !seen[absolute]) {
+            seen[absolute] = true;
+            uniqueCandidates.push(absolute);
+          }
+        });
+        return uniqueCandidates;
+      }
+
+      function chooseStaticBase(callback) {
+        const candidates = buildStaticBaseCandidates();
+        if (!candidates.length) {
+          callback("");
+          return;
+        }
+        if (!parentWindow.fetch) {
+          callback(candidates[0]);
+          return;
+        }
+
+        let index = 0;
+        const probeNext = function () {
+          if (index >= candidates.length) {
+            callback(candidates[0]);
+            return;
+          }
+          const candidate = candidates[index];
+          index += 1;
+          const manifestUrl = new URL("manifest.webmanifest", candidate).href;
+
+          parentWindow
+            .fetch(manifestUrl, {
+              method: "HEAD",
+              cache: "no-store",
+              credentials: "same-origin",
+            })
+            .then(function (response) {
+              if (response && response.ok) {
+                callback(candidate);
+                return;
+              }
+              probeNext();
+            })
+            .catch(function (error) {
+              console.warn("[native-shell] Failed to probe static candidate:", manifestUrl, error);
+              probeNext();
+            });
+        };
+
+        probeNext();
+      }
+
+      function isLocalhostHost(hostname) {
+        const normalized = (hostname || "").toLowerCase();
+        return (
+          normalized === "localhost" ||
+          normalized === "127.0.0.1" ||
+          normalized === "[::1]" ||
+          normalized.endsWith(".localhost")
+        );
+      }
+
+      function canRegisterServiceWorker() {
+        if (!parentWindow.navigator || !("serviceWorker" in parentWindow.navigator)) {
+          return false;
+        }
+        const secureContext = parentWindow.isSecureContext || parentWindow.location.protocol === "https:";
+        const localhost = isLocalhostHost(parentWindow.location.hostname);
+        return secureContext || localhost;
+      }
+
+      function applyHeadEnhancements(staticBaseUrl) {
+        if (!staticBaseUrl) {
+          return;
+        }
+        const manifestUrl = new URL("manifest.webmanifest", staticBaseUrl).href;
+        const icon180 = new URL("icons/icon-180.png", staticBaseUrl).href;
+        const icon192 = new URL("icons/icon-192.png", staticBaseUrl).href;
+        const icon512 = new URL("icons/icon-512.png", staticBaseUrl).href;
+
+        ensureViewportFitCover();
+        ensureMeta("theme-color", config.theme_color);
+        ensureMeta("mobile-web-app-capable", "yes");
+        ensureMeta("apple-mobile-web-app-capable", "yes");
+        ensureMeta("apple-mobile-web-app-status-bar-style", config.status_bar_style);
+        ensureMeta("apple-mobile-web-app-title", config.app_title);
+
+        ensureLink("manifest", {
+          href: manifestUrl,
+        });
+        ensureLink("apple-touch-icon", {
+          href: icon180,
+          sizes: "180x180",
+          type: "image/png",
+        });
+        ensureLink("icon", {
+          href: icon192,
+          sizes: "192x192",
+          type: "image/png",
+        });
+        ensureLink("icon", {
+          href: icon512,
+          sizes: "512x512",
+          type: "image/png",
+        });
+      }
+
+      function registerServiceWorker(staticBaseUrl) {
+        if (!staticBaseUrl || !canRegisterServiceWorker()) {
+          return;
+        }
+        const swUrl = new URL("app-sw.js", staticBaseUrl).href;
+        if (state.serviceWorkerRegistered && state.serviceWorkerUrl === swUrl) {
+          return;
+        }
+
+        parentWindow.navigator.serviceWorker
+          .register(swUrl)
+          .then(function (registration) {
+            state.serviceWorkerRegistered = true;
+            state.serviceWorkerUrl = swUrl;
+            state.serviceWorkerScope = registration.scope;
+          })
+          .catch(function (error) {
+            state.serviceWorkerRegistered = false;
+            state.serviceWorkerUrl = swUrl;
+            console.warn("[native-shell] Service worker registration failed:", error);
+          });
+      }
+
+      function installIOSScrollGuard() {
+        if (state.iosScrollGuardInstalled) {
+          return;
+        }
+        const navigatorRef = parentWindow.navigator || {};
+        const userAgent = navigatorRef.userAgent || "";
+        const platform = navigatorRef.platform || "";
+        const maxTouchPoints = navigatorRef.maxTouchPoints || 0;
+        const isIOS =
+          /iPad|iPhone|iPod/.test(userAgent) || (platform === "MacIntel" && maxTouchPoints > 1);
+
+        if (!isIOS || !("ontouchstart" in parentWindow)) {
+          return;
+        }
+
+        let touchStartY = 0;
+        const touchStartHandler = function (event) {
+          if (!event.touches || event.touches.length !== 1) {
+            return;
+          }
+          touchStartY = event.touches[0].clientY;
+        };
+        const touchMoveHandler = function (event) {
+          if (!event.touches || event.touches.length !== 1) {
+            return;
+          }
+          const currentY = event.touches[0].clientY;
+          const scrollingElement = doc.scrollingElement || doc.documentElement;
+          if (!scrollingElement) {
+            return;
+          }
+          const isPullingDown = currentY > touchStartY;
+          const isAtTop = scrollingElement.scrollTop <= 0;
+          if (isPullingDown && isAtTop) {
+            event.preventDefault();
+          }
+        };
+
+        doc.addEventListener("touchstart", touchStartHandler, { passive: true });
+        doc.addEventListener("touchmove", touchMoveHandler, { passive: false });
+        state.iosScrollGuardInstalled = true;
+      }
+
+      installIOSScrollGuard();
+      chooseStaticBase(function (staticBaseUrl) {
+        applyHeadEnhancements(staticBaseUrl);
+        registerServiceWorker(staticBaseUrl);
+      });
+    })();
+    </script>
+    """
+    components.html(
+        bootstrap_script.replace("__CONFIG_JSON__", config_json),
+        height=0,
+    )
 
 
 def inject_app_style() -> None:
@@ -135,6 +460,25 @@ def inject_app_style() -> None:
         background: var(--sl-bg);
         color: var(--sl-text);
         -webkit-tap-highlight-color: transparent;
+    }
+    html,
+    body {
+        overscroll-behavior-y: none;
+        overscroll-behavior-x: none;
+    }
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"] {
+        overscroll-behavior-y: contain;
+        touch-action: manipulation;
+    }
+    @supports (-webkit-touch-callout: none) {
+        html,
+        body {
+            min-height: -webkit-fill-available;
+        }
+        body {
+            -webkit-overflow-scrolling: touch;
+        }
     }
     .block-container {
         max-width: 1320px;
@@ -682,6 +1026,7 @@ def inject_app_style() -> None:
     </style>
     """
     st.markdown(style.replace("__HOST_CHROME_CSS__", host_chrome_css), unsafe_allow_html=True)
+    _inject_native_shell_bootstrap()
 
 
 def _normalize_badge_tone(tone: str | None) -> str:

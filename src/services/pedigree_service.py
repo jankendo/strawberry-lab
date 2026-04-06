@@ -8,8 +8,10 @@ import networkx as nx
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.services.cache_service import bump_cache_scopes, scoped_cache_data
 
-@st.cache_data(ttl=180)
+
+@scoped_cache_data(ttl=180, scopes=("pedigree", "varieties"))
 def fetch_graph_data(include_deleted: bool = False) -> tuple[list[dict], list[dict]]:
     """Fetch varieties and parent links for graph build."""
     from src.services.auth_service import get_user_client
@@ -164,6 +166,7 @@ def clear_pedigree_cache() -> None:
     """Clear cached pedigree data/layout for immediate consistency after edits."""
     fetch_graph_data.clear()
     _cached_layered_layout.clear()
+    bump_cache_scopes("pedigree")
 
 
 def build_figure(graph: nx.DiGraph, positions: dict[str, tuple[float, float]], review_stats: dict[str, dict]) -> go.Figure:

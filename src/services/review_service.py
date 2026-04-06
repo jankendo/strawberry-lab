@@ -5,9 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-import streamlit as st
-
 from src.services.auth_service import get_user_client
+from src.services.cache_service import bump_cache_scopes, scoped_cache_data
 from src.services.export_service import clear_export_cache
 from src.services.variety_service import (
     get_latest_review_summary_for_varieties,
@@ -23,7 +22,7 @@ def _response_data(response):
     return getattr(response, "data", None)
 
 
-@st.cache_data(ttl=300)
+@scoped_cache_data(ttl=300, scopes=("reviews", "varieties"))
 def list_reviews(
     *,
     include_deleted: bool = False,
@@ -96,6 +95,7 @@ def _clear_review_related_caches() -> None:
     get_review_counts_for_varieties.clear()
     get_latest_review_summary_for_varieties.clear()
     clear_export_cache()
+    bump_cache_scopes("reviews", "analytics", "exports")
 
 
 def create_or_update_review(payload: dict, *, overwrite_duplicate: bool = False) -> tuple[str, bool]:

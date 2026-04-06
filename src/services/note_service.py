@@ -6,14 +6,13 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import uuid4
 
-import streamlit as st
-
 from src.services.auth_service import get_user_client
+from src.services.cache_service import bump_cache_scopes, scoped_cache_data
 from src.services.export_service import clear_export_cache
 from src.utils.validation import validate_note_payload
 
 
-@st.cache_data(ttl=300)
+@scoped_cache_data(ttl=300, scopes="notes")
 def list_notes(
     *,
     include_deleted: bool = False,
@@ -50,12 +49,19 @@ def list_notes(
     return rows, total
 
 
-@st.cache_data(ttl=120)
+@scoped_cache_data(ttl=120, scopes="notes")
 def get_note_detail(note_id: str) -> dict | None:
     """Fetch single note detail by ID."""
     client = get_user_client()
     result = client.table("notes").select("*").eq("id", note_id).maybe_single().execute()
     return result.data
+
+
+def _clear_note_related_caches() -> None:
+    list_notes.clear()
+    get_note_detail.clear()
+    clear_export_cache()
+    bump_cache_scopes("notes", "exports")
 
 
 def create_note(payload: dict) -> str:
@@ -64,9 +70,7 @@ def create_note(payload: dict) -> str:
     payload = validate_note_payload(payload)
     payload["id"] = str(uuid4())
     result = client.table("notes").insert(payload).execute()
-    list_notes.clear()
-    get_note_detail.clear()
-    clear_export_cache()
+    _clear_note_related_caches()
     return result.data[0]["id"]
 
 
@@ -75,24 +79,18 @@ def update_note(note_id: str, payload: dict) -> None:
     client = get_user_client()
     payload = validate_note_payload(payload)
     client.table("notes").update(payload).eq("id", note_id).execute()
-    list_notes.clear()
-    get_note_detail.clear()
-    clear_export_cache()
+    _clear_note_related_caches()
 
 
 def soft_delete_note(note_id: str) -> None:
     """Soft delete note."""
     client = get_user_client()
     client.table("notes").update({"deleted_at": datetime.now(tz=UTC).isoformat()}).eq("id", note_id).execute()
-    list_notes.clear()
-    get_note_detail.clear()
-    clear_export_cache()
+    _clear_note_related_caches()
 
 
 def restore_note(note_id: str) -> None:
     """Restore note."""
     client = get_user_client()
     client.table("notes").update({"deleted_at": None}).eq("id", note_id).execute()
-    list_notes.clear()
-    get_note_detail.clear()
-    clear_export_cache()
+    _clear_note_related_caches()

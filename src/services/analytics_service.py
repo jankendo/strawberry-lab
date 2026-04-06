@@ -6,15 +6,15 @@ from collections import defaultdict
 from datetime import date
 
 import pandas as pd
-import streamlit as st
 
 from src.services.auth_service import get_user_client
+from src.services.cache_service import scoped_cache_data
 
 _REVIEW_SELECT_FIELDS = "id,variety_id,tasted_date,overall,sweetness,sourness,aroma,texture,appearance"
 _VARIETY_SELECT_FIELDS = "id,name,origin_prefecture,tags,brix_min,brix_max"
 
 
-@st.cache_data(ttl=300)
+@scoped_cache_data(ttl=300, scopes=("analytics", "reviews", "varieties"))
 def get_filtered_review_dataframe(
     *,
     date_from: date,
@@ -163,6 +163,7 @@ def scatter_data(df: pd.DataFrame) -> list[dict]:
     return rows
 
 
+@scoped_cache_data(ttl=300, scopes="varieties")
 def prefecture_counts(prefecture: str | None = None, tags: list[str] | None = None) -> dict[str, int]:
     """Active variety counts by prefecture; date filters are intentionally ignored."""
     client = get_user_client()

@@ -5,9 +5,9 @@ from __future__ import annotations
 from io import StringIO
 
 import pandas as pd
-import streamlit as st
 
 from src.services.auth_service import get_user_client
+from src.services.cache_service import bump_cache_scopes, scoped_cache_data
 from src.utils.dataframe_utils import format_export_dataframe
 
 EXPORT_TABLES = {
@@ -29,7 +29,7 @@ ORDER_COLUMNS = {
 }
 
 
-@st.cache_data(ttl=300)
+@scoped_cache_data(ttl=300, scopes="exports")
 def export_table_csv(table_name: str) -> bytes:
     """Export table rows as UTF-8 BOM CSV."""
     if table_name not in EXPORT_TABLES:
@@ -52,3 +52,4 @@ def export_table_csv(table_name: str) -> bytes:
 def clear_export_cache() -> None:
     """Clear cached CSV exports."""
     export_table_csv.clear()
+    bump_cache_scopes("exports")

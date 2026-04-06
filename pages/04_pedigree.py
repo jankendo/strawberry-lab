@@ -16,6 +16,7 @@ from src.components.layout import (
     render_surface,
 )
 from src.components.sidebar import render_primary_nav, render_sidebar
+from src.components.skeletons import render_card_skeleton, render_chart_skeleton
 from src.components.tables import is_mobile_client
 from src.services.auth_service import require_admin_session
 from src.services.pedigree_service import (
@@ -81,7 +82,16 @@ else:
     with c5:
         full_canvas_mode = st.checkbox("全幅グラフ表示", value=True)
 
-varieties, links = fetch_graph_data(include_deleted=include_deleted)
+data_loading_placeholder = st.empty()
+with data_loading_placeholder.container():
+    with st.container(border=True):
+        render_section_title("交配図データを準備中", "親子リンクを読み込んでいます。")
+        render_card_skeleton(count=3 if mobile_client else 4, is_mobile=mobile_client)
+try:
+    varieties, links = fetch_graph_data(include_deleted=include_deleted)
+finally:
+    data_loading_placeholder.empty()
+
 if not links:
     render_empty_state(
         "親子リンクが未登録のため交配図を表示できません。",
@@ -138,8 +148,17 @@ if graph.number_of_nodes() > max_nodes:
     graph = graph.subgraph(ordered_nodes[:max_nodes]).copy()
     render_surface(f"表示ノード数を {max_nodes} 件に制限しました。", title="表示上限を適用", tone="warning")
 
-positions = get_cached_layout(graph)
-fig = build_figure(graph, positions, {})
+layout_loading_placeholder = st.empty()
+with layout_loading_placeholder.container():
+    with st.container(border=True):
+        render_section_title("グラフレイアウトを計算中", "ノード配置を最適化しています。")
+        render_chart_skeleton(height=260 if mobile_client else 340, is_mobile=mobile_client)
+try:
+    positions = get_cached_layout(graph)
+    fig = build_figure(graph, positions, {})
+finally:
+    layout_loading_placeholder.empty()
+
 root_name = "全体" if not root_id else name_by_id.get(root_id, root_id)
 render_kpi_cards(
     [

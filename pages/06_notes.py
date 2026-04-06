@@ -6,6 +6,7 @@ from datetime import datetime
 
 import streamlit as st
 
+from src.components.draft_buffer import clear_draft_buffer, render_draft_buffer_bridge
 from src.components.layout import (
     inject_app_style,
     render_action_bar,
@@ -18,7 +19,9 @@ from src.components.layout import (
 )
 from src.components.pagination import render_pagination_controls
 from src.components.sidebar import render_primary_nav, render_sidebar
+from src.components.skeletons import render_card_skeleton, render_list_skeleton, render_table_skeleton
 from src.components.tables import is_mobile_client, render_table
+from src.components.transitions import render_view_transition_layer, render_view_transition_trigger
 from src.services.auth_service import require_admin_session
 from src.services.note_service import create_note, get_note_detail, list_notes, restore_note, soft_delete_note, update_note
 from src.services.variety_service import list_active_varieties
@@ -26,6 +29,15 @@ from src.utils.text_utils import split_dedup_values
 
 _NOTES_SORT_OPTIONS = ["更新が新しい順", "更新が古い順", "タイトル順"]
 _NOTES_SECTION_ORDER = ["ノート管理", "削除済み"]
+_NOTES_PENDING_DRAFT_CLEARS_KEY = "notes_pending_draft_clears"
+_NOTES_DRAFT_DISCARD_NOTICE_KEY = "notes_draft_discard_notice_key"
+_NOTE_EDITOR_DRAFT_FIELDS = [
+    {"name": "title", "label": "タイトル*", "kind": "text"},
+    {"name": "body", "label": "本文*", "kind": "textarea"},
+    {"name": "variety_id", "label": "関連品種（任意）", "kind": "select"},
+    {"name": "tags_raw", "label": "タグ（カンマ区切り）", "kind": "text"},
+]
+_NOTES_CLEARED_DRAFT_KEYS_THIS_RUN: set[str] = set()
 
 
 def _format_updated_at(value: object) -> str:
@@ -145,9 +157,21 @@ def _load_note_rows(
     return _sort_note_rows(rows, sort_mode), total
 
 
+def _render_notes_loading_skeleton(*, is_mobile: bool, mode: str) -> None:
+    with st.container(border=True):
+        if mode == "editor":
+            st.caption("ノート詳細を読み込んでいます…")
+            render_card_skeleton(count=1 if is_mobile else 2, is_mobile=is_mobile)
+            render_list_skeleton(rows=2, is_mobile=is_mobile)
+        else:
+            st.caption("ノート一覧を取得しています…")
+            render_table_skeleton(rows=4, columns=4, is_mobile=is_mobile)
+
+
 def _render_create_note_action(*, is_mobile: bool) -> None:
     if is_mobile:
         render_sticky_primary_action_anchor("notes-create")
+        render_view_transition_trigger("notes-mobile-list-detail", "list-to-detail")
     if st.button("＋ 新しいメモを作成", use_container_width=True, type="primary", key="notes_create_new"):
         st.session_state["notes_selected_id"] = ""
         st.session_state["notes_editor_mode"] = "create"
@@ -178,6 +202,8 @@ def _render_note_cards(rows: list[dict], *, is_mobile: bool) -> None:
             st.write(_build_excerpt(row.get("body")))
             if selected_id == note_id and not is_mobile:
                 st.caption("現在選択中")
+            if is_mobile:
+                render_view_transition_trigger("notes-mobile-list-detail", "list-to-detail")
             if st.button("このノートを開く", key=f"open_note_{note_id}", use_container_width=True):
                 st.session_state["notes_selected_id"] = note_id
                 st.session_state["notes_editor_mode"] = "edit"
@@ -186,22 +212,48 @@ def _render_note_cards(rows: list[dict], *, is_mobile: bool) -> None:
                 st.rerun()
 
 
+def _note_editor_draft_key(editor_token: str) -> str:
+    return f"notes-editor-{editor_token}"
+
+
+def _queue_note_draft_clear(draft_key: str) -> None:
+    pending_keys = [str(value) for value in st.session_state.get(_NOTES_PENDING_DRAFT_CLEARS_KEY, []) if str(value).strip()]
+    if draft_key not in pending_keys:
+        pending_keys.append(draft_key)
+    st.session_state[_NOTES_PENDING_DRAFT_CLEARS_KEY] = pending_keys
+
+
 def _render_note_editor(*, selected_id: str, selected_note: dict | None, is_mobile: bool) -> None:
+    if is_mobile:
+        render_view_transition_trigger("notes-mobile-list-detail", "detail-to-list")
     if is_mobile and st.button("← 一覧に戻る", key="notes_back_to_list", use_container_width=True):
         st.session_state["notes_mobile_view"] = "list"
         st.session_state["notes_editor_mode"] = "closed"
         st.rerun()
 
     is_edit_mode = selected_note is not None
-    varieties = list_active_varieties()
+    editor_loading_placeholder = st.empty()
+    with editor_loading_placeholder.container():
+        _render_notes_loading_skeleton(is_mobile=is_mobile, mode="editor")
+    try:
+        varieties = list_active_varieties()
+    finally:
+        editor_loading_placeholder.empty()
+
     variety_options = [""] + [v["id"] for v in varieties]
     variety_name_map = {v["id"]: v.get("name") or v["id"] for v in varieties}
     current_variety = selected_note.get("variety_id") if selected_note else ""
     default_tags = ", ".join(selected_note.get("tags") or []) if selected_note else ""
     editor_token = selected_id if is_edit_mode else "new"
+    draft_key = _note_editor_draft_key(editor_token)
+    clear_draft_before_restore = draft_key in _NOTES_CLEARED_DRAFT_KEYS_THIS_RUN
 
     with st.container(border=True):
         st.markdown("**ノート編集**" if is_edit_mode else "**ノート作成**")
+        st.caption("入力内容はブラウザに自動保存されます。")
+        if st.session_state.get(_NOTES_DRAFT_DISCARD_NOTICE_KEY) == draft_key:
+            st.session_state.pop(_NOTES_DRAFT_DISCARD_NOTICE_KEY, None)
+            st.caption("🗑️ 下書きを破棄しました。")
         with st.form("note_editor_form"):
             title = st.text_input(
                 "タイトル*",
@@ -223,6 +275,8 @@ def _render_note_editor(*, selected_id: str, selected_note: dict | None, is_mobi
             )
             tags_raw = st.text_input("タグ（カンマ区切り）", value=default_tags, key=f"notes_editor_tags_{editor_token}")
             render_sticky_primary_action_anchor("notes-save")
+            if is_mobile:
+                render_view_transition_trigger("notes-mobile-list-detail", "detail-to-list")
             submitted = st.form_submit_button("保存", use_container_width=True, type="primary")
 
         with st.expander("プレビュー", expanded=False):
@@ -230,34 +284,58 @@ def _render_note_editor(*, selected_id: str, selected_note: dict | None, is_mobi
                 st.markdown(body)
             else:
                 st.caption("本文を入力するとここにプレビューされます。")
+        render_draft_buffer_bridge(
+            draft_key,
+            fields=_NOTE_EDITOR_DRAFT_FIELDS,
+            notice_message="保存前のメモ下書きを復元しました。",
+            clear_before_restore=clear_draft_before_restore,
+        )
+        discard_col, discard_hint_col = st.columns([1, 2], gap="small")
+        with discard_col:
+            discard_draft = st.button(
+                "下書きを破棄",
+                key=f"notes_discard_draft_{editor_token}",
+                use_container_width=True,
+                type="secondary",
+            )
+        with discard_hint_col:
+            st.caption("ブラウザに保存された入力中の下書きを削除します。")
 
-        if submitted:
+    if discard_draft:
+        _queue_note_draft_clear(draft_key)
+        st.session_state[_NOTES_DRAFT_DISCARD_NOTICE_KEY] = draft_key
+        st.rerun()
+
+    if submitted:
+        try:
+            tags = split_dedup_values(tags_raw, max_items=20, max_length=30)
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            payload = {"title": title, "body": body, "variety_id": variety_id or None, "tags": tags}
             try:
-                tags = split_dedup_values(tags_raw, max_items=20, max_length=30)
-            except ValueError as exc:
+                if is_edit_mode:
+                    update_note(selected_id, payload)
+                    st.success("更新しました。")
+                else:
+                    new_note_id = create_note(payload)
+                    st.session_state["notes_selected_id"] = new_note_id
+                    st.success("作成しました。")
+                _queue_note_draft_clear(draft_key)
+                if is_mobile:
+                    st.session_state["notes_mobile_view"] = "list"
+                    st.session_state["notes_editor_mode"] = "closed"
+                else:
+                    st.session_state["notes_editor_mode"] = "edit"
+                st.rerun()
+            except Exception as exc:
                 st.error(str(exc))
-            else:
-                payload = {"title": title, "body": body, "variety_id": variety_id or None, "tags": tags}
-                try:
-                    if is_edit_mode:
-                        update_note(selected_id, payload)
-                        st.success("更新しました。")
-                    else:
-                        new_note_id = create_note(payload)
-                        st.session_state["notes_selected_id"] = new_note_id
-                        st.success("作成しました。")
-                    if is_mobile:
-                        st.session_state["notes_mobile_view"] = "list"
-                        st.session_state["notes_editor_mode"] = "closed"
-                    else:
-                        st.session_state["notes_editor_mode"] = "edit"
-                    st.rerun()
-                except Exception as exc:
-                    st.error(str(exc))
 
     if is_edit_mode:
         with st.expander("その他の操作", expanded=False):
             st.caption("削除後も「削除済み」タブから復元できます。")
+            if is_mobile:
+                render_view_transition_trigger("notes-mobile-list-detail", "detail-to-list")
             if st.button(
                 "このノートを削除",
                 key=f"notes_delete_selected_{editor_token}",
@@ -300,6 +378,17 @@ if "notes_mobile_view" not in st.session_state:
     st.session_state["notes_mobile_view"] = "list"
 if "notes_editor_mode" not in st.session_state:
     st.session_state["notes_editor_mode"] = "closed"
+pending_note_draft_clears = [str(value) for value in st.session_state.pop(_NOTES_PENDING_DRAFT_CLEARS_KEY, []) if str(value).strip()]
+_NOTES_CLEARED_DRAFT_KEYS_THIS_RUN = set(pending_note_draft_clears)
+for pending_draft_key in pending_note_draft_clears:
+    clear_draft_buffer(pending_draft_key)
+if mobile_client:
+    render_view_transition_layer(
+        "notes-mobile-list-detail",
+        current_state=str(st.session_state.get("notes_mobile_view") or "list"),
+        enabled=True,
+        mobile_only=True,
+    )
 
 active_section = _render_notes_section_switcher(is_mobile=mobile_client)
 
@@ -307,7 +396,13 @@ if active_section == "ノート管理":
     render_section_title("ノート一覧", None if mobile_client else "検索・タグ絞り込みで探し、カードから開いて編集します。")
     if mobile_client and st.session_state.get("notes_mobile_view") == "editor":
         selected_id = st.session_state.get("notes_selected_id") or ""
-        selected_note = _resolve_selected_note(selected_id)
+        selected_note_loading_placeholder = st.empty()
+        with selected_note_loading_placeholder.container():
+            _render_notes_loading_skeleton(is_mobile=True, mode="editor")
+        try:
+            selected_note = _resolve_selected_note(selected_id)
+        finally:
+            selected_note_loading_placeholder.empty()
         if selected_id and selected_note is None:
             st.session_state["notes_selected_id"] = ""
             st.session_state["notes_mobile_view"] = "list"
@@ -316,13 +411,19 @@ if active_section == "ノート管理":
         _render_note_editor(selected_id=selected_id, selected_note=selected_note, is_mobile=True)
     else:
         search_query, filter_tags, sort_mode, page, page_size = _render_manage_filters(is_mobile=mobile_client)
-        rows, total = _load_note_rows(
-            search_query=search_query,
-            filter_tags=filter_tags,
-            page=page,
-            page_size=page_size,
-            sort_mode=sort_mode,
-        )
+        list_loading_placeholder = st.empty()
+        with list_loading_placeholder.container():
+            _render_notes_loading_skeleton(is_mobile=mobile_client, mode="list")
+        try:
+            rows, total = _load_note_rows(
+                search_query=search_query,
+                filter_tags=filter_tags,
+                page=page,
+                page_size=page_size,
+                sort_mode=sort_mode,
+            )
+        finally:
+            list_loading_placeholder.empty()
         render_kpi_cards(
             [
                 ("検索ヒット", f"{total}件", "条件一致"),
@@ -343,7 +444,13 @@ if active_section == "ノート管理":
                 editor_mode = str(st.session_state.get("notes_editor_mode") or "closed")
                 selected_id = st.session_state.get("notes_selected_id") or ""
                 if editor_mode == "edit" and selected_id:
-                    selected_note = _resolve_selected_note(selected_id, rows)
+                    selected_note_loading_placeholder = st.empty()
+                    with selected_note_loading_placeholder.container():
+                        _render_notes_loading_skeleton(is_mobile=False, mode="editor")
+                    try:
+                        selected_note = _resolve_selected_note(selected_id, rows)
+                    finally:
+                        selected_note_loading_placeholder.empty()
                     if selected_note is None:
                         st.session_state["notes_selected_id"] = ""
                         st.session_state["notes_editor_mode"] = "closed"
@@ -368,7 +475,13 @@ elif active_section == "削除済み":
     with st.container(border=True):
         st.caption("ページ設定")
         page, page_size = render_pagination_controls("notes_deleted")
-    rows, _ = list_notes(include_deleted=True, page=page, page_size=page_size)
+    deleted_loading_placeholder = st.empty()
+    with deleted_loading_placeholder.container():
+        _render_notes_loading_skeleton(is_mobile=mobile_client, mode="list")
+    try:
+        rows, _ = list_notes(include_deleted=True, page=page, page_size=page_size)
+    finally:
+        deleted_loading_placeholder.empty()
     deleted_rows = [row for row in rows if row.get("deleted_at")]
     render_kpi_cards(
         [

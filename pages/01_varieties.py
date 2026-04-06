@@ -9,7 +9,13 @@ from src.components.image_gallery import render_image_gallery
 from src.components.layout import inject_app_style, render_page_header, render_section_title
 from src.components.pagination import render_pagination_controls
 from src.components.sidebar import render_primary_nav, render_sidebar
+from src.components.swipe_actions import (
+    render_swipe_action_layer,
+    render_swipe_action_row_marker,
+    render_swipe_action_secondary_marker,
+)
 from src.components.tables import is_mobile_client, render_table
+from src.components.transitions import render_view_transition_layer, render_view_transition_trigger
 from src.constants.enums import AcidityLevel
 from src.constants.prefectures import PREFECTURES
 from src.services.auth_service import require_admin_session
@@ -136,6 +142,7 @@ _LATEST_REVIEW_METRICS: list[tuple[str, str, int]] = [
     ("食感", "texture", 5),
     ("見た目", "appearance", 5),
 ]
+_VARIETY_MOBILE_SWIPE_SCOPE = "varieties-mobile-card-actions"
 
 
 def _resolve_select_index(options: list[str], value: object, *, fallback: int = 0) -> int:
@@ -355,6 +362,7 @@ def _render_mobile_variety_cards(
     primary_images: dict[str, dict],
     latest_reviews: dict[str, dict],
 ) -> str | None:
+    render_swipe_action_layer(_VARIETY_MOBILE_SWIPE_SCOPE, threshold_px=72)
     selected_id: str | None = None
     for row in rows:
         variety_id = str(row["id"])
@@ -382,8 +390,21 @@ def _render_mobile_variety_cards(
                     st.caption(_build_variety_summary(row, discovered=True, max_length=88))
                 else:
                     st.caption("レビュー未登録（詳細ロック中）")
-            if st.button("この品種を開く", key=f"variety_mobile_open_{variety_id}", use_container_width=True):
+            render_swipe_action_row_marker(
+                _VARIETY_MOBILE_SWIPE_SCOPE,
+                variety_id,
+                hint="左にスワイプで評価アクションを表示",
+                reveal_label="操作を表示",
+                hide_label="操作を閉じる",
+            )
+            render_view_transition_trigger("varieties-mobile-list-detail", "list-to-detail")
+            if st.button("詳細", key=f"variety_mobile_open_{variety_id}", use_container_width=True):
                 selected_id = variety_id
+            render_swipe_action_secondary_marker(_VARIETY_MOBILE_SWIPE_SCOPE, variety_id)
+            quick_action_col = st.columns(1)[0]
+            with quick_action_col:
+                if st.button("評価", key=f"variety_mobile_review_{variety_id}", use_container_width=True, type="secondary"):
+                    _open_review_entry(variety_id)
     return selected_id
 
 
@@ -594,6 +615,14 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
         if mobile_client:
             st.session_state["variety_mobile_panel"] = "detail"
 
+    if mobile_client:
+        render_view_transition_layer(
+            "varieties-mobile-list-detail",
+            current_state=str(st.session_state.get("variety_mobile_panel", "list") or "list"),
+            enabled=True,
+            mobile_only=True,
+        )
+
     rows, total = list_varieties_for_list_tab(
         keyword=keyword or None,
         prefecture=prefecture or None,
@@ -654,6 +683,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
     if mobile_client:
         if mobile_panel == "detail" and selected_id:
             render_section_title("品種詳細", "一覧に戻って別の品種を選択できます。")
+            render_view_transition_trigger("varieties-mobile-list-detail", "detail-to-list")
             if st.button("← 一覧に戻る", key="variety_mobile_back", use_container_width=True):
                 st.session_state["variety_mobile_panel"] = "list"
                 st.rerun()
@@ -683,6 +713,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
                         ),
                         key="variety_mobile_quick_jump",
                     )
+                    render_view_transition_trigger("varieties-mobile-list-detail", "list-to-detail")
                     if quick_jump_id and st.button("選択品種を開く", key="variety_mobile_jump_open", use_container_width=True):
                         st.session_state["variety_selected_from_list"] = str(quick_jump_id)
                         st.session_state["variety_mobile_panel"] = "detail"
