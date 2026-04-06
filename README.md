@@ -28,6 +28,11 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 ## Run app
 - `streamlit run Home.py`
 
+## v4 updates (UI / behavior)
+- **Review save stability**: fixed a crash path when creating a review if the insert response does not return row data.
+- **Sidebar navigation cleanup**: removed Streamlit's default multipage sidebar menu (`showSidebarNavigation = false`) to avoid duplicate navigation entries.
+- **All-page UI refresh**: Home / 品種管理 / 試食評価 / 分析 / 交配図 / 研究メモ / 設定 now share upgraded header, card, and section styling for a more consistent experience.
+
 ## Login persistence (30 days)
 - This app supports login skip on revisit by storing encrypted auth session cookies.
 - Required secret:

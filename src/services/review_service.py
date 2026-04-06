@@ -12,6 +12,12 @@ from src.services.variety_service import get_pokedex_progress, get_review_counts
 from src.utils.validation import validate_review_payload
 
 
+def _response_data(response):
+    if response is None:
+        return None
+    return getattr(response, "data", None)
+
+
 @st.cache_data(ttl=300)
 def list_reviews(
     *,
@@ -73,7 +79,10 @@ def _find_duplicate(variety_id: str, tasted_date: str) -> dict | None:
         .maybe_single()
         .execute()
     )
-    return result.data
+    data = _response_data(result)
+    if isinstance(data, list):
+        return data[0] if data else None
+    return data if isinstance(data, dict) else None
 
 
 def create_or_update_review(payload: dict, *, overwrite_duplicate: bool = False) -> tuple[str, bool]:
@@ -90,12 +99,13 @@ def create_or_update_review(payload: dict, *, overwrite_duplicate: bool = False)
         get_pokedex_progress.clear()
         get_review_counts_for_varieties.clear()
         return review_id, True
-    payload["id"] = str(uuid4())
-    review = client.table("reviews").insert(payload).execute().data[0]
+    review_id = str(uuid4())
+    payload["id"] = review_id
+    client.table("reviews").insert(payload).execute()
     list_reviews.clear()
     get_pokedex_progress.clear()
     get_review_counts_for_varieties.clear()
-    return review["id"], False
+    return review_id, False
 
 
 def update_review(review_id: str, payload: dict) -> None:

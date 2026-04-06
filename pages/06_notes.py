@@ -5,7 +5,14 @@ from __future__ import annotations
 import streamlit as st
 
 from src.components.forms import comma_values_input
-from src.components.layout import inject_app_style, render_page_header, render_section_title
+from src.components.layout import (
+    inject_app_style,
+    render_action_bar,
+    render_hero_banner,
+    render_kpi_cards,
+    render_section_title,
+    render_surface,
+)
 from src.components.pagination import render_pagination_controls
 from src.components.sidebar import render_sidebar
 from src.components.tables import render_table
@@ -17,17 +24,34 @@ st.set_page_config(page_title="研究メモ", layout="wide")
 require_admin_session()
 inject_app_style()
 render_sidebar()
-render_page_header("研究メモ", "ノートの検索・作成・編集・削除復元を行います。")
+render_hero_banner(
+    "研究メモ",
+    "調査メモを一元管理し、検索・編集・復元までを同じワークフローで運用できます。",
+    eyebrow="NOTES",
+    chips=["横断検索", "下書きプレビュー", "削除復元"],
+)
+render_action_bar(
+    title="運用の流れ",
+    description="一覧で探し、作成・編集で更新し、不要なノートは削除済みタブから安全に復元できます。",
+    actions=["キーワード検索", "タイトル/本文を保存", "タグを整理", "必要時に復元"],
+)
 
 tab_list, tab_edit, tab_deleted = st.tabs(["一覧", "作成・編集", "削除済み"])
 
 with tab_list:
-    render_section_title("ノート一覧")
+    render_section_title("ノート一覧", "タイトル・本文・タグを横断検索し、対象ノートをすばやく確認できます。")
     search_query = st.text_input("検索（タイトル・本文・タグ）")
     page, page_size = render_pagination_controls("notes_list")
     rows, total = list_notes(search_query=search_query or None, page=page, page_size=page_size)
-    st.caption(f"合計: {total}件")
+    render_kpi_cards(
+        [
+            ("検索ヒット", f"{total}件", "条件一致"),
+            ("表示件数", f"{len(rows)}件", f"ページ {page}"),
+            ("1ページ表示", f"{page_size}件", "ページネーション"),
+        ]
+    )
     render_table(rows)
+    render_surface("削除しても「削除済み」タブから復元できます。運用中の誤削除に備えて確認してから実行してください。", tone="soft")
     delete_id = st.selectbox(
         "削除対象",
         [""] + [r["id"] for r in rows],
@@ -39,7 +63,12 @@ with tab_list:
         st.rerun()
 
 with tab_edit:
-    render_section_title("ノート作成・編集")
+    render_section_title("ノート作成・編集", "空欄なら新規作成、ノートID入力時は既存ノートを更新します。")
+    render_action_bar(
+        title="入力ガイド",
+        description="タイトルと本文は必須です。タグはカンマ区切りで入力し、保存前にプレビューで内容を確認できます。",
+        actions=["タイトル必須", "本文必須", "タグはカンマ区切り", "保存後に再読み込み"],
+    )
     varieties = list_active_varieties()
     note_id = st.text_input("編集対象ノートID（空欄で新規）")
     with st.form("note_form"):
@@ -53,7 +82,10 @@ with tab_edit:
         tags = comma_values_input("タグ", "note_tags", 20, 30)
         submitted = st.form_submit_button("保存", use_container_width=True)
     with st.expander("プレビュー", expanded=False):
-        st.markdown(body or "")
+        if body:
+            st.markdown(body)
+        else:
+            st.caption("本文を入力するとここにプレビューされます。")
     if submitted:
         payload = {"title": title, "body": body, "variety_id": variety_id or None, "tags": tags}
         try:
@@ -68,11 +100,18 @@ with tab_edit:
             st.error(str(exc))
 
 with tab_deleted:
-    render_section_title("削除済みノート")
+    render_section_title("削除済みノート", "削除済みノートの一覧確認と復元操作を行います。")
     page, page_size = render_pagination_controls("notes_deleted")
     rows, _ = list_notes(include_deleted=True, page=page, page_size=page_size)
     deleted_rows = [row for row in rows if row.get("deleted_at")]
+    render_kpi_cards(
+        [
+            ("削除済み件数", f"{len(deleted_rows)}件", "現在ページ"),
+            ("1ページ表示", f"{page_size}件", f"ページ {page}"),
+        ]
+    )
     render_table(deleted_rows)
+    render_surface("復元したノートは通常の一覧タブで再編集できます。", tone="soft")
     restore_id = st.selectbox(
         "復元対象",
         [""] + [r["id"] for r in deleted_rows],

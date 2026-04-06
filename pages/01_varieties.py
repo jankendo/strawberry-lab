@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from html import escape
+
 import streamlit as st
 
 from src.components.forms import comma_values_input
@@ -31,8 +33,45 @@ from src.services.variety_service import (
 )
 
 try:
-    from src.components.layout import render_info_card, render_kpi_cards
+    from src.components.layout import (
+        render_action_bar,
+        render_hero_banner,
+        render_info_card,
+        render_kpi_cards,
+        render_status_badge,
+        render_surface,
+    )
 except ImportError:
+    def render_hero_banner(
+        title: str,
+        description: str,
+        *,
+        eyebrow: str | None = None,
+        chips: list[str] | None = None,
+    ) -> None:
+        """Fallback hero renderer for partially refreshed runtimes."""
+        render_page_header(title, description)
+        if eyebrow:
+            st.caption(eyebrow)
+        if chips:
+            st.caption(" / ".join(chips))
+
+
+    def render_action_bar(
+        actions: list[str] | None = None,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> None:
+        """Fallback action bar renderer for partially refreshed runtimes."""
+        if title:
+            st.write(f"**{title}**")
+        if description:
+            st.caption(description)
+        if actions:
+            st.caption(" / ".join(actions))
+
+
     def render_info_card(text: str) -> None:
         """Fallback info card renderer for partially refreshed runtimes."""
         plain = text.replace("<strong>", "").replace("</strong>", "").replace("<br>", " ")
@@ -46,36 +85,69 @@ except ImportError:
             column.metric(label, value, help=sub_text)
 
 
+    def render_surface(
+        content: str,
+        *,
+        title: str | None = None,
+        subtitle: str | None = None,
+        tone: str = "default",
+        elevated: bool = False,
+    ) -> None:
+        """Fallback surface renderer for partially refreshed runtimes."""
+        _ = tone, elevated
+        if title:
+            st.write(f"**{title}**")
+        if subtitle:
+            st.caption(subtitle)
+        plain = content.replace("<strong>", "").replace("</strong>", "").replace("<br>", " ")
+        st.write(plain)
+
+
+    def render_status_badge(label: str, tone: str = "neutral", *, icon: str | None = None) -> str:
+        """Fallback status badge renderer for partially refreshed runtimes."""
+        _ = tone
+        badge_text = f"{icon} {label}" if icon else label
+        st.caption(badge_text)
+        return badge_text
+
+
+def _to_html_text(text: str) -> str:
+    return escape(text).replace("\n", "<br>")
+
+
+def _completion_badge_tone(completion_rate: float) -> str:
+    if completion_rate >= 80:
+        return "success"
+    if completion_rate >= 40:
+        return "info"
+    return "warning"
+
+
 def _render_dex_card(row: dict, discovered: bool, review_count: int) -> None:
-    token = row.get("registration_number") or row.get("application_number") or "----"
-    title = row.get("name") if discovered else "？？？？？"
+    token = escape(str(row.get("registration_number") or row.get("application_number") or "----"))
+    title = escape(row.get("name") or "？？？？？") if discovered else "？？？？？"
     status_label = "発見済み" if discovered else "未発見"
-    status_color = "#198754" if discovered else "#8b8f96"
+    status_class = "success" if discovered else "neutral"
+
     short_description = (row.get("description") or row.get("characteristics_summary") or "").strip()
     if not discovered:
         short_description = "レビュー登録で詳細が開示されます。"
     if len(short_description) > 70:
         short_description = f"{short_description[:70]}..."
-    st.markdown(
-        f"""
-        <div style="
-            border:1px solid {'#d5efe0' if discovered else '#e4e6ea'};
-            border-radius:14px;
-            padding:12px 12px 10px 12px;
-            background:{'#fff' if discovered else '#f8f9fb'};
-            min-height:160px;
-            box-shadow:0 4px 14px rgba(95,41,63,0.05);
-        ">
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span style="font-size:0.78rem;color:#6c757d;">No.{token}</span>
-            <span style="font-size:0.72rem;color:#fff;background:{status_color};padding:2px 8px;border-radius:999px;">{status_label}</span>
-          </div>
-          <div style="margin-top:8px;font-weight:700;color:#7a1236;font-size:1.02rem;">{title}</div>
-          <div style="margin-top:6px;font-size:0.82rem;color:#5f646d;">{short_description}</div>
-          <div style="margin-top:10px;font-size:0.76rem;color:#6f5a62;">レビュー件数: {review_count}件</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    short_description_html = _to_html_text(short_description)
+
+    render_surface(
+        (
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:0.4rem;">'
+            f'<span class="sl-muted" style="font-size:0.75rem;">No.{token}</span>'
+            f'<span class="sl-badge sl-badge-{status_class}">{status_label}</span>'
+            "</div>"
+            f'<div style="margin-top:0.42rem;font-weight:700;color:#7a1236;font-size:1.02rem;">{title}</div>'
+            f'<div style="margin-top:0.34rem;font-size:0.82rem;color:#5f646d;line-height:1.52;">{short_description_html}</div>'
+            f'<div style="margin-top:0.52rem;font-size:0.76rem;color:#6f5a62;">レビュー件数: {int(review_count)}件</div>'
+        ),
+        tone="accent" if discovered else "soft",
+        elevated=True,
     )
 
 
@@ -83,12 +155,35 @@ st.set_page_config(page_title="品種管理", layout="wide")
 require_admin_session()
 inject_app_style()
 render_sidebar()
-render_page_header("品種管理", "登録情報の参照・編集・削除復元・画像管理を行います。")
+render_hero_banner(
+    "品種管理",
+    "登録情報の参照・編集・削除復元・画像管理を行います。",
+    eyebrow="Strawberry Variety Database",
+    chips=["図鑑モード", "レビュー連動開示", "画像管理"],
+)
+render_action_bar(
+    title="画面の使い方",
+    description="一覧で探索、作成・編集で更新、削除済みから復元できます。",
+    actions=["一覧", "作成・編集", "削除済み"],
+)
+
 
 tab_list, tab_edit, tab_deleted = st.tabs(["一覧", "作成・編集", "削除済み"])
 
 with tab_list:
     render_section_title("品種図鑑", "レビューを登録しながら図鑑を埋めていく体験で品種管理できます。")
+    render_surface(
+        "レビューを1件登録すると、未発見カードの詳細情報と画像が順次開示されます。",
+        title="図鑑ルール",
+        subtitle="Pokédex Discovery",
+        tone="soft",
+    )
+    render_action_bar(
+        title="検索フィルタ",
+        description="キーワード・都道府県・発見状態で表示を絞り込めます。",
+        actions=["キーワード", "都道府県", "発見済みのみ表示"],
+    )
+
     f1, f2, f3 = st.columns(3)
     with f1:
         keyword = st.text_input("キーワード", key="variety_keyword")
@@ -96,6 +191,7 @@ with tab_list:
         prefecture = st.selectbox("都道府県", [""] + PREFECTURES, key="variety_pref_filter")
     with f3:
         discovered_only = st.checkbox("発見済みのみ表示", value=False)
+
     page, page_size = render_pagination_controls("variety_list")
     rows, total = list_varieties(
         keyword=keyword or None,
@@ -107,6 +203,7 @@ with tab_list:
     review_counts = get_review_counts_for_varieties([row["id"] for row in rows])
     row_by_id = {row["id"]: row for row in rows}
     progress = get_pokedex_progress()
+
     render_kpi_cards(
         [
             ("図鑑登録数", str(progress["total_varieties"]), None),
@@ -115,6 +212,18 @@ with tab_list:
             ("図鑑達成率", f"{progress['completion_rate']}%", None),
         ]
     )
+
+    badge_col_1, badge_col_2, badge_col_3 = st.columns(3)
+    with badge_col_1:
+        render_status_badge(f"発見済み {progress['discovered_count']}種", tone="success", icon="✅")
+    with badge_col_2:
+        render_status_badge(f"未発見 {progress['undiscovered_count']}種", tone="neutral", icon="🔒")
+    with badge_col_3:
+        render_status_badge(
+            f"達成率 {progress['completion_rate']}%",
+            tone=_completion_badge_tone(float(progress["completion_rate"])),
+            icon="📘",
+        )
 
     card_rows = rows
     if discovered_only:
@@ -132,12 +241,13 @@ with tab_list:
                     st.session_state["selected_variety_id"] = row["id"]
                     st.rerun()
     else:
-        st.info("条件に一致する図鑑カードがありません。フィルタを緩めて再表示してください。")
+        render_surface("条件に一致する図鑑カードがありません。フィルタを緩めて再表示してください。", tone="soft")
 
     preselected = st.session_state.pop("selected_variety_id", "")
     options = [""] + [r["id"] for r in rows]
+    render_section_title("品種詳細", "図鑑カードまたはプルダウンから選択できます。")
     selected_id = st.selectbox(
-        "詳細表示する品種（図鑑カードからも選択可能）",
+        "詳細表示する品種",
         options,
         index=options.index(preselected) if preselected in options else 0,
         format_func=lambda x: (
@@ -152,6 +262,7 @@ with tab_list:
             else "未選択"
         ),
     )
+
     if selected_id:
         discovered = review_counts.get(selected_id, 0) > 0
         detail = get_variety_detail(selected_id)
@@ -159,11 +270,14 @@ with tab_list:
         with c1:
             if detail:
                 if not discovered:
-                    render_info_card(
-                        f"<strong>No.{detail.get('registration_number') or '----'}</strong><br>"
-                        "この品種は未発見です。レビューを登録すると詳細データが開示されます。"
+                    render_surface(
+                        f"No.{escape(str(detail.get('registration_number') or '----'))} は未発見です。<br>"
+                        "「試食評価」ページでこの品種のレビューを1件登録すると詳細データが開示されます。",
+                        title="情報ロック中",
+                        subtitle="図鑑発見条件",
+                        tone="soft",
+                        elevated=True,
                     )
-                    st.info("「試食評価」ページでこの品種のレビューを1件登録すると図鑑が更新されます。")
                 else:
                     render_info_card(
                         f"<strong>{detail.get('name', '-')}</strong><br>"
@@ -172,7 +286,7 @@ with tab_list:
                     )
                     d1, d2 = st.columns(2)
                     with d1:
-                        st.write("**基本情報**")
+                        render_surface("登録情報と開発背景を確認できます。", title="基本情報", tone="soft")
                         st.write(
                             {
                                 "学名": detail.get("scientific_name") or "-",
@@ -188,7 +302,7 @@ with tab_list:
                             }
                         )
                     with d2:
-                        st.write("**品質・運用情報**")
+                        render_surface("品質・運用条件を確認できます。", title="品質・運用情報", tone="soft")
                         st.write(
                             {
                                 "糖度(下限)": detail.get("brix_min"),
@@ -202,19 +316,22 @@ with tab_list:
                             }
                         )
                     if detail.get("characteristics_summary"):
-                        st.write("**特性の概要**")
-                        st.write(detail["characteristics_summary"])
+                        render_surface(_to_html_text(detail["characteristics_summary"]), title="特性の概要", tone="accent")
                     elif detail.get("description"):
-                        st.write("**説明**")
-                        st.write(detail["description"])
+                        render_surface(_to_html_text(detail["description"]), title="説明", tone="soft")
             else:
                 st.info("品種詳細を取得できませんでした。")
         with c2:
             if discovered:
+                render_surface(
+                    "登録済み画像を確認できます。必要に応じて作成・編集タブでメイン画像を更新してください。",
+                    title="画像プレビュー",
+                    tone="soft",
+                )
                 images = list_images_with_signed_urls("variety_images", "variety_id", selected_id)
                 render_image_gallery(images, "variety")
             else:
-                st.info("未発見のため画像表示はロックされています。")
+                render_surface("未発見のため画像表示はロックされています。", title="画像ロック中", tone="soft")
         if discovered and st.button("この品種を削除", key=f"delete_variety_{selected_id}"):
             soft_delete_variety(selected_id)
             st.success("削除しました。")
@@ -222,6 +339,12 @@ with tab_list:
 
 with tab_edit:
     render_section_title("作成・編集", "品種情報と画像を登録・更新します。")
+    render_action_bar(
+        title="入力ガイド",
+        description="基本情報・味覚指標・親品種リンクを入力後、必要に応じて画像をアップロードしてください。",
+        actions=["基本情報", "味覚指標", "親品種", "画像アップロード"],
+    )
+
     active = list_active_varieties()
     edit_id = st.selectbox(
         "編集対象",
@@ -317,6 +440,10 @@ with tab_edit:
 
     if edit_id != "新規作成":
         render_section_title("画像管理")
+        render_surface(
+            "画像は最大5枚まで登録できます。メイン画像を設定すると一覧や関連画面での表示基準になります。",
+            tone="soft",
+        )
         images = list_images_with_signed_urls("variety_images", "variety_id", edit_id)
         render_image_gallery(images, "variety_edit")
         primary_image_id = st.selectbox(
@@ -332,6 +459,7 @@ with tab_edit:
 
 with tab_deleted:
     render_section_title("削除済み品種", "復元対象を選択して戻せます。")
+    render_surface("誤削除した品種はここから復元できます。復元後は一覧タブですぐ確認できます。", tone="soft")
     page, page_size = render_pagination_controls("variety_deleted")
     deleted_rows, _ = list_varieties(include_deleted=True, page=page, page_size=page_size)
     deleted_rows = [row for row in deleted_rows if row.get("deleted_at")]

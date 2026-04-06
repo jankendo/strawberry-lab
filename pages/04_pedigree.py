@@ -5,7 +5,14 @@ from __future__ import annotations
 import streamlit as st
 from streamlit_plotly_events import plotly_events
 
-from src.components.layout import inject_app_style, render_page_header, render_section_title
+from src.components.layout import (
+    inject_app_style,
+    render_action_bar,
+    render_hero_banner,
+    render_kpi_cards,
+    render_section_title,
+    render_surface,
+)
 from src.components.sidebar import render_sidebar
 from src.services.auth_service import require_admin_session
 from src.services.pedigree_service import (
@@ -20,7 +27,17 @@ st.set_page_config(page_title="交配図", layout="wide")
 require_admin_session()
 inject_app_style()
 render_sidebar()
-render_page_header("交配図", "品種系統を可視化し、ノード選択から品種詳細へ移動できます。")
+render_hero_banner(
+    "交配図",
+    "品種系統をネットワークで可視化し、起点指定や深さ制御で必要な系譜だけを素早く確認できます。",
+    eyebrow="PEDIGREE",
+    chips=["起点品種指定", "祖先/子孫切替", "ノードクリック遷移"],
+)
+render_action_bar(
+    title="推奨ワークフロー",
+    description="親子リンクを整備したうえで、表示条件を調整し、気になるノードをクリックして詳細確認します。",
+    actions=["起点品種を選ぶ", "表示方向を切り替える", "最大深さを調整する", "ノードから詳細へ移動"],
+)
 
 render_section_title("交配図の設定ガイド", "初めてでも設定できるように、入力手順を整理しています。")
 with st.expander("交配図の作り方（詳しく見る）", expanded=False):
@@ -49,7 +66,7 @@ with st.expander("交配図の作り方（詳しく見る）", expanded=False):
         """
     )
 
-render_section_title("表示条件")
+render_section_title("表示条件", "表示対象と探索範囲を指定して、見たい系統だけに絞り込みます。")
 c1, c2, c3 = st.columns(3)
 with c1:
     include_deleted = st.checkbox("削除済みを含む", value=False)
@@ -82,6 +99,17 @@ graph = subgraph_by_root(graph, root_id, direction, max_depth)
 positions = layered_layout(graph)
 review_stats = {}
 fig = build_figure(graph, positions, review_stats)
+root_name = "全体" if not root_id else name_by_id.get(root_id, root_id)
+render_kpi_cards(
+    [
+        ("表示ノード数", str(graph.number_of_nodes()), "現在の条件で可視化"),
+        ("表示リンク数", str(graph.number_of_edges()), "親子リンク"),
+        ("起点品種", root_name, direction_label),
+        ("最大深さ", str(max_depth), "探索範囲"),
+    ]
+)
+render_section_title("交配グラフ", "ノードをクリックすると品種管理ページへ移動します。")
+render_surface("ヒント: ノードが密集する場合は、起点品種を指定して最大深さを2〜3に調整すると読みやすくなります。", tone="soft")
 events = plotly_events(fig, click_event=True, key="pedigree_graph")
 if events:
     point = events[0]
