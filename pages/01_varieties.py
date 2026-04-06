@@ -173,7 +173,7 @@ def _open_variety_detail(variety_id: str) -> None:
 st.set_page_config(page_title="品種管理", layout="wide")
 require_admin_session()
 inject_app_style()
-render_sidebar()
+render_sidebar(active_page="varieties")
 render_hero_banner(
     "品種管理",
     "登録情報の参照・編集・削除復元・画像管理を行います。",
@@ -190,38 +190,27 @@ render_action_bar(
 tab_list, tab_edit, tab_deleted = st.tabs(["一覧", "作成・編集", "削除済み"])
 
 with tab_list:
-    render_section_title("品種図鑑", "レビューを登録しながら図鑑を埋めていく体験で品種管理できます。")
-    render_surface(
-        "レビューを1件登録すると、未発見カードの詳細情報と画像が順次開示されます。",
-        title="図鑑ルール",
-        subtitle="図鑑モード",
-        tone="soft",
-    )
-    render_action_bar(
-        title="検索フィルタ",
-        description="キーワード・都道府県・発見状態で表示を絞り込めます。",
-        actions=["キーワード", "都道府県", "発見済みのみ表示"],
-    )
+    render_section_title("品種一覧", "フィルタ / 一覧 / 詳細パネルで管理できます。")
+    with st.container(border=True):
+        f1, f2, f3 = st.columns([2, 1, 1.4], gap="medium")
+        with f1:
+            keyword = st.text_input("キーワード", key="variety_keyword")
+        with f2:
+            prefecture = st.selectbox("都道府県", [""] + PREFECTURES, key="variety_pref_filter")
+        with f3:
+            discovery_filter = st.radio("表示状態", ["すべて", "発見済み", "未発見"], horizontal=True, key="variety_discovery_filter")
+        page, page_size = render_pagination_controls("variety_list")
 
-    f1, f2, f3 = st.columns(3)
-    with f1:
-        keyword = st.text_input("キーワード", key="variety_keyword")
-    with f2:
-        prefecture = st.selectbox("都道府県", [""] + PREFECTURES, key="variety_pref_filter")
-    with f3:
-        discovered_only = st.checkbox("発見済みのみ表示", value=False)
-
-    page, page_size = render_pagination_controls("variety_list")
     rows, total = list_varieties(
         keyword=keyword or None,
         prefecture=prefecture or None,
         page=page,
         page_size=page_size,
-        fields="id,name,registration_number,application_number,description,characteristics_summary",
+        fields="id,name,origin_prefecture,registration_number,application_number,description,characteristics_summary",
     )
     review_counts = get_review_counts_for_varieties([row["id"] for row in rows])
-    row_by_id = {row["id"]: row for row in rows}
     progress = get_pokedex_progress()
+    completion_ratio = (float(progress["completion_rate"]) / 100) if progress["total_varieties"] else 0.0
 
     render_kpi_cards(
         [
@@ -231,155 +220,103 @@ with tab_list:
             ("図鑑達成率", f"{progress['completion_rate']}%", None),
         ]
     )
-
-    badge_col_1, badge_col_2, badge_col_3 = st.columns(3)
-    with badge_col_1:
-        render_status_badge(f"発見済み {progress['discovered_count']}種", tone="success", icon="✅")
-    with badge_col_2:
-        render_status_badge(f"未発見 {progress['undiscovered_count']}種", tone="neutral", icon="🔒")
-    with badge_col_3:
-        render_status_badge(
-            f"達成率 {progress['completion_rate']}%",
-            tone=_completion_badge_tone(float(progress["completion_rate"])),
-            icon="📘",
-        )
-
-    visible_rows = rows
-    if discovered_only:
-        visible_rows = [row for row in rows if review_counts.get(row["id"], 0) > 0]
-
-    discovered_rows = [row for row in visible_rows if review_counts.get(row["id"], 0) > 0]
-    undiscovered_rows = [row for row in visible_rows if review_counts.get(row["id"], 0) == 0]
-
+    st.progress(completion_ratio)
     st.caption(
-        "現在ページ表示件数: "
-        f"{len(visible_rows)}件（発見済み {len(discovered_rows)}件 / 未発見 {len(undiscovered_rows)}件）"
-        f" / 全体: {total}件"
+        f"進捗: 全{progress['total_varieties']}件中、発見 {progress['discovered_count']}件 / 未発見 {progress['undiscovered_count']}件"
     )
-    if not visible_rows:
-        render_empty_state(
-            "条件に一致する品種がありません。",
-            title="表示できる品種がありません",
-            hint="キーワードや都道府県条件を緩めて再表示してください。",
-        )
+
+    if discovery_filter == "発見済み":
+        visible_rows = [row for row in rows if review_counts.get(row["id"], 0) > 0]
+    elif discovery_filter == "未発見":
+        visible_rows = [row for row in rows if review_counts.get(row["id"], 0) == 0]
     else:
-        if discovered_rows:
-            render_section_title("発見済み品種", "詳細情報とレビュー件数を確認できます。")
-            columns = st.columns(3)
-            for index, row in enumerate(discovered_rows):
-                review_count = review_counts.get(row["id"], 0)
-                with columns[index % 3]:
-                    if _render_discovered_dex_card(row, review_count):
-                        _open_variety_detail(row["id"])
-        else:
-            render_empty_state(
-                "このページに表示中の発見済み品種はまだありません。",
-                title="発見済み品種はまだありません",
-                hint="「試食評価」でレビューを1件登録すると詳細が開示されます。",
-            )
+        visible_rows = rows
 
-        if undiscovered_rows:
-            render_section_title("未発見品種（コンパクト表示）", "省スペースで一覧化しています。")
-            st.page_link("pages/02_reviews.py", label="📝 試食評価を登録して開示を進める", use_container_width=True)
-            with st.expander(f"未発見 {len(undiscovered_rows)}種を表示", expanded=False):
-                for row in undiscovered_rows:
-                    if _render_undiscovered_dex_row(row):
-                        _open_variety_detail(row["id"])
-
+    if "variety_selected_from_list" not in st.session_state:
+        st.session_state["variety_selected_from_list"] = ""
     preselected = st.session_state.pop("selected_variety_id", "")
-    options = [""] + [r["id"] for r in rows]
-    render_section_title("品種詳細", "図鑑カードまたはプルダウンから選択できます。")
-    selected_id = st.selectbox(
-        "詳細表示する品種",
-        options,
-        index=options.index(preselected) if preselected in options else 0,
-        format_func=lambda x: (
-            "未選択"
-            if not x
-            else (
-                row_by_id[x]["name"]
-                if review_counts.get(x, 0) > 0
-                else f"No.{row_by_id[x].get('registration_number') or '----'} ？？？？？"
-            )
-            if x in row_by_id
-            else "未選択"
-        ),
-    )
+    if preselected:
+        st.session_state["variety_selected_from_list"] = preselected
 
-    if selected_id:
-        discovered = review_counts.get(selected_id, 0) > 0
-        detail = get_variety_detail(selected_id)
-        c1, c2 = st.columns([3, 2])
-        with c1:
+    list_col, detail_col = st.columns([1.4, 1], gap="large")
+    with list_col:
+        render_section_title("一覧", f"現在ページ: {len(visible_rows)}件 / 全体: {total}件")
+        if not visible_rows:
+            render_empty_state(
+                "条件に一致する品種がありません。",
+                title="表示できる品種がありません",
+                hint="キーワードや都道府県条件を調整してください。",
+            )
+        else:
+            for row in visible_rows:
+                variety_id = row["id"]
+                discovered = review_counts.get(variety_id, 0) > 0
+                display_name = row.get("name") or "名称未設定"
+                if not discovered:
+                    token = row.get("registration_number") or row.get("application_number") or "----"
+                    display_name = f"No.{token} ？？？？？"
+                with st.container(border=True):
+                    st.markdown(f"**{display_name}**")
+                    st.caption(f"都道府県: {row.get('origin_prefecture') or '-'}")
+                    render_status_badge("発見済み" if discovered else "未発見", tone="success" if discovered else "neutral")
+                    st.caption(f"レビュー件数: {review_counts.get(variety_id, 0)}件")
+                    action_col, quick_col = st.columns(2, gap="small")
+                    with action_col:
+                        if st.button("詳細を表示", key=f"variety_open_{variety_id}", use_container_width=True):
+                            st.session_state["variety_selected_from_list"] = variety_id
+                            st.rerun()
+                    with quick_col:
+                        if not discovered:
+                            st.page_link("pages/02_reviews.py", label="📝 レビュー登録", use_container_width=True)
+
+    with detail_col:
+        selected_id = st.session_state.get("variety_selected_from_list", "")
+        if selected_id and not any(row["id"] == selected_id for row in visible_rows):
+            selected_id = visible_rows[0]["id"] if visible_rows else ""
+            st.session_state["variety_selected_from_list"] = selected_id
+
+        if selected_id:
+            discovered = review_counts.get(selected_id, 0) > 0
+            detail = get_variety_detail(selected_id)
             if detail:
                 if not discovered:
                     render_surface(
                         f"No.{str(detail.get('registration_number') or '----')} は未発見です。\n\n"
-                        "「試食評価」ページでこの品種のレビューを1件登録すると、詳細データと画像が開示されます。",
+                        "「試食評価」ページでこの品種のレビューを1件登録すると、詳細情報と画像が開示されます。",
                         title="情報ロック中",
-                        subtitle="図鑑発見条件",
                         tone="soft",
-                        elevated=True,
                     )
-                    st.page_link("pages/02_reviews.py", label="📝 試食評価ページを開く", use_container_width=True)
+                    st.page_link("pages/02_reviews.py", label="📝 試食評価を開く", use_container_width=True)
                 else:
                     render_info_card(
                         f"**{detail.get('name', '-')}**\n\n"
                         f"登録番号: {detail.get('registration_number') or '-'} / "
                         f"出願番号: {detail.get('application_number') or '-'}"
                     )
-                    d1, d2 = st.columns(2)
-                    with d1:
-                        render_surface("登録情報と開発背景を確認できます。", title="基本情報", tone="soft")
-                        st.write(
-                            {
-                                "学名": detail.get("scientific_name") or "-",
-                                "和名": detail.get("japanese_name") or "-",
-                                "登録年月日": detail.get("registration_date") or "-",
-                                "出願年月日": detail.get("application_date") or "-",
-                                "出願公表年月日": detail.get("publication_date") or "-",
-                                "開発者": detail.get("developer") or "-",
-                                "育成者権者": detail.get("breeder_right_holder") or "-",
-                                "出願者": detail.get("applicant") or "-",
-                                "育成地": detail.get("breeding_place") or "-",
-                                "都道府県": detail.get("origin_prefecture") or "-",
-                            }
-                        )
-                    with d2:
-                        render_surface("品質・運用条件を確認できます。", title="品質・運用情報", tone="soft")
-                        st.write(
-                            {
-                                "糖度(下限)": detail.get("brix_min"),
-                                "糖度(上限)": detail.get("brix_max"),
-                                "酸味レベル": detail.get("acidity_level") or "-",
-                                "収穫開始月": detail.get("harvest_start_month"),
-                                "収穫終了月": detail.get("harvest_end_month"),
-                                "利用条件": detail.get("usage_conditions") or "-",
-                                "権利存続期間": detail.get("right_duration") or "-",
-                                "備考": detail.get("remarks") or "-",
-                            }
-                        )
+                    st.write(
+                        {
+                            "都道府県": detail.get("origin_prefecture") or "-",
+                            "開発者": detail.get("developer") or "-",
+                            "糖度(下限)": detail.get("brix_min"),
+                            "糖度(上限)": detail.get("brix_max"),
+                            "酸味レベル": detail.get("acidity_level") or "-",
+                            "収穫期": f"{detail.get('harvest_start_month') or '-'}〜{detail.get('harvest_end_month') or '-'}月",
+                        }
+                    )
                     if detail.get("characteristics_summary"):
                         render_surface(detail["characteristics_summary"], title="特性の概要", tone="accent")
                     elif detail.get("description"):
                         render_surface(detail["description"], title="説明", tone="soft")
+                    images = list_images_with_signed_urls("variety_images", "variety_id", selected_id)
+                    render_image_gallery(images, "variety")
+                    if st.button("この品種を削除", key=f"delete_variety_{selected_id}", use_container_width=True):
+                        soft_delete_variety(selected_id)
+                        st.success("削除しました。")
+                        st.rerun()
             else:
                 render_empty_state("品種詳細を取得できませんでした。", title="品種詳細を表示できません")
-        with c2:
-            if discovered:
-                render_surface(
-                    "登録済み画像を確認できます。必要に応じて作成・編集タブでメイン画像を更新してください。",
-                    title="画像プレビュー",
-                    tone="soft",
-                )
-                images = list_images_with_signed_urls("variety_images", "variety_id", selected_id)
-                render_image_gallery(images, "variety")
-            else:
-                render_surface("未発見のため画像表示はロックされています。", title="画像ロック中", tone="soft")
-        if discovered and st.button("この品種を削除", key=f"delete_variety_{selected_id}", use_container_width=True):
-            soft_delete_variety(selected_id)
-            st.success("削除しました。")
-            st.rerun()
+        else:
+            render_empty_state("一覧から品種を選択すると詳細が表示されます。", title="品種未選択")
 
 with tab_edit:
     render_section_title("作成・編集", "品種情報と画像を登録・更新します。")

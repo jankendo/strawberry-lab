@@ -14,6 +14,7 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
    - `pip install -r requirements-dev.txt`
 2. Copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml` and set real values.
    - `APP_COOKIE_SECRET` を設定すると、ログイン状態を30日安定して保持できます（未設定時は一時ランダム秘密鍵へフォールバックし、再起動/再デプロイで保持がリセットされる場合があります）。
+   - `APP_HIDE_HOST_CHROME` を `true` にすると、Streamlitホスト由来の上部ツールUIを非表示にします（既定値は `true`）。
 3. Apply SQL migrations in Supabase SQL Editor in this order:
    1. `database/000_extensions.sql`
    2. `database/001_functions.sql`
@@ -37,6 +38,11 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 - **Quick actions on Home**: dashboard now highlights one-click page shortcuts and follow-up links for review/log operations.
 - **Consistent empty states**: Home / 品種管理 / 試食評価 / 分析 / 交配図 / 研究メモ / 設定 show guided empty-state cards with next steps.
 - **Pedigree graph readability**: denser lineage graphs use improved layout spacing, viewport sizing, and click navigation reliability.
+
+## v8 updates (UI redesign)
+- **Neutral-first design system**: default input/background now uses neutral colors, with strawberry accent reserved for primary actions and focus states.
+- **Sidebar hierarchy refresh**: active page is highlighted, and account actions (設定/ログアウト) are grouped in the user area.
+- **Information architecture updates**: Home / 品種管理 / 試食評価 / 分析 / 交配図 / 研究メモ / 設定 were reorganized for stronger action priority, clearer empty states, and improved table readability.
 
 ## Login persistence (30 days)
 - This app supports login skip on revisit by storing encrypted auth session cookies.

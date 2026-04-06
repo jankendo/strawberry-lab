@@ -1,8 +1,8 @@
 [theme]
 primaryColor = "#E8334A"
-backgroundColor = "#FFFAF0"
-secondaryBackgroundColor = "#FFE4E1"
-textColor = "#333333"
+backgroundColor = "#F6F8FB"
+secondaryBackgroundColor = "#EDF1F6"
+textColor = "#1F2937"
 font = "sans serif"
 
 [server]
@@ -10,3 +10,4 @@ maxUploadSize = 50
 
 [client]
 showSidebarNavigation = false
+toolbarMode = "minimal"

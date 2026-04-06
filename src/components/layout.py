@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html import unescape
+import os
 import re
 
 import streamlit as st
@@ -23,11 +24,11 @@ _BADGE_TONE_ALIASES = {
 _BADGE_TONES = {"neutral", "success", "warning", "danger", "info"}
 
 _BADGE_STYLE = {
-    "neutral": {"color": "gray", "icon": "◯"},
-    "success": {"color": "green", "icon": "✅"},
-    "warning": {"color": "orange", "icon": "⚠️"},
-    "danger": {"color": "red", "icon": "⛔"},
-    "info": {"color": "blue", "icon": "ℹ️"},
+    "neutral": {"icon": "◯"},
+    "success": {"icon": "✅"},
+    "warning": {"icon": "⚠️"},
+    "danger": {"icon": "⛔"},
+    "info": {"icon": "ℹ️"},
 }
 
 _SURFACE_TONE_ALIASES = {
@@ -37,11 +38,8 @@ _SURFACE_TONE_ALIASES = {
     "muted": "soft",
     "accent": "accent",
     "brand": "accent",
-}
-
-_SURFACE_LABELS = {
-    "soft": ":blue[補足]",
-    "accent": ":red[注目]",
+    "warning": "warning",
+    "danger": "danger",
 }
 
 _HTML_LINE_BREAK_RE = re.compile(r"(?i)<br\s*/?>")
@@ -50,195 +48,411 @@ _HTML_LIST_OPEN_RE = re.compile(r"(?i)<li[^>]*>")
 _HTML_STRONG_OPEN_RE = re.compile(r"(?i)<(?:strong|b)>")
 _HTML_STRONG_CLOSE_RE = re.compile(r"(?i)</(?:strong|b)>")
 _HTML_TAG_RE = re.compile(r"(?is)<[^>]+>")
+_NON_WORD_RE = re.compile(r"[^A-Za-z0-9_]+")
+
+
+def _as_bool(value: object | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on", "y"}:
+        return True
+    if normalized in {"0", "false", "no", "off", "n"}:
+        return False
+    return default
+
+
+def _should_hide_host_chrome() -> bool:
+    try:
+        secret_value = st.secrets.get("APP_HIDE_HOST_CHROME")
+    except Exception:
+        secret_value = None
+    env_value = os.getenv("APP_HIDE_HOST_CHROME")
+    if secret_value is not None:
+        return _as_bool(secret_value, default=True)
+    if env_value is not None:
+        return _as_bool(env_value, default=True)
+    return True
 
 
 def inject_app_style() -> None:
-    """Inject a high-contrast, strawberry-accent visual system."""
-    st.markdown(
+    """Inject product-oriented, neutral-first design tokens and component styles."""
+    host_chrome_css = ""
+    if _should_hide_host_chrome():
+        host_chrome_css = """
+        header[data-testid="stHeader"],
+        [data-testid="stToolbar"],
+        [data-testid="stDecoration"],
+        [data-testid="stStatusWidget"],
+        #MainMenu,
+        button[kind="header"] {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+        }
         """
-        <style>
-        :root {
-            --sl-bg: #ffffff;
-            --sl-surface: #ffffff;
-            --sl-surface-soft: #fff7fb;
-            --sl-accent: #c42656;
-            --sl-accent-strong: #6b0f2f;
-            --sl-border: #e8d5df;
-            --sl-border-strong: #c992ab;
-            --sl-text: #1f2430;
-            --sl-heading: #3f1023;
-            --sl-muted: #4f4954;
-            --sl-space-1: 0.5rem;
-            --sl-space-2: 1rem;
-            --sl-space-3: 1.5rem;
-            --sl-space-4: 2rem;
-        }
-        [data-testid="stAppViewContainer"],
-        [data-testid="stSidebar"] {
-            font-family: "Yu Gothic UI", "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", sans-serif;
-        }
-        [data-testid="stAppViewContainer"] {
-            background: var(--sl-bg);
-            color: var(--sl-text);
-        }
-        .block-container {
-            max-width: 1240px;
-            padding-top: var(--sl-space-3);
-            padding-bottom: var(--sl-space-4);
-            padding-left: var(--sl-space-3);
-            padding-right: var(--sl-space-3);
-        }
-        [data-testid="stVerticalBlock"] {
-            gap: var(--sl-space-2);
-        }
-        h1, h2, h3, h4, h5, h6 {
-            color: var(--sl-heading);
-            line-height: 1.35;
-            letter-spacing: 0.01em;
-            margin-bottom: var(--sl-space-1);
-        }
-        p, label, [data-testid="stMarkdownContainer"] {
-            color: var(--sl-text);
-            line-height: 1.65;
-        }
-        [data-testid="stCaptionContainer"] {
-            color: var(--sl-muted);
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            background: var(--sl-surface);
-            border: 1px solid var(--sl-border);
-            border-radius: 14px;
-            padding: var(--sl-space-2);
-            margin-bottom: var(--sl-space-2);
-            box-shadow: 0 4px 18px rgba(122, 18, 54, 0.06);
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"]:focus-within {
-            border-color: var(--sl-accent);
-            box-shadow: 0 0 0 2px rgba(196, 38, 86, 0.15);
-        }
-        div[data-testid="stMetric"] {
-            background: var(--sl-surface);
-            border: 1px solid var(--sl-border);
-            border-radius: 12px;
-            padding: var(--sl-space-1) var(--sl-space-2);
-        }
-        div[data-testid="stMetricLabel"] {
-            color: var(--sl-muted);
-            font-size: 0.84rem;
-        }
-        div[data-testid="stMetricValue"] {
-            color: var(--sl-heading);
-            font-size: 1.5rem;
-            font-weight: 700;
-        }
-        [data-testid="stButton"] > button,
-        [data-testid="stDownloadButton"] > button,
-        [data-testid="stFormSubmitButton"] > button {
-            min-height: 40px;
-            border-radius: 10px;
-            border: 1px solid var(--sl-border-strong);
-            background: #ffffff;
-            color: var(--sl-accent-strong);
-            font-weight: 600;
-            padding: 0 var(--sl-space-2);
-            transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
-        }
-        [data-testid="stButton"] > button:hover,
-        [data-testid="stDownloadButton"] > button:hover,
-        [data-testid="stFormSubmitButton"] > button:hover {
-            border-color: var(--sl-accent);
-            background: var(--sl-surface-soft);
-            color: var(--sl-accent-strong);
-        }
-        [data-testid="stButton"] > button:focus-visible,
-        [data-testid="stDownloadButton"] > button:focus-visible,
-        [data-testid="stFormSubmitButton"] > button:focus-visible {
-            outline: 3px solid rgba(196, 38, 86, 0.25);
-            outline-offset: 2px;
-        }
-        [data-testid="stButton"] > button[kind="primary"],
-        [data-testid="stFormSubmitButton"] > button[kind="primary"] {
-            background: var(--sl-accent);
-            border-color: var(--sl-accent);
-            color: #ffffff;
-        }
-        [data-testid="stButton"] > button[kind="primary"]:hover,
-        [data-testid="stFormSubmitButton"] > button[kind="primary"]:hover {
-            background: var(--sl-accent-strong);
-            border-color: var(--sl-accent-strong);
-            color: #ffffff;
-        }
-        a {
-            color: var(--sl-accent-strong);
-            text-decoration-thickness: 1.5px;
-            text-underline-offset: 0.16em;
-        }
-        a[data-testid="stPageLink-NavLink"] {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            min-height: 40px;
-            border-radius: 10px;
-            border: 1px solid var(--sl-border-strong);
-            background: #ffffff;
-            color: var(--sl-accent-strong);
-            font-weight: 600;
-            padding: 0 var(--sl-space-2);
-            text-decoration: none;
-            margin-bottom: var(--sl-space-1);
-            transition: border-color 0.2s ease, background-color 0.2s ease;
-        }
-        a[data-testid="stPageLink-NavLink"]:hover {
-            border-color: var(--sl-accent);
-            background: var(--sl-surface-soft);
-            color: var(--sl-accent-strong);
-        }
-        a[data-testid="stPageLink-NavLink"]:focus-visible {
-            outline: 3px solid rgba(196, 38, 86, 0.25);
-            outline-offset: 2px;
-        }
-        div[data-baseweb="input"] > div,
-        div[data-baseweb="select"] > div,
-        div[data-baseweb="textarea"] > div {
-            border-color: var(--sl-border-strong);
-            border-radius: 10px;
-            min-height: 40px;
-        }
-        div[data-baseweb="input"] > div:focus-within,
-        div[data-baseweb="select"] > div:focus-within,
-        div[data-baseweb="textarea"] > div:focus-within {
-            border-color: var(--sl-accent);
-            box-shadow: 0 0 0 2px rgba(196, 38, 86, 0.15);
-        }
-        .stTabs [data-baseweb="tab-list"] {
-            gap: var(--sl-space-1);
-            margin-bottom: var(--sl-space-2);
-        }
-        .stTabs [data-baseweb="tab"] {
-            min-height: 40px;
-            border-radius: 10px;
-            border: 1px solid var(--sl-border-strong);
-            padding: 0 var(--sl-space-2);
-            background: #ffffff;
-            color: var(--sl-accent-strong);
-            font-weight: 600;
-        }
-        .stTabs [data-baseweb="tab"]:hover {
-            border-color: var(--sl-accent);
-            background: var(--sl-surface-soft);
-        }
-        .stTabs [data-baseweb="tab"][aria-selected="true"] {
-            background: var(--sl-accent);
-            border-color: var(--sl-accent);
-            color: #ffffff;
-        }
-        [data-testid="stSidebar"] {
-            background: var(--sl-surface-soft);
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+
+    style = """
+    <style>
+    :root {
+        --sl-bg: #f6f8fb;
+        --sl-surface: #ffffff;
+        --sl-surface-soft: #f3f5f8;
+        --sl-surface-muted: #edf1f6;
+        --sl-primary: #e8334a;
+        --sl-primary-strong: #b92338;
+        --sl-text: #1f2937;
+        --sl-heading: #111827;
+        --sl-muted: #5b6472;
+        --sl-border: #d7dde7;
+        --sl-border-strong: #bcc6d6;
+        --sl-success: #1f8a4c;
+        --sl-warning: #b87400;
+        --sl-danger: #c23535;
+        --sl-info: #2f6feb;
+        --sl-space-1: 0.5rem;   /* 8px */
+        --sl-space-2: 1rem;     /* 16px */
+        --sl-space-3: 1.5rem;   /* 24px */
+        --sl-space-4: 2rem;     /* 32px */
+        --sl-space-5: 2.5rem;   /* 40px */
+        --sl-space-6: 3rem;     /* 48px */
+    }
+
+    [data-testid="stAppViewContainer"],
+    [data-testid="stSidebar"] {
+        font-family: "Yu Gothic UI", "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    }
+    [data-testid="stAppViewContainer"] {
+        background: var(--sl-bg);
+        color: var(--sl-text);
+    }
+    .block-container {
+        max-width: 1320px;
+        padding-top: var(--sl-space-3);
+        padding-bottom: var(--sl-space-5);
+        padding-left: var(--sl-space-3);
+        padding-right: var(--sl-space-3);
+    }
+    [data-testid="stVerticalBlock"] {
+        gap: var(--sl-space-3);
+    }
+
+    h1 {
+        font-size: 2.35rem;   /* ~38px */
+        line-height: 1.25;
+        margin-top: var(--sl-space-1);
+        margin-bottom: var(--sl-space-2);
+    }
+    h2 {
+        font-size: 1.72rem;   /* ~27px */
+        line-height: 1.3;
+        margin-bottom: var(--sl-space-2);
+    }
+    h3 {
+        font-size: 1.2rem;    /* ~19px */
+        line-height: 1.35;
+        margin-bottom: var(--sl-space-1);
+    }
+    h1, h2, h3, h4, h5, h6 {
+        color: var(--sl-heading);
+        letter-spacing: 0.01em;
+    }
+    p, label, [data-testid="stMarkdownContainer"] {
+        color: var(--sl-text);
+        font-size: 0.95rem; /* 15px */
+        line-height: 1.6;
+    }
+    [data-testid="stCaptionContainer"] {
+        color: var(--sl-muted);
+        font-size: 0.8rem;  /* 12-13px */
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: var(--sl-surface);
+        border: 1px solid var(--sl-border);
+        border-radius: 12px;
+        padding: var(--sl-space-2);
+        margin-bottom: var(--sl-space-2);
+        box-shadow: 0 2px 12px rgba(17, 24, 39, 0.04);
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"]:focus-within {
+        border-color: var(--sl-primary);
+        box-shadow: 0 0 0 2px rgba(232, 51, 74, 0.16);
+    }
+
+    div[data-testid="stMetric"] {
+        background: var(--sl-surface);
+        border: 1px solid var(--sl-border);
+        border-radius: 10px;
+        padding: var(--sl-space-1) var(--sl-space-2);
+    }
+    div[data-testid="stMetricLabel"] {
+        color: var(--sl-muted);
+        font-size: 0.82rem;
+    }
+    div[data-testid="stMetricValue"] {
+        color: var(--sl-heading);
+        font-size: 1.4rem;
+        font-weight: 700;
+    }
+
+    [data-testid="stButton"] > button,
+    [data-testid="stDownloadButton"] > button,
+    [data-testid="stFormSubmitButton"] > button {
+        min-height: 40px;
+        border-radius: 10px;
+        border: 1px solid var(--sl-border-strong);
+        background: #ffffff;
+        color: var(--sl-text);
+        font-weight: 600;
+        padding: 0 var(--sl-space-2);
+        transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+    }
+    [data-testid="stButton"] > button:hover,
+    [data-testid="stDownloadButton"] > button:hover,
+    [data-testid="stFormSubmitButton"] > button:hover {
+        border-color: var(--sl-primary);
+        background: #fef8f9;
+    }
+    [data-testid="stButton"] > button:focus-visible,
+    [data-testid="stDownloadButton"] > button:focus-visible,
+    [data-testid="stFormSubmitButton"] > button:focus-visible {
+        outline: 3px solid rgba(232, 51, 74, 0.24);
+        outline-offset: 2px;
+    }
+    [data-testid="stButton"] > button[kind="primary"],
+    [data-testid="stFormSubmitButton"] > button[kind="primary"],
+    [data-testid="stDownloadButton"] > button[kind="primary"] {
+        background: var(--sl-primary);
+        border-color: var(--sl-primary);
+        color: #ffffff;
+    }
+    [data-testid="stButton"] > button[kind="primary"]:hover,
+    [data-testid="stFormSubmitButton"] > button[kind="primary"]:hover,
+    [data-testid="stDownloadButton"] > button[kind="primary"]:hover {
+        background: var(--sl-primary-strong);
+        border-color: var(--sl-primary-strong);
+        color: #ffffff;
+    }
+    [data-testid="stButton"] > button:disabled,
+    [data-testid="stFormSubmitButton"] > button:disabled {
+        background: var(--sl-surface-soft);
+        color: var(--sl-muted);
+        border-color: var(--sl-border);
+    }
+
+    a {
+        color: var(--sl-info);
+        text-decoration-thickness: 1.2px;
+        text-underline-offset: 0.12em;
+    }
+    a[data-testid="stPageLink-NavLink"] {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 40px;
+        border-radius: 10px;
+        border: 1px solid var(--sl-border-strong);
+        background: #ffffff;
+        color: var(--sl-text);
+        font-weight: 600;
+        padding: 0 var(--sl-space-2);
+        text-decoration: none;
+        margin-bottom: var(--sl-space-1);
+        transition: border-color 0.2s ease, background-color 0.2s ease;
+    }
+    a[data-testid="stPageLink-NavLink"]:hover {
+        border-color: var(--sl-primary);
+        background: #fef8f9;
+    }
+    a[data-testid="stPageLink-NavLink"]:focus-visible {
+        outline: 3px solid rgba(232, 51, 74, 0.24);
+        outline-offset: 2px;
+    }
+
+    div[data-baseweb="input"] > div,
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="textarea"] > div {
+        border-color: var(--sl-border-strong) !important;
+        background: #ffffff !important;
+        border-radius: 10px !important;
+        min-height: 40px;
+    }
+    div[data-baseweb="input"] input,
+    div[data-baseweb="textarea"] textarea {
+        background: #ffffff !important;
+    }
+    div[data-baseweb="input"] > div:focus-within,
+    div[data-baseweb="select"] > div:focus-within,
+    div[data-baseweb="textarea"] > div:focus-within {
+        border-color: var(--sl-primary) !important;
+        box-shadow: 0 0 0 2px rgba(232, 51, 74, 0.18) !important;
+    }
+    div[data-baseweb="input"] > div[data-invalid="true"],
+    div[data-baseweb="select"] > div[data-invalid="true"],
+    div[data-baseweb="textarea"] > div[data-invalid="true"] {
+        border-color: var(--sl-danger) !important;
+        background: #fff3f3 !important;
+        box-shadow: 0 0 0 2px rgba(194, 53, 53, 0.16) !important;
+    }
+
+    .stTabs [data-baseweb="tab-list"] {
+        gap: var(--sl-space-1);
+        margin-bottom: var(--sl-space-2);
+    }
+    .stTabs [data-baseweb="tab"] {
+        min-height: 40px;
+        border-radius: 10px;
+        border: 1px solid var(--sl-border-strong);
+        padding: 0 var(--sl-space-2);
+        background: #ffffff;
+        color: var(--sl-text);
+        font-weight: 600;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        border-color: var(--sl-primary);
+        background: #fef8f9;
+    }
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        background: var(--sl-primary);
+        border-color: var(--sl-primary);
+        color: #ffffff;
+    }
+
+    [data-testid="stSidebar"] {
+        background: var(--sl-surface-soft);
+        border-right: 1px solid var(--sl-border);
+    }
+    [data-testid="stSidebar"] .sl-sidebar-brand {
+        border: 1px solid var(--sl-border);
+        border-radius: 12px;
+        background: #ffffff;
+        padding: var(--sl-space-2);
+        margin-bottom: var(--sl-space-2);
+    }
+    [data-testid="stSidebar"] .sl-sidebar-brand-title {
+        color: var(--sl-heading);
+        font-size: 1.02rem;
+        font-weight: 700;
+    }
+    [data-testid="stSidebar"] .sl-sidebar-brand-sub {
+        color: var(--sl-muted);
+        font-size: 0.78rem;
+    }
+    [data-testid="stSidebar"] .sl-sidebar-active {
+        display: flex;
+        align-items: center;
+        min-height: 40px;
+        border-radius: 10px;
+        border: 1px solid var(--sl-primary);
+        background: rgba(232, 51, 74, 0.1);
+        color: var(--sl-heading);
+        font-weight: 700;
+        padding: 0 var(--sl-space-2);
+        margin-bottom: var(--sl-space-1);
+    }
+    [data-testid="stSidebar"] .sl-sidebar-user {
+        border: 1px solid var(--sl-border);
+        border-radius: 12px;
+        background: #ffffff;
+        padding: var(--sl-space-2);
+        margin-top: var(--sl-space-2);
+    }
+
+    .sl-workspace-meta-row {
+        margin-bottom: var(--sl-space-2);
+    }
+    .sl-meta-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: 40px;
+        padding: 0 var(--sl-space-1);
+        border: 1px solid var(--sl-border-strong);
+        border-radius: 10px;
+        background: #ffffff;
+        color: var(--sl-text);
+        font-size: 0.82rem;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .sl-context-chip {
+        display: inline-block;
+        margin: 0 var(--sl-space-1) var(--sl-space-1) 0;
+        padding: 0.24rem 0.62rem;
+        border-radius: 999px;
+        border: 1px solid var(--sl-border);
+        background: var(--sl-surface-soft);
+        color: var(--sl-muted);
+        font-size: 0.78rem;
+        font-weight: 600;
+    }
+    .sl-user-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: 40px;
+        padding: 0 var(--sl-space-1);
+        border-radius: 10px;
+        border: 1px solid var(--sl-border-strong);
+        background: #ffffff;
+        color: var(--sl-text);
+        font-size: 0.78rem;
+        font-weight: 600;
+    }
+
+    .sl-status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.28rem;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        padding: 0.2rem 0.58rem;
+        font-size: 0.78rem;
+        font-weight: 700;
+    }
+    .sl-status-neutral {
+        color: #4b5563;
+        background: #f3f4f6;
+        border-color: #d1d5db;
+    }
+    .sl-status-success {
+        color: #166534;
+        background: #ecfdf3;
+        border-color: #86efac;
+    }
+    .sl-status-warning {
+        color: #92400e;
+        background: #fffbeb;
+        border-color: #fcd34d;
+    }
+    .sl-status-danger {
+        color: #991b1b;
+        background: #fef2f2;
+        border-color: #fca5a5;
+    }
+    .sl-status-info {
+        color: #1d4ed8;
+        background: #eff6ff;
+        border-color: #93c5fd;
+    }
+
+    [data-testid="stDataFrame"] thead tr th {
+        background: var(--sl-surface-muted) !important;
+        color: var(--sl-heading) !important;
+    }
+    [data-testid="stDataFrame"] tbody tr:hover td {
+        background: #f8fbff !important;
+    }
+
+    __HOST_CHROME_CSS__
+    </style>
+    """
+    st.markdown(style.replace("__HOST_CHROME_CSS__", host_chrome_css), unsafe_allow_html=True)
 
 
 def _normalize_badge_tone(tone: str | None) -> str:
@@ -289,6 +503,42 @@ def _sanitize_markdown(value: object | None) -> str:
     return _collapse_lines(unescape(text))
 
 
+def _keyify(value: object | None) -> str:
+    raw = _sanitize_text(value).strip() or "default"
+    return _NON_WORD_RE.sub("_", raw).strip("_").lower() or "default"
+
+
+def _render_workspace_meta_controls(context: str) -> None:
+    if not st.session_state.get("is_authenticated"):
+        return
+
+    user_email = _sanitize_text((st.session_state.get("current_user") or {}).get("email") or "unknown")
+    notification_count = int(st.session_state.get("ui_notification_count", 0) or 0)
+    control_key = _keyify(context)
+
+    left_space, controls_col = st.columns([1.5, 1.9], gap="small")
+    with left_space:
+        st.caption("研究ワークスペース")
+    with controls_col:
+        st.markdown('<div class="sl-workspace-meta-row"></div>', unsafe_allow_html=True)
+        c1, c2, c3, c4 = st.columns([1, 1, 1, 2], gap="small")
+        with c1:
+            st.markdown(
+                f'<span class="sl-meta-chip">🔔 通知 {notification_count}</span>',
+                unsafe_allow_html=True,
+            )
+        with c2:
+            st.markdown('<span class="sl-meta-chip">❓ ヘルプ</span>', unsafe_allow_html=True)
+        with c3:
+            if st.button("⚙️ 設定", key=f"workspace_settings_{control_key}", type="secondary", use_container_width=True):
+                st.switch_page("pages/07_settings.py")
+        with c4:
+            st.markdown(
+                f'<span class="sl-user-chip">👤 {user_email}</span>',
+                unsafe_allow_html=True,
+            )
+
+
 def render_page_header(title: str, description: str) -> None:
     """Render consistent page title block."""
     with st.container(border=True):
@@ -303,15 +553,19 @@ def render_hero_banner(
     eyebrow: str | None = None,
     chips: list[str] | None = None,
 ) -> None:
-    """Render modern hero banner with optional context chips."""
+    """Render top hero block with workspace controls."""
     with st.container(border=True):
+        _render_workspace_meta_controls(title)
         if eyebrow:
             st.caption(_sanitize_text(eyebrow))
-        st.markdown(f"## {_sanitize_text(title)}")
+        st.markdown(f"# {_sanitize_text(title)}")
         st.write(_sanitize_text(description))
         clean_chips = [chip for chip in (_sanitize_text(item) for item in (chips or [])) if chip]
         if clean_chips:
-            st.markdown(" ".join(f"`{chip}`" for chip in clean_chips))
+            st.markdown(
+                "".join(f'<span class="sl-context-chip">{chip}</span>' for chip in clean_chips),
+                unsafe_allow_html=True,
+            )
 
 
 def render_action_bar(
@@ -320,7 +574,7 @@ def render_action_bar(
     title: str | None = None,
     description: str | None = None,
 ) -> None:
-    """Render action summary bar with optional action chips."""
+    """Render compact action summary with low visual dominance."""
     clean_title = _sanitize_text(title)
     clean_description = _sanitize_text(description)
     clean_actions = [action for action in (_sanitize_text(item) for item in (actions or [])) if action]
@@ -333,7 +587,10 @@ def render_action_bar(
         if clean_description:
             st.caption(clean_description)
         if clean_actions:
-            st.markdown(" ".join(f"`{action}`" for action in clean_actions))
+            st.markdown(
+                "".join(f'<span class="sl-context-chip">{action}</span>' for action in clean_actions),
+                unsafe_allow_html=True,
+            )
 
 
 def render_lead(text: str) -> None:
@@ -356,7 +613,10 @@ def render_status_badge(label: str, tone: str = "neutral", *, icon: str | None =
     icon_text = _sanitize_text(icon) if icon else style["icon"]
     label_text = _sanitize_text(label)
     badge_text = f"{icon_text} {label_text}".strip()
-    st.markdown(f":{style['color']}[**{badge_text}**]")
+    st.markdown(
+        f'<span class="sl-status-badge sl-status-{tone_key}">{badge_text}</span>',
+        unsafe_allow_html=True,
+    )
     return badge_text
 
 
@@ -374,45 +634,40 @@ def render_surface(
     clean_subtitle = _sanitize_text(subtitle)
     clean_content = _sanitize_markdown(content)
 
-    def _render_body() -> None:
-        tone_label = _SURFACE_LABELS.get(tone_class)
-        if tone_label:
-            st.markdown(tone_label)
+    _ = elevated  # kept for backward compatibility
+    with st.container(border=True):
+        if tone_class in {"accent", "warning", "danger"}:
+            label_map = {"accent": "重要", "warning": "注意", "danger": "警告"}
+            tone_map = {"accent": "info", "warning": "warning", "danger": "danger"}
+            render_status_badge(label_map[tone_class], tone=tone_map[tone_class])
         if clean_title:
-            title_color = "red" if tone_class == "accent" else "gray"
-            st.markdown(f":{title_color}[**{clean_title}**]")
+            st.markdown(f"**{clean_title}**")
         if clean_subtitle:
             st.caption(clean_subtitle)
         if clean_content:
             st.markdown(clean_content)
 
-    if elevated:
-        with st.container(border=True):
-            with st.container(border=True):
-                _render_body()
-        return
-
-    with st.container(border=True):
-        _render_body()
-
 
 def render_kpi_cards(items: list[tuple[str, str, str | None]]) -> None:
-    """Render compact KPI cards."""
+    """Render compact KPI cards in wrapped rows."""
     if not items:
         return
 
-    columns = st.columns(len(items))
-    for column, (label, value, sub_text) in zip(columns, items, strict=True):
-        with column:
-            with st.container(border=True):
-                st.metric(_sanitize_text(label), _sanitize_text(value))
-                if sub_text:
-                    st.caption(_sanitize_text(sub_text))
+    per_row = 4
+    for start in range(0, len(items), per_row):
+        row_items = items[start : start + per_row]
+        columns = st.columns(len(row_items))
+        for column, (label, value, sub_text) in zip(columns, row_items, strict=True):
+            with column:
+                with st.container(border=True):
+                    st.metric(_sanitize_text(label), _sanitize_text(value))
+                    if sub_text:
+                        st.caption(_sanitize_text(sub_text))
 
 
 def render_info_card(text: str) -> None:
     """Render informational card block."""
-    render_surface(text, tone="soft", elevated=True)
+    render_surface(text, tone="soft")
 
 
 def render_empty_state(
@@ -420,9 +675,13 @@ def render_empty_state(
     *,
     title: str = "表示できるデータがありません",
     hint: str | None = None,
+    action_label: str | None = None,
+    action_path: str | None = None,
 ) -> None:
-    """Render neutral empty-state card."""
+    """Render empty state with optional next action."""
     sections = [_sanitize_markdown(message)]
     if hint:
         sections.append(_sanitize_markdown(hint))
-    render_surface("\n\n".join(part for part in sections if part), title=title, tone="soft", elevated=True)
+    render_surface("\n\n".join(part for part in sections if part), title=title, tone="soft")
+    if action_label and action_path:
+        st.page_link(action_path, label=_sanitize_text(action_label), use_container_width=True)

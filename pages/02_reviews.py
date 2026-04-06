@@ -11,9 +11,9 @@ from src.components.layout import (
     render_action_bar,
     render_empty_state,
     render_hero_banner,
-    render_info_card,
     render_kpi_cards,
     render_section_title,
+    render_status_badge,
     render_surface,
 )
 from src.components.pagination import render_pagination_controls
@@ -56,7 +56,7 @@ def _normalize_pending_payload(payload: dict) -> dict:
 st.set_page_config(page_title="試食評価", layout="wide")
 require_admin_session()
 inject_app_style()
-render_sidebar()
+render_sidebar(active_page="reviews")
 render_hero_banner(
     "試食評価",
     "登録・履歴確認・削除復元まで、試食レビュー運用を一画面で管理できます。",
@@ -73,56 +73,89 @@ tab_edit, tab_history, tab_deleted = st.tabs(["レビュー登録", "履歴管�
 
 with tab_edit:
     with st.container(border=True):
-        render_section_title("評価登録", "試食情報・スコア・コメントを入力して保存します。")
+        render_section_title("評価登録", "必須項目を入力すると総合スコアを自動算出して保存できます。")
         varieties = list_active_varieties()
         variety_names = _variety_name_map(varieties)
         if not varieties:
             render_empty_state(
                 f"{EMPTY_STATE_MESSAGE} 先に「品種管理」で品種を登録してください。",
                 title="品種が未登録です",
+                action_label="🍓 品種管理を開く",
+                action_path="pages/01_varieties.py",
             )
         else:
-            render_info_card(
-                "<strong>保存ルール</strong><br>"
-                "同じ品種・試食日のレビューがある場合は、確認後に上書き更新できます。<br>"
-                "画像は任意で、未選択でも保存可能です。"
-            )
-            with st.container(border=True):
-                with st.form("review_form"):
-                    st.markdown("##### 1) 試食情報")
-                    c1, c2 = st.columns([1.2, 1], gap="large")
-                    with c1:
-                        variety_id = st.selectbox(
-                            "品種*",
-                            [v["id"] for v in varieties],
-                            format_func=lambda x: variety_names.get(str(x), str(x)),
-                        )
-                        tasted_date = st.date_input("試食日*", value=date.today(), max_value=date.today())
-                    with c2:
-                        purchase_place = st.text_input("購入場所")
-                        price_jpy = st.number_input("価格 (円)", min_value=0, max_value=1_000_000, value=0)
-
-                    st.markdown("##### 2) 味覚スコア")
-                    s1, s2, s3 = st.columns(3, gap="large")
-                    with s1:
-                        sweetness = st.slider("甘味", 1, 5, 3)
-                        sourness = st.slider("酸味", 1, 5, 3)
-                    with s2:
-                        aroma = st.slider("香り", 1, 5, 3)
-                        texture = st.slider("食感", 1, 5, 3)
-                    with s3:
-                        appearance = st.slider("見た目", 1, 5, 3)
-                        overall = st.slider("総合", 1, 10, 5)
-
-                    st.markdown("##### 3) コメント・画像")
-                    comment = st.text_area("コメント", height=140)
-                    uploaded_files = st.file_uploader(
-                        "画像アップロード (最大3枚)",
-                        type=["jpg", "jpeg", "png", "webp"],
-                        accept_multiple_files=True,
+            form_col, summary_col = st.columns([2.2, 1], gap="large")
+            with form_col:
+                st.markdown("##### 1) 試食情報")
+                c1, c2 = st.columns([1.3, 1], gap="large")
+                with c1:
+                    variety_id = st.selectbox(
+                        "品種 *",
+                        [v["id"] for v in varieties],
+                        format_func=lambda x: variety_names.get(str(x), str(x)),
+                        key="review_variety_id",
                     )
-                    st.caption("※ 画像は任意です。未選択でもレビュー保存できます。")
-                    submit = st.form_submit_button("この内容で保存", use_container_width=True, type="primary")
+                    tasted_date = st.date_input(
+                        "試食日 *",
+                        value=date.today(),
+                        max_value=date.today(),
+                        key="review_tasted_date",
+                    )
+                with c2:
+                    purchase_place = st.text_input("購入場所（任意）", key="review_purchase_place")
+                    price_jpy = st.number_input(
+                        "価格（円・任意）",
+                        min_value=0,
+                        max_value=1_000_000,
+                        value=0,
+                        step=10,
+                        key="review_price_jpy",
+                    )
+
+                st.markdown("##### 2) 味覚スコア")
+                st.caption("基準: 1=弱い / 3=普通 / 5=強い")
+                s1, s2, s3 = st.columns(3, gap="large")
+                with s1:
+                    sweetness = st.slider("甘味", 1, 5, 3, key="review_sweetness")
+                    sourness = st.slider("酸味", 1, 5, 3, key="review_sourness")
+                with s2:
+                    aroma = st.slider("香り", 1, 5, 3, key="review_aroma")
+                    texture = st.slider("食感", 1, 5, 3, key="review_texture")
+                with s3:
+                    appearance = st.slider("見た目", 1, 5, 3, key="review_appearance")
+                overall = max(1, min(10, int(round((sweetness + sourness + aroma + texture + appearance) / 5 * 2))))
+                render_kpi_cards([("総合スコア（自動）", f"{overall}/10", "5項目平均から算出")])
+
+                st.markdown("##### 3) コメント・画像")
+                comment = st.text_area("コメント（任意）", height=140, key="review_comment")
+                uploaded_files = st.file_uploader(
+                    "画像アップロード（最大3枚・任意）",
+                    type=["jpg", "jpeg", "png", "webp"],
+                    accept_multiple_files=True,
+                    key="review_uploaded_files",
+                )
+                current_upload_count = len(uploaded_files or [])
+                if uploaded_files:
+                    preview_targets = uploaded_files[:3]
+                    st.image([file.getvalue() for file in preview_targets], caption=[file.name for file in preview_targets], width=180)
+
+                with st.container(border=True):
+                    st.caption("保存")
+                    submit = st.button("この内容で保存", use_container_width=True, type="primary", key="review_submit")
+
+            with summary_col:
+                selected_name = variety_names.get(str(variety_id), str(variety_id))
+                render_surface(
+                    f"品種: **{selected_name}**\n\n"
+                    f"試食日: **{tasted_date}**\n\n"
+                    f"総合スコア: **{overall}/10**\n\n"
+                    f"画像枚数: **{current_upload_count}枚**",
+                    title="入力サマリー",
+                    subtitle="保存前に確認",
+                    tone="soft",
+                )
+                render_status_badge("必須: 品種・試食日・5項目", tone="info")
+                st.page_link("pages/01_varieties.py", label="🍓 品種情報を確認", use_container_width=True)
 
             if submit:
                 payload = {

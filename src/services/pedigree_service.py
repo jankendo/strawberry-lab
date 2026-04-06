@@ -140,6 +140,7 @@ def layered_layout(graph: nx.DiGraph) -> dict[str, tuple[float, float]]:
 
 def build_figure(graph: nx.DiGraph, positions: dict[str, tuple[float, float]], review_stats: dict[str, dict]) -> go.Figure:
     """Build clickable plotly figure for pedigree graph."""
+    _ = review_stats
     edge_x: list[float] = []
     edge_y: list[float] = []
     for source, target in graph.edges():
@@ -147,33 +148,29 @@ def build_figure(graph: nx.DiGraph, positions: dict[str, tuple[float, float]], r
         x1, y1 = positions[target]
         edge_x.extend([x0, x1, None])
         edge_y.extend([y0, y1, None])
-    edge_trace = go.Scatter(x=edge_x, y=edge_y, mode="lines", line={"width": 1}, hoverinfo="none")
+    edge_trace = go.Scatter(x=edge_x, y=edge_y, mode="lines", line={"width": 1.3, "color": "#cbd5e1"}, hoverinfo="none")
     node_x, node_y, node_text, node_ids, node_color, node_size = [], [], [], [], [], []
+    layer_palette = ["#f97316", "#fb7185", "#8b5cf6", "#3b82f6", "#14b8a6", "#22c55e"]
+    unique_layers = sorted({position[1] for position in positions.values()}, reverse=True)
+    layer_index_map = {layer: index for index, layer in enumerate(unique_layers)}
     for node in graph.nodes():
         x, y = positions[node]
-        stats = review_stats.get(node, {"avg_overall": None, "review_count": 0})
-        avg = stats.get("avg_overall")
-        if avg is None:
-            color = "#BFBFBF"
-        elif avg < 4:
-            color = "#F9D5D8"
-        elif avg < 7:
-            color = "#EE8894"
-        else:
-            color = "#B7132C"
+        layer_index = layer_index_map.get(y, 0)
+        color = layer_palette[layer_index % len(layer_palette)]
+        degree = graph.in_degree(node) + graph.out_degree(node)
         node_x.append(x)
         node_y.append(y)
         node_text.append(graph.nodes[node].get("name", node))
         node_ids.append(node)
         node_color.append(color)
-        node_size.append(14 + min(int(stats.get("review_count", 0)), 20))
+        node_size.append(14 + min(degree * 2, 18))
     node_trace = go.Scatter(
         x=node_x,
         y=node_y,
         mode="markers+text",
         text=node_text,
         textposition="top center",
-        marker={"size": node_size, "color": node_color, "line": {"width": 1, "color": "#333"}},
+        marker={"size": node_size, "color": node_color, "line": {"width": 1, "color": "#334155"}},
         customdata=node_ids,
         hovertemplate="%{text}<extra></extra>",
     )
@@ -193,6 +190,7 @@ def build_figure(graph: nx.DiGraph, positions: dict[str, tuple[float, float]], r
         hovermode="closest",
         dragmode="pan",
         height=height,
+        uirevision="pedigree-layout",
         xaxis={"visible": False, "range": [min_x - x_padding, max_x + x_padding], "fixedrange": False},
         yaxis={"visible": False, "range": [min_y - y_padding, max_y + y_padding], "fixedrange": False},
         margin={"l": 30, "r": 30, "t": 30, "b": 30},

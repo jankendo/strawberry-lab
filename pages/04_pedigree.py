@@ -12,6 +12,7 @@ from src.components.layout import (
     render_hero_banner,
     render_kpi_cards,
     render_section_title,
+    render_status_badge,
     render_surface,
 )
 from src.components.sidebar import render_sidebar
@@ -27,7 +28,7 @@ from src.services.pedigree_service import (
 st.set_page_config(page_title="交配図", layout="wide")
 require_admin_session()
 inject_app_style()
-render_sidebar()
+render_sidebar(active_page="pedigree")
 render_hero_banner(
     "交配図",
     "品種系統をネットワークで可視化し、起点指定や深さ制御で必要な系譜だけを素早く確認できます。",
@@ -40,35 +41,17 @@ render_action_bar(
     actions=["起点品種を選ぶ", "表示方向を切り替える", "最大深さを調整する", "ノードから詳細へ移動"],
 )
 
-render_section_title("交配図の設定ガイド", "初めてでも設定できるように、入力手順を整理しています。")
-with st.expander("交配図の作り方（詳しく見る）", expanded=False):
+with st.expander("交配図の使い方", expanded=False):
     st.markdown(
         """
-        **1. まず親品種リンクを登録する（品種管理ページ）**  
-        1. 「品種管理」→「作成・編集」で対象品種を選びます。  
-        2. 「親品種」マルチセレクトで親を追加します。  
-        3. 保存すると、交配図ページに系統が反映されます。  
-
-        **2. 交配図ページで表示条件を調整する**  
-        - **起点品種**: 中心にしたい品種を選択  
-        - **表示方向**: 祖先 / 子孫 / 両方  
-        - **最大深さ**: 何世代まで表示するか  
-
-        **3. ノードをクリックして詳細確認**  
-        グラフ上のノードをクリックすると、品種管理ページへ遷移して詳細を確認できます。  
-
-        **4. よくあるつまずき**  
-        - `交配リンクで循環が発生します`  
-          - 親子関係がループしている状態です。親品種設定を見直してください。  
-        - グラフが小さい / 見切れる  
-          - 起点品種を指定し、最大深さを 2〜3 に下げると見やすくなります。  
-        - 何も表示されない  
-          - 親品種リンク未登録の可能性があります。まず品種管理で親を設定してください。  
+        1. まず **品種管理 > 作成・編集** で親品種リンクを登録  
+        2. 交配図で **起点品種 / 表示方向 / 最大深さ** を設定  
+        3. ノードをクリックして右パネルで詳細確認  
         """
     )
 
-render_section_title("表示条件", "表示対象と探索範囲を指定して、見たい系統だけに絞り込みます。")
-c1, c2, c3 = st.columns(3)
+render_section_title("表示条件", "見たい系譜だけに絞って可視化します。")
+c1, c2, c3, c4 = st.columns(4)
 with c1:
     include_deleted = st.checkbox("削除済みを含む", value=False)
 with c2:
@@ -81,8 +64,20 @@ with c2:
     direction = direction_map[direction_label]
 with c3:
     max_depth = st.slider("最大深さ", 1, 5, 3)
+with c4:
+    max_nodes = st.slider("最大表示ノード数", 50, 120, 80, step=10)
 
 varieties, links = fetch_graph_data(include_deleted=include_deleted)
+if not links:
+    render_empty_state(
+        "親子リンクが未登録のため交配図を表示できません。",
+        title="交配図の表示対象がありません",
+        hint="まず品種管理で親品種リンクを登録してください。",
+        action_label="🍓 品種管理で親品種を登録",
+        action_path="pages/01_varieties.py",
+    )
+    st.stop()
+
 name_by_id = {v["id"]: v["name"] for v in varieties}
 root_id = st.selectbox(
     "起点品種",
@@ -96,6 +91,24 @@ except ValueError as exc:
     st.error(str(exc))
     st.stop()
 
+if graph.number_of_edges() == 0:
+    render_empty_state(
+        "親子リンク数が0件です。",
+        title="交配図を表示できません",
+        hint="品種管理で親品種リンクを登録してください。",
+        action_label="🍓 品種管理を開く",
+        action_path="pages/01_varieties.py",
+    )
+    st.stop()
+
+if not root_id and graph.number_of_nodes() > max_nodes:
+    render_empty_state(
+        f"全体表示はノード数が多すぎます（{graph.number_of_nodes()}件）。",
+        title="起点品種を選択してください",
+        hint=f"起点品種を選ぶか、表示ノード数上限（現在 {max_nodes}）を調整してください。",
+    )
+    st.stop()
+
 graph = subgraph_by_root(graph, root_id, direction, max_depth)
 if graph.number_of_nodes() == 0:
     render_empty_state(
@@ -104,6 +117,12 @@ if graph.number_of_nodes() == 0:
         hint="起点品種・表示方向・最大深さを調整して再表示してください。",
     )
     st.stop()
+
+if graph.number_of_nodes() > max_nodes:
+    ordered_nodes = [root_id] + [node for node in graph.nodes() if node != root_id] if root_id else list(graph.nodes())
+    graph = graph.subgraph(ordered_nodes[:max_nodes]).copy()
+    render_surface(f"表示ノード数を {max_nodes} 件に制限しました。", title="表示上限を適用", tone="warning")
+
 positions = layered_layout(graph)
 review_stats = {}
 fig = build_figure(graph, positions, review_stats)
@@ -116,27 +135,40 @@ render_kpi_cards(
         ("最大深さ", str(max_depth), "探索範囲"),
     ]
 )
-render_section_title("交配グラフ", "ノードをクリックして詳細へ。ドラッグで移動、マウスホイールで拡大縮小できます。")
-render_surface(
-    "初期表示は見やすさ重視で広めに確保しています。ノードが密集する場合は、起点品種と最大深さ(2〜3)の調整がおすすめです。",
-    tone="soft",
-)
-graph_height = int(fig.layout.height) if fig.layout.height else 720
-events = plotly_events(
-    fig,
-    click_event=True,
-    key="pedigree_graph",
-    override_height=graph_height,
-    override_width="100%",
-)
-if events:
-    point = events[0]
-    selected_variety_id = point.get("customdata")
-    if selected_variety_id is None and point.get("curveNumber") in (None, 1):
-        point_index = point.get("pointIndex")
-        node_ids = list(graph.nodes())
-        if isinstance(point_index, int) and 0 <= point_index < len(node_ids):
-            selected_variety_id = node_ids[point_index]
-    if selected_variety_id and selected_variety_id in graph:
-        st.session_state["selected_variety_id"] = selected_variety_id
-        st.switch_page("pages/01_varieties.py")
+
+render_section_title("交配グラフ", "fit-to-viewで初期表示。ドラッグ移動・ホイール拡大縮小ができます。")
+graph_col, detail_col = st.columns([3, 1.2], gap="large")
+with graph_col:
+    graph_height = int(fig.layout.height) if fig.layout.height else 720
+    events = plotly_events(
+        fig,
+        click_event=True,
+        key="pedigree_graph",
+        override_height=graph_height,
+        override_width="100%",
+    )
+    if events:
+        point = events[0]
+        selected_variety_id = point.get("customdata")
+        if selected_variety_id is None and point.get("curveNumber") in (None, 1):
+            point_index = point.get("pointIndex")
+            node_ids = list(graph.nodes())
+            if isinstance(point_index, int) and 0 <= point_index < len(node_ids):
+                selected_variety_id = node_ids[point_index]
+        if selected_variety_id and selected_variety_id in graph:
+            st.session_state["pedigree_selected_node"] = selected_variety_id
+            st.rerun()
+
+with detail_col:
+    selected_node = st.session_state.get("pedigree_selected_node")
+    if selected_node and selected_node in graph:
+        with st.container(border=True):
+            st.markdown(f"**{name_by_id.get(selected_node, selected_node)}**")
+            render_status_badge("選択中ノード", tone="info")
+            st.caption(f"親ノード数: {graph.in_degree(selected_node)}")
+            st.caption(f"子ノード数: {graph.out_degree(selected_node)}")
+            if st.button("品種詳細を開く", key="open_selected_pedigree_node", use_container_width=True, type="primary"):
+                st.session_state["selected_variety_id"] = selected_node
+                st.switch_page("pages/01_varieties.py")
+    else:
+        render_surface("ノードをクリックすると詳細をここに表示します。", title="ノード詳細", tone="soft")

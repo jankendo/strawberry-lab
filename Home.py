@@ -72,11 +72,15 @@ except ImportError:
         *,
         title: str = "表示できるデータがありません",
         hint: str | None = None,
+        action_label: str | None = None,
+        action_path: str | None = None,
     ) -> None:
         """Fallback empty-state renderer for partially refreshed runtimes."""
         if title:
             st.caption(title)
         st.info(" ".join(part for part in [message, hint] if part))
+        if action_label and action_path:
+            st.page_link(action_path, label=action_label, use_container_width=True)
 
 
     def render_kpi_cards(items: list[tuple[str, str, str | None]]) -> None:
@@ -224,7 +228,7 @@ def _format_recent_scrape_runs(rows: list[dict]) -> list[dict]:
         {
             "開始日時": row.get("started_at") or "-",
             "終了日時": row.get("finished_at") or "-",
-            "状態": row.get("status") or "-",
+            "状態": f"{_status_badge_theme(row.get('status') or '-')[1]} {row.get('status') or '-'}",
             "更新件数": row.get("upserted_count") or 0,
             "失敗件数": row.get("failed_count") or 0,
         }
@@ -292,32 +296,19 @@ def _render_login() -> None:
 
 
 def _render_dashboard() -> None:
-    render_sidebar()
+    render_sidebar(active_page="dashboard")
     metrics = _load_dashboard_metrics()
     status_tone, status_icon = _status_badge_theme(metrics["latest_status"])
 
     render_hero_banner(
         "ダッシュボード",
-        "主要指標と最新データを素早く確認できます。",
+        "今日の状況、優先タスク、最新ログを迷わず確認できる運用ハブです。",
         eyebrow="研究運用ハブ",
         chips=[
             f"有効品種 {metrics['active_varieties']}種",
-            f"レビュー {metrics['active_reviews']}件",
+            f"未評価候補 {max(metrics['active_varieties'] - metrics['active_reviews'], 0)}種",
             f"平均評価 {metrics['avg_score']:.2f}/10",
         ],
-    )
-    render_action_bar(
-        title="今日の運用フロー",
-        description="取得ログ確認 → 品種管理 → 試食評価 → 分析の順で更新すると運用が安定します。",
-        actions=["品種管理", "試食評価", "分析", "研究メモ"],
-    )
-    render_section_title("クイックアクション", "よく使う画面へワンクリックで移動できます。")
-    _render_navigation_cards(
-        [
-            ("pages/01_varieties.py", "品種管理", "図鑑進捗の確認・品種情報の更新を行います。", "🍓"),
-            ("pages/02_reviews.py", "試食評価", "試食レビューを登録して図鑑の開示を進めます。", "📝"),
-            ("pages/03_analytics.py", "分析ダッシュボード", "評価傾向を俯瞰して改善ポイントを確認します。", "📊"),
-        ]
     )
 
     render_kpi_cards(
@@ -330,58 +321,68 @@ def _render_dashboard() -> None:
         ]
     )
 
-    status_col, tips_col = st.columns([1, 2])
-    with status_col:
-        render_surface(
-            f"直近の取り込み件数は **{metrics['latest_upserted']}件** です。",
-            title="最新取得ジョブ",
-            subtitle="MAFF品種レジストリ同期",
-            tone="accent",
-            elevated=True,
+    alert_rows: list[tuple[str, str]] = []
+    if status_tone == "danger":
+        alert_rows.append(
+            (
+                "danger",
+                "最新取得ジョブが失敗しています。設定ページの実行履歴とエラー詳細を確認してください。",
+            )
         )
+    if metrics["active_reviews"] == 0:
+        alert_rows.append(("warning", "レビューが未登録です。まず1件登録して分析と図鑑開示を開始してください。"))
+    if metrics["latest_upserted"] == 0 and metrics["latest_status"] in {"-", "success"}:
+        alert_rows.append(("info", "最新取得件数が0件です。必要に応じてローカル取込を再実行してください。"))
+    for tone, message in alert_rows:
+        render_surface(message, title="要対応事項", tone=tone)
+
+    render_section_title("今日やること", "主要アクションだけを優先して実行します。")
+    task_cols = st.columns(3, gap="large")
+    with task_cols[0]:
+        with st.container(border=True):
+            st.markdown("**1. 品種進捗を確認**")
+            st.caption("未発見品種と詳細更新対象を確認")
+            st.page_link("pages/01_varieties.py", label="🍓 品種管理を開く", use_container_width=True)
+    with task_cols[1]:
+        with st.container(border=True):
+            st.markdown("**2. 試食レビューを登録**")
+            st.caption("今日の評価を入力し、図鑑開示を進める")
+            st.page_link("pages/02_reviews.py", label="📝 試食評価を開く", use_container_width=True)
+    with task_cols[2]:
+        with st.container(border=True):
+            st.markdown("**3. 分析結果を確認**")
+            st.caption("最新レビューを反映した傾向を確認")
+            st.page_link("pages/03_analytics.py", label="📊 分析を開く", use_container_width=True)
+
+    reviews_col, logs_col = st.columns(2, gap="large")
+    with reviews_col:
+        render_section_title("最新レビュー", "直近5件")
+        reviews = _format_latest_reviews(_load_latest_reviews())
+        if reviews:
+            st.dataframe(reviews, use_container_width=True, hide_index=True)
+        else:
+            render_empty_state(
+                "表示できるレビューがまだありません。",
+                title="最新レビューはまだありません",
+                hint="「試食評価」ページで最初のレビューを登録してください。",
+                action_label="📝 試食評価ページを開く",
+                action_path="pages/02_reviews.py",
+            )
+
+    with logs_col:
+        render_section_title("最新取得ログ", "直近5件")
         render_status_badge(f"ステータス: {metrics['latest_status']}", tone=status_tone, icon=status_icon)
-    with tips_col:
-        render_info_card(
-            "運用ヒント: 新規取得後は **品種管理** で画像と説明を確認し、"
-            "必要に応じて研究メモへ補足を残すと運用が安定します。"
-        )
-
-    render_section_title("最新レビュー", "直近5件の試食評価を表示します。")
-    render_surface("気になる品種は「品種管理」から詳細を確認し、必要なら評価を追記しましょう。", tone="soft")
-    reviews = _format_latest_reviews(_load_latest_reviews())
-    if reviews:
-        st.dataframe(reviews, use_container_width=True, hide_index=True)
-    else:
-        render_empty_state(
-            "表示できるレビューがまだありません。",
-            title="最新レビューはまだありません",
-            hint="「試食評価」ページで最初のレビューを登録するとここに表示されます。",
-        )
-    st.page_link("pages/02_reviews.py", label="📝 試食評価ページでレビューを追加", use_container_width=True)
-
-    render_section_title("最新品種取得ログ", "直近5件のMAFF品種取得結果を表示します。")
-    render_surface("失敗件数がある場合は設定ページの診断情報を確認し、再取得の前に環境を点検してください。", tone="soft")
-    recent_runs = _format_recent_scrape_runs(_load_recent_scrape_runs())
-    if recent_runs:
-        st.dataframe(recent_runs, use_container_width=True, hide_index=True)
-    else:
-        render_empty_state(
-            "表示できる取得ログがまだありません。",
-            title="取得ログはまだありません",
-            hint="設定ページで履歴を再読み込みすると最新結果を確認できます。",
-        )
-    st.page_link("pages/07_settings.py", label="⚙️ 設定ページで診断情報を確認", use_container_width=True)
-
-    render_section_title("全メニュー", "目的別に画面へ移動できます。")
-    menu_items = [
-        ("pages/01_varieties.py", "品種管理", "図鑑進捗の確認・品種データ編集・画像管理", "🍓"),
-        ("pages/02_reviews.py", "試食評価", "レビュー登録・履歴確認・復元", "📝"),
-        ("pages/03_analytics.py", "分析ダッシュボード", "評価傾向と品質指標の可視化", "📊"),
-        ("pages/04_pedigree.py", "交配図", "親子関係のグラフ確認", "🧬"),
-        ("pages/06_notes.py", "研究メモ", "調査メモや運用ログの蓄積", "📓"),
-        ("pages/07_settings.py", "設定", "接続設定・同期診断・運用パラメータの確認", "⚙️"),
-    ]
-    _render_navigation_cards(menu_items)
+        recent_runs = _format_recent_scrape_runs(_load_recent_scrape_runs())
+        if recent_runs:
+            st.dataframe(recent_runs, use_container_width=True, hide_index=True)
+        else:
+            render_empty_state(
+                "表示できる取得ログがまだありません。",
+                title="取得ログはまだありません",
+                hint="設定ページで履歴を再読み込みすると最新結果を確認できます。",
+                action_label="⚙️ 設定ページを開く",
+                action_path="pages/07_settings.py",
+            )
 
 
 if st.session_state.get("is_authenticated"):
