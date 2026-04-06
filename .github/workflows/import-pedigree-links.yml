@@ -1,0 +1,29 @@
+name: import-pedigree-links
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - database/imports/variety_parent_links.csv
+      - scraper/import_pedigree_links.py
+      - .github/workflows/import-pedigree-links.yml
+
+jobs:
+  import_pedigree_links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements-scraper.txt
+      - name: Import pedigree links
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_UPSERT_BATCH_SIZE: "200"
+          PEDIGREE_CSV_PATH: database/imports/variety_parent_links.csv
+        run: python -m scraper.import_pedigree_links
