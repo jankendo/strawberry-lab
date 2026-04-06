@@ -5,7 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from src.components.layout import inject_app_style, render_page_header, render_section_title
-from src.components.sidebar import render_sidebar
+from src.components.sidebar import render_primary_nav, render_sidebar
 from src.services.auth_service import (
     ensure_auth_cookie_persistence,
     get_auth_persistence_status,
@@ -297,6 +297,7 @@ def _render_login() -> None:
 
 def _render_dashboard() -> None:
     render_sidebar(active_page="dashboard")
+    render_primary_nav(active_page="dashboard")
     metrics = _load_dashboard_metrics()
     status_tone, status_icon = _status_badge_theme(metrics["latest_status"])
 

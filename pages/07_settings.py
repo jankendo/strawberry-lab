@@ -17,7 +17,7 @@ from src.components.layout import (
     render_section_title,
     render_surface,
 )
-from src.components.sidebar import render_sidebar
+from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.tables import render_table
 from src.config import get_config
 from src.services.auth_service import get_auth_persistence_status, require_admin_session
@@ -32,6 +32,7 @@ st.set_page_config(page_title="設定", layout="wide")
 require_admin_session()
 inject_app_style()
 render_sidebar(active_page="settings")
+render_primary_nav(active_page="settings")
 cfg = get_config()
 render_hero_banner(
     "設定",

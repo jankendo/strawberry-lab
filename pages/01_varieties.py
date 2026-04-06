@@ -8,7 +8,7 @@ from src.components.forms import comma_values_input
 from src.components.image_gallery import render_image_gallery
 from src.components.layout import inject_app_style, render_page_header, render_section_title
 from src.components.pagination import render_pagination_controls
-from src.components.sidebar import render_sidebar
+from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.tables import render_table
 from src.constants.enums import AcidityLevel
 from src.constants.prefectures import PREFECTURES
@@ -174,6 +174,7 @@ st.set_page_config(page_title="品種管理", layout="wide")
 require_admin_session()
 inject_app_style()
 render_sidebar(active_page="varieties")
+render_primary_nav(active_page="varieties")
 render_hero_banner(
     "品種管理",
     "登録情報の参照・編集・削除復元・画像管理を行います。",

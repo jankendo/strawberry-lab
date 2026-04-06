@@ -15,7 +15,7 @@ from src.components.layout import (
     render_status_badge,
     render_surface,
 )
-from src.components.sidebar import render_sidebar
+from src.components.sidebar import render_primary_nav, render_sidebar
 from src.services.auth_service import require_admin_session
 from src.services.pedigree_service import (
     build_figure,
@@ -29,6 +29,7 @@ st.set_page_config(page_title="交配図", layout="wide")
 require_admin_session()
 inject_app_style()
 render_sidebar(active_page="pedigree")
+render_primary_nav(active_page="pedigree")
 render_hero_banner(
     "交配図",
     "品種系統をネットワークで可視化し、起点指定や深さ制御で必要な系譜だけを素早く確認できます。",

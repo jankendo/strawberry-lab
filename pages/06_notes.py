@@ -14,10 +14,10 @@ from src.components.layout import (
     render_surface,
 )
 from src.components.pagination import render_pagination_controls
-from src.components.sidebar import render_sidebar
+from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.tables import render_table
 from src.services.auth_service import require_admin_session
-from src.services.note_service import create_note, list_notes, restore_note, soft_delete_note, update_note
+from src.services.note_service import create_note, get_note_detail, list_notes, restore_note, soft_delete_note, update_note
 from src.services.variety_service import list_active_varieties
 from src.utils.text_utils import split_dedup_values
 
@@ -25,6 +25,7 @@ st.set_page_config(page_title="研究メモ", layout="wide")
 require_admin_session()
 inject_app_style()
 render_sidebar(active_page="notes")
+render_primary_nav(active_page="notes")
 render_hero_banner(
     "研究メモ",
     "調査メモを一元管理し、検索・編集・復元までを同じワークフローで運用できます。",
@@ -51,10 +52,29 @@ with tab_manage:
             sort_mode = st.selectbox("並び順", ["更新が新しい順", "更新が古い順", "タイトル順"], key="notes_sort_mode")
         page, page_size = render_pagination_controls("notes_list")
 
-    rows, total = list_notes(search_query=search_query or None, page=page, page_size=page_size)
-    filter_tags = {tag.strip() for tag in tag_query.split(",") if tag.strip()}
-    if filter_tags:
-        rows = [row for row in rows if filter_tags.issubset(set(row.get("tags") or []))]
+    try:
+        filter_tags = split_dedup_values(tag_query, max_items=20, max_length=30)
+    except ValueError as exc:
+        st.error(str(exc))
+        filter_tags = []
+
+    filter_signature = (search_query.strip(), ",".join(filter_tags), sort_mode)
+    if st.session_state.get("notes_list_filter_signature") != filter_signature:
+        st.session_state["notes_list_filter_signature"] = filter_signature
+        st.session_state["notes_list_page"] = 1
+        page = 1
+
+    rows, total = list_notes(
+        search_query=search_query or None,
+        tags=filter_tags or None,
+        page=page,
+        page_size=page_size,
+    )
+
+    if not rows and total > 0 and page > 1:
+        st.session_state["notes_list_page"] = 1
+        st.rerun()
+
     if sort_mode == "更新が古い順":
         rows = sorted(rows, key=lambda row: row.get("updated_at") or "")
     elif sort_mode == "タイトル順":
@@ -105,6 +125,10 @@ with tab_manage:
     with right_col:
         selected_id = st.session_state.get("notes_selected_id") or ""
         selected_note = next((row for row in rows if row.get("id") == selected_id), None)
+        if selected_id and selected_note is None:
+            selected_note = get_note_detail(selected_id)
+            if selected_note and selected_note.get("deleted_at"):
+                selected_note = None
         is_edit_mode = selected_note is not None
         varieties = list_active_varieties()
         variety_name_map = {v["id"]: v.get("name") or v["id"] for v in varieties}

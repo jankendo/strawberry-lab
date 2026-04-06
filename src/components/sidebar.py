@@ -1,4 +1,4 @@
-"""Sidebar UI component."""
+"""Sidebar and primary navigation components."""
 
 from __future__ import annotations
 
@@ -14,11 +14,44 @@ _NAV_ITEMS: list[tuple[str, str, str, str]] = [
     ("analytics", "pages/03_analytics.py", "分析", "📊"),
     ("pedigree", "pages/04_pedigree.py", "交配図", "🧬"),
     ("notes", "pages/06_notes.py", "研究メモ", "📓"),
+    ("settings", "pages/07_settings.py", "設定", "⚙️"),
 ]
 
 
+def _render_nav_button(page_key: str, page_path: str, page_label: str, page_icon: str, *, active_page: str) -> None:
+    if page_key == active_page:
+        st.markdown(
+            f'<div class="sl-mobile-nav-active">{page_icon} {page_label}</div>',
+            unsafe_allow_html=True,
+        )
+        return
+    if st.button(
+        f"{page_icon} {page_label}",
+        key=f"top_nav_{active_page}_{page_key}",
+        use_container_width=True,
+        type="secondary",
+    ):
+        st.switch_page(page_path)
+
+
+def render_primary_nav(*, active_page: str) -> None:
+    """Render in-page primary navigation used for mobile-first operation."""
+    if not st.session_state.get("is_authenticated"):
+        return
+
+    with st.container(border=True):
+        st.caption("主要ナビゲーション")
+        first_row = _NAV_ITEMS[:4]
+        second_row = _NAV_ITEMS[4:]
+        for row in (first_row, second_row):
+            cols = st.columns(len(row), gap="small")
+            for col, (page_key, page_path, page_label, page_icon) in zip(cols, row, strict=True):
+                with col:
+                    _render_nav_button(page_key, page_path, page_label, page_icon, active_page=active_page)
+
+
 def render_sidebar(*, active_page: str) -> None:
-    """Render common sidebar with explicit active navigation state."""
+    """Render desktop sidebar with explicit active navigation state."""
     with st.sidebar:
         st.markdown(
             f"""
@@ -43,9 +76,5 @@ def render_sidebar(*, active_page: str) -> None:
         with st.container(border=True):
             user = st.session_state.get("current_user")
             st.caption(f"ログイン中: {(user or {}).get('email', '-')}")
-            if active_page == "settings":
-                st.markdown('<div class="sl-sidebar-active">⚙️ 設定</div>', unsafe_allow_html=True)
-            else:
-                st.page_link("pages/07_settings.py", label="⚙️ 設定", use_container_width=True)
             if st.button("ログアウト", use_container_width=True, type="secondary", key="sidebar_logout"):
                 logout_user()

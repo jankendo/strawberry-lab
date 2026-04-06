@@ -20,7 +20,7 @@ from src.components.layout import (
     render_section_title,
     render_surface,
 )
-from src.components.sidebar import render_sidebar
+from src.components.sidebar import render_primary_nav, render_sidebar
 from src.constants.prefectures import PREFECTURES
 from src.services.analytics_service import (
     get_filtered_review_dataframe,
@@ -47,6 +47,7 @@ st.set_page_config(page_title="分析", layout="wide")
 require_admin_session()
 inject_app_style()
 render_sidebar(active_page="analytics")
+render_primary_nav(active_page="analytics")
 render_hero_banner(
     "分析ダッシュボード",
     "条件を明示して分析を実行し、チャートと結論要約で判断できる画面に再構成しました。",

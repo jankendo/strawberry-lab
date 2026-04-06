@@ -166,7 +166,7 @@ def inject_app_style() -> None:
     }
     [data-testid="stCaptionContainer"] {
         color: var(--sl-muted);
-        font-size: 0.8rem;  /* 12-13px */
+        font-size: 0.84rem;  /* 13px */
     }
 
     div[data-testid="stVerticalBlockBorderWrapper"] {
@@ -201,7 +201,7 @@ def inject_app_style() -> None:
     [data-testid="stButton"] > button,
     [data-testid="stDownloadButton"] > button,
     [data-testid="stFormSubmitButton"] > button {
-        min-height: 40px;
+        min-height: 44px;
         border-radius: 10px;
         border: 1px solid var(--sl-border-strong);
         background: #ffffff;
@@ -252,7 +252,7 @@ def inject_app_style() -> None:
         display: flex;
         align-items: center;
         justify-content: space-between;
-        min-height: 40px;
+        min-height: 44px;
         border-radius: 10px;
         border: 1px solid var(--sl-border-strong);
         background: #ffffff;
@@ -278,7 +278,7 @@ def inject_app_style() -> None:
         border-color: var(--sl-border-strong) !important;
         background: #ffffff !important;
         border-radius: 10px !important;
-        min-height: 40px;
+        min-height: 44px;
     }
     div[data-baseweb="input"] input,
     div[data-baseweb="textarea"] textarea {
@@ -303,7 +303,7 @@ def inject_app_style() -> None:
         margin-bottom: var(--sl-space-2);
     }
     .stTabs [data-baseweb="tab"] {
-        min-height: 40px;
+        min-height: 44px;
         border-radius: 10px;
         border: 1px solid var(--sl-border-strong);
         padding: 0 var(--sl-space-2);
@@ -344,7 +344,7 @@ def inject_app_style() -> None:
     [data-testid="stSidebar"] .sl-sidebar-active {
         display: flex;
         align-items: center;
-        min-height: 40px;
+        min-height: 44px;
         border-radius: 10px;
         border: 1px solid var(--sl-primary);
         background: rgba(232, 51, 74, 0.1);
@@ -360,6 +360,18 @@ def inject_app_style() -> None:
         padding: var(--sl-space-2);
         margin-top: var(--sl-space-2);
     }
+    .sl-mobile-nav-active {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        border-radius: 10px;
+        border: 1px solid var(--sl-primary);
+        background: rgba(232, 51, 74, 0.12);
+        color: var(--sl-heading);
+        font-weight: 700;
+        padding: 0 var(--sl-space-1);
+    }
 
     .sl-workspace-meta-row {
         margin-bottom: var(--sl-space-2);
@@ -369,13 +381,13 @@ def inject_app_style() -> None:
         align-items: center;
         justify-content: center;
         width: 100%;
-        min-height: 40px;
+        min-height: 44px;
         padding: 0 var(--sl-space-1);
         border: 1px solid var(--sl-border-strong);
         border-radius: 10px;
         background: #ffffff;
         color: var(--sl-text);
-        font-size: 0.82rem;
+        font-size: 0.86rem;
         font-weight: 600;
         white-space: nowrap;
     }
@@ -387,7 +399,7 @@ def inject_app_style() -> None:
         border: 1px solid var(--sl-border);
         background: var(--sl-surface-soft);
         color: var(--sl-muted);
-        font-size: 0.78rem;
+        font-size: 0.84rem;
         font-weight: 600;
     }
     .sl-user-chip {
@@ -395,13 +407,13 @@ def inject_app_style() -> None:
         align-items: center;
         justify-content: center;
         width: 100%;
-        min-height: 40px;
+        min-height: 44px;
         padding: 0 var(--sl-space-1);
         border-radius: 10px;
         border: 1px solid var(--sl-border-strong);
         background: #ffffff;
         color: var(--sl-text);
-        font-size: 0.78rem;
+        font-size: 0.84rem;
         font-weight: 600;
     }
 
@@ -412,8 +424,71 @@ def inject_app_style() -> None:
         border-radius: 999px;
         border: 1px solid transparent;
         padding: 0.2rem 0.58rem;
-        font-size: 0.78rem;
+        font-size: 0.82rem;
         font-weight: 700;
+    }
+
+    @media (max-width: 820px) {
+        .block-container {
+            max-width: 100%;
+            padding-top: var(--sl-space-2);
+            padding-right: 0.75rem;
+            padding-left: 0.75rem;
+            padding-bottom: 5.2rem;
+        }
+        [data-testid="stVerticalBlock"] {
+            gap: 0.85rem;
+        }
+        h1 {
+            font-size: 1.8rem;
+            line-height: 1.3;
+        }
+        h2 {
+            font-size: 1.45rem;
+            line-height: 1.32;
+        }
+        h3 {
+            font-size: 1.12rem;
+        }
+        p, label, [data-testid="stMarkdownContainer"] {
+            font-size: 1rem;
+            line-height: 1.55;
+        }
+        [data-testid="stCaptionContainer"] {
+            font-size: 0.88rem;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 12px;
+            padding: 0.88rem;
+            margin-bottom: 0.85rem;
+        }
+        [data-testid="stButton"] > button,
+        [data-testid="stDownloadButton"] > button,
+        [data-testid="stFormSubmitButton"] > button,
+        .stTabs [data-baseweb="tab"],
+        .sl-meta-chip,
+        .sl-user-chip {
+            min-height: 48px;
+            font-size: 0.98rem;
+        }
+        div[data-baseweb="input"] > div,
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="textarea"] > div {
+            min-height: 48px;
+        }
+        [data-testid="stHorizontalBlock"] {
+            flex-direction: column !important;
+            gap: 0.72rem !important;
+        }
+        [data-testid="stHorizontalBlock"] > div {
+            min-width: 100% !important;
+            max-width: 100% !important;
+            width: 100% !important;
+            flex: 1 1 100% !important;
+        }
+        [data-testid="stSidebar"] {
+            display: none !important;
+        }
     }
     .sl-status-neutral {
         color: #4b5563;

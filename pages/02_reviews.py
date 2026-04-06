@@ -17,7 +17,7 @@ from src.components.layout import (
     render_surface,
 )
 from src.components.pagination import render_pagination_controls
-from src.components.sidebar import render_sidebar
+from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.tables import render_table
 from src.constants.ui import EMPTY_STATE_MESSAGE
 from src.services.auth_service import require_admin_session
@@ -57,6 +57,7 @@ st.set_page_config(page_title="試食評価", layout="wide")
 require_admin_session()
 inject_app_style()
 render_sidebar(active_page="reviews")
+render_primary_nav(active_page="reviews")
 render_hero_banner(
     "試食評価",
     "登録・履歴確認・削除復元まで、試食レビュー運用を一画面で管理できます。",
