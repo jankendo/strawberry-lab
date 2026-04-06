@@ -1,52 +1,41 @@
-"""Main scraper entrypoint."""
+"""Main scraper entrypoint for MAFF variety ingestion."""
 
 from __future__ import annotations
 
-import argparse
 import os
-import traceback
 from datetime import UTC, datetime
+from uuid import uuid4
 
-from scraper.config import SourceConfig, load_config
-from scraper.sources.ja_news_scraper import JaNewsScraper
+from src.constants.prefectures import PREFECTURES
+
+from scraper.config import load_config
 from scraper.sources.maff_scraper import MaffScraper
-from scraper.sources.naro_scraper import NaroScraper
-from scraper.utils.hashing import compute_article_hash
-from scraper.utils.normalization import normalize_article
+from scraper.utils.hashing import compute_variety_hash
+from scraper.utils.normalization import normalize_text
 from scraper.utils.supabase_admin import get_admin_client
 
-SCRAPER_CLASSES = {
-    "maff": MaffScraper,
-    "naro": NaroScraper,
-    "ja_news": JaNewsScraper,
-}
+
+def _now_iso() -> str:
+    return datetime.now(tz=UTC).isoformat()
 
 
-def _resolve_related_variety_id(client, title: str, summary: str) -> str | None:
-    text = f"{title}\n{summary}"
-    varieties = client.table("varieties").select("id,name,alias_names").is_("deleted_at", "null").execute().data or []
-    matches: list[str] = []
-    for variety in varieties:
-        names = [variety["name"]] + (variety.get("alias_names") or [])
-        if any(name and name in text for name in names):
-            matches.append(variety["id"])
-    return matches[0] if len(matches) == 1 else None
+def _trim(value: str | None, max_length: int) -> str | None:
+    if value is None:
+        return None
+    cleaned = normalize_text(value)
+    return cleaned[:max_length] if cleaned else None
 
 
-def _insert_article(client, article: dict) -> bool:
-    normalized = normalize_article(article)
-    normalized["article_hash"] = compute_article_hash(
-        normalized["article_url"], normalized["title"], normalized["summary"]
-    )
-    normalized["related_variety_id"] = _resolve_related_variety_id(client, normalized["title"], normalized["summary"])
-    try:
-        client.table("scraped_articles").insert(normalized).execute()
-        return True
-    except Exception:
-        return False
+def _extract_prefecture(breeding_place: str | None) -> str | None:
+    if not breeding_place:
+        return None
+    for prefecture in PREFECTURES:
+        if prefecture in breeding_place:
+            return prefecture
+    return None
 
 
-def _create_run(client, source_names: list[str], trigger_type: str) -> str:
+def _create_run(client) -> str:
     github_run_id = os.getenv("GITHUB_RUN_ID")
     github_server_url = os.getenv("GITHUB_SERVER_URL")
     github_repository = os.getenv("GITHUB_REPOSITORY")
@@ -54,15 +43,14 @@ def _create_run(client, source_names: list[str], trigger_type: str) -> str:
     if github_run_id and github_server_url and github_repository:
         run_url = f"{github_server_url}/{github_repository}/actions/runs/{github_run_id}"
     run = (
-        client.table("scrape_runs")
+        client.table("variety_scrape_runs")
         .insert(
             {
-                "trigger_type": trigger_type,
+                "trigger_type": "manual",
                 "status": "running",
                 "github_run_id": int(github_run_id) if github_run_id else None,
                 "github_run_url": run_url,
-                "started_at": datetime.now(tz=UTC).isoformat(),
-                "total_sources": len(source_names),
+                "started_at": _now_iso(),
             }
         )
         .execute()
@@ -71,87 +59,180 @@ def _create_run(client, source_names: list[str], trigger_type: str) -> str:
     return run["id"]
 
 
-def run_scraper(selected_source: str) -> int:
-    """Run scraper for selected source(s)."""
-    cfg = load_config()
-    client = get_admin_client()
-    source_keys = [selected_source] if selected_source != "all" else [k for k, v in cfg.sources.items() if v.enabled]
-    run_id = _create_run(client, source_keys, "manual" if selected_source != "all" else "schedule")
-    total_fetched = total_inserted = total_skipped = 0
-    successes = errors = 0
-    for key in source_keys:
-        source_cfg: SourceConfig = cfg.sources[key]
-        log = (
-            client.table("scrape_source_logs")
-            .insert(
-                {
-                    "scrape_run_id": run_id,
-                    "source_key": source_cfg.source_key,
-                    "source_name": source_cfg.source_name,
-                    "status": "running",
-                    "started_at": datetime.now(tz=UTC).isoformat(),
-                }
-            )
-            .execute()
-            .data[0]
-        )
-        fetched = inserted = skipped = 0
-        status = "success"
-        error_message = None
-        try:
-            scraper = SCRAPER_CLASSES[key](source_cfg)
-            articles = scraper.run()
-            fetched = len(articles)
-            for article in articles:
-                if _insert_article(client, article):
-                    inserted += 1
-                else:
-                    skipped += 1
-            successes += 1
-        except Exception as exc:
-            errors += 1
-            status = "error"
-            error_message = f"{exc}\n{traceback.format_exc(limit=2)}"
-        finally:
-            client.table("scrape_source_logs").update(
-                {
-                    "status": status,
-                    "finished_at": datetime.now(tz=UTC).isoformat(),
-                    "fetched_count": fetched,
-                    "inserted_count": inserted,
-                    "skipped_count": skipped,
-                    "error_message": error_message,
-                }
-            ).eq("id", log["id"]).execute()
-            total_fetched += fetched
-            total_inserted += inserted
-            total_skipped += skipped
-    if errors == 0:
-        run_status = "success"
-    elif successes == 0:
-        run_status = "error"
-    else:
-        run_status = "partial_success"
-    client.table("scrape_runs").update(
+def _finish_run(
+    client,
+    run_id: str,
+    *,
+    status: str,
+    listed_count: int,
+    processed_count: int,
+    upserted_count: int,
+    failed_count: int,
+    error_message: str | None = None,
+) -> None:
+    client.table("variety_scrape_runs").update(
         {
-            "status": run_status,
-            "finished_at": datetime.now(tz=UTC).isoformat(),
-            "total_fetched": total_fetched,
-            "total_inserted": total_inserted,
-            "total_skipped": total_skipped,
-            "error_message": None if run_status != "error" else "All sources failed.",
+            "status": status,
+            "finished_at": _now_iso(),
+            "listed_count": listed_count,
+            "processed_count": processed_count,
+            "upserted_count": upserted_count,
+            "failed_count": failed_count,
+            "error_message": error_message,
         }
     ).eq("id", run_id).execute()
-    return 0 if run_status in ("success", "partial_success") else 1
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--source", choices=["all", "maff", "naro", "ja_news"], default="all")
-    return parser.parse_args()
+def _insert_log(
+    client,
+    *,
+    run_id: str,
+    registration_number: str | None,
+    variety_name: str | None,
+    detail_url: str | None,
+    status: str,
+    message: str | None,
+) -> None:
+    client.table("variety_scrape_logs").insert(
+        {
+            "variety_scrape_run_id": run_id,
+            "registration_number": registration_number,
+            "variety_name": variety_name,
+            "detail_url": detail_url,
+            "status": status,
+            "message": message,
+        }
+    ).execute()
+
+
+def _build_variety_payload(variety: dict) -> dict:
+    registration_date = variety.get("registration_date")
+    registered_year = int(registration_date[:4]) if registration_date else None
+    characteristics_summary = _trim(variety.get("characteristics_summary"), 5000)
+    breeding_place = _trim(variety.get("breeding_place"), 500)
+    applicant = _trim(variety.get("applicant"), 200)
+    breeder_right_holder = _trim(variety.get("breeder_right_holder"), 300)
+    return {
+        "registration_number": _trim(variety.get("registration_number"), 100),
+        "application_number": _trim(variety.get("application_number"), 100),
+        "registration_date": registration_date,
+        "application_date": variety.get("application_date"),
+        "publication_date": variety.get("publication_date"),
+        "name": _trim(variety.get("name"), 100) or "名称不明",
+        "scientific_name": _trim(variety.get("scientific_name"), 300),
+        "japanese_name": _trim(variety.get("japanese_name"), 300),
+        "breeder_right_holder": breeder_right_holder,
+        "applicant": applicant,
+        "breeding_place": breeding_place,
+        "developer": applicant or breeder_right_holder,
+        "registered_year": registered_year,
+        "description": characteristics_summary,
+        "characteristics_summary": characteristics_summary,
+        "right_duration": _trim(variety.get("right_duration"), 500),
+        "usage_conditions": _trim(variety.get("usage_conditions"), 5000),
+        "remarks": _trim(variety.get("remarks"), 5000),
+        "maff_detail_url": _trim(variety.get("maff_detail_url"), 1000),
+        "last_scraped_at": _now_iso(),
+        "source_system": "maff",
+        "origin_prefecture": _extract_prefecture(breeding_place),
+        "alias_names": [],
+        "skin_color": None,
+        "flesh_color": None,
+        "brix_min": None,
+        "brix_max": None,
+        "acidity_level": "unknown",
+        "harvest_start_month": None,
+        "harvest_end_month": None,
+        "tags": [],
+        "deleted_at": None,
+    }
+
+
+def _upsert_variety(client, variety: dict) -> None:
+    registration_number = normalize_text(variety.get("registration_number", ""))
+    if not registration_number:
+        raise ValueError("registration_number is missing.")
+    payload = _build_variety_payload({**variety, "registration_number": registration_number})
+    existing_rows = client.table("varieties").select("id").eq("registration_number", registration_number).limit(1).execute().data or []
+    if existing_rows:
+        client.table("varieties").update(payload).eq("id", existing_rows[0]["id"]).execute()
+    else:
+        client.table("varieties").insert({"id": str(uuid4()), **payload}).execute()
+
+
+def run_scraper() -> int:
+    """Run MAFF variety scraping and upsert to varieties table."""
+    cfg = load_config()
+    source_cfg = cfg.sources["maff"]
+    client = get_admin_client()
+    run_id = _create_run(client)
+    listed_count = processed_count = upserted_count = failed_count = 0
+    try:
+        scraper = MaffScraper(source_cfg)
+        varieties = scraper.fetch_varieties()
+        listed_count = len(varieties)
+        for variety in varieties:
+            processed_count += 1
+            registration_number = variety.get("registration_number")
+            name = variety.get("name")
+            detail_url = variety.get("maff_detail_url")
+            try:
+                _upsert_variety(client, variety)
+                upserted_count += 1
+                fingerprint = compute_variety_hash(
+                    registration_number or "",
+                    name or "",
+                    detail_url or "",
+                )
+                _insert_log(
+                    client,
+                    run_id=run_id,
+                    registration_number=registration_number,
+                    variety_name=name,
+                    detail_url=detail_url,
+                    status="upserted",
+                    message=f"fingerprint={fingerprint}",
+                )
+            except Exception as exc:
+                failed_count += 1
+                _insert_log(
+                    client,
+                    run_id=run_id,
+                    registration_number=registration_number,
+                    variety_name=name,
+                    detail_url=detail_url,
+                    status="failed",
+                    message=str(exc)[:1500],
+                )
+        if failed_count == 0:
+            status = "success"
+        elif upserted_count == 0:
+            status = "error"
+        else:
+            status = "partial_success"
+        _finish_run(
+            client,
+            run_id,
+            status=status,
+            listed_count=listed_count,
+            processed_count=processed_count,
+            upserted_count=upserted_count,
+            failed_count=failed_count,
+        )
+        return 0 if status in ("success", "partial_success") else 1
+    except Exception as exc:
+        _finish_run(
+            client,
+            run_id,
+            status="error",
+            listed_count=listed_count,
+            processed_count=processed_count,
+            upserted_count=upserted_count,
+            failed_count=max(failed_count, 1),
+            error_message=str(exc)[:1500],
+        )
+        return 1
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    raise SystemExit(run_scraper(args.source))
+    raise SystemExit(run_scraper())

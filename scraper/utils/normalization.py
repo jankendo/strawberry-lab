@@ -1,4 +1,4 @@
-"""Normalization utilities for scraped text."""
+"""Normalization utilities for scraper text payloads."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import re
 import unicodedata
 
 
-def normalize_article_field(value: str) -> str:
+def normalize_text(value: str) -> str:
     """Apply NFKC, strip html remnants, and collapse whitespace."""
     text = unicodedata.normalize("NFKC", value or "")
     text = re.sub(r"<[^>]+>", " ", text)
@@ -15,12 +15,17 @@ def normalize_article_field(value: str) -> str:
     return text.strip()
 
 
+def normalize_article_field(value: str) -> str:
+    """Backward-compatible alias of normalize_text."""
+    return normalize_text(value)
+
+
 def normalize_article(article: dict) -> dict:
-    """Normalize required article fields."""
-    summary = normalize_article_field(article.get("summary", ""))[:3000]
+    """Backward-compatible article-normalization helper."""
+    summary = normalize_text(article.get("summary", ""))[:3000]
     return {
         **article,
-        "article_url": normalize_article_field(article.get("article_url", "")),
-        "title": normalize_article_field(article.get("title", "")),
+        "article_url": normalize_text(article.get("article_url", "")),
+        "title": normalize_text(article.get("title", "")),
         "summary": summary,
     }

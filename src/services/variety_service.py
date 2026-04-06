@@ -24,7 +24,10 @@ def _apply_variety_filters(
     if not include_deleted:
         query = query.is_("deleted_at", "null")
     if keyword:
-        query = query.or_(f"name.ilike.%{keyword}%,developer.ilike.%{keyword}%,description.ilike.%{keyword}%")
+        query = query.or_(
+            "name.ilike.%{kw}%,registration_number.ilike.%{kw}%,application_number.ilike.%{kw}%"
+            ",developer.ilike.%{kw}%,description.ilike.%{kw}%".format(kw=keyword)
+        )
     if prefecture:
         query = query.eq("origin_prefecture", prefecture)
     if tags:
@@ -53,7 +56,7 @@ def list_varieties(
         prefecture=prefecture,
         tags=tags,
     )
-    allowed_sort = {"name", "updated_at", "registered_year", "created_at"}
+    allowed_sort = {"name", "updated_at", "registered_year", "created_at", "registration_date"}
     if sort_field not in allowed_sort:
         sort_field = "updated_at"
     result = query.order(sort_field, desc=sort_desc).range((page - 1) * page_size, page * page_size - 1).execute()

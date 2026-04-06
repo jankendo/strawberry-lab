@@ -7,12 +7,29 @@ create table if not exists public.app_users (
 
 create table if not exists public.varieties (
   id uuid primary key default gen_random_uuid(),
+  registration_number text,
+  application_number text,
+  registration_date date,
+  application_date date,
+  publication_date date,
   name text not null check (char_length(name) between 1 and 100),
-  alias_names text[] not null default '{}',
-  origin_prefecture text,
+  scientific_name text,
+  japanese_name text,
+  breeder_right_holder text,
+  applicant text,
+  breeding_place text,
   developer text check (developer is null or char_length(developer) <= 200),
   registered_year integer check (registered_year is null or (registered_year >= 1900 and registered_year <= extract(year from now())::int + 1)),
   description text check (description is null or char_length(description) <= 5000),
+  characteristics_summary text,
+  right_duration text,
+  usage_conditions text,
+  remarks text,
+  maff_detail_url text,
+  last_scraped_at timestamptz,
+  source_system text not null default 'manual',
+  alias_names text[] not null default '{}',
+  origin_prefecture text,
   skin_color text,
   flesh_color text,
   brix_min numeric(4,1) check (brix_min is null or (brix_min >= 0 and brix_min <= 30)),
@@ -28,6 +45,24 @@ create table if not exists public.varieties (
   constraint varieties_tags_count_check check (coalesce(array_length(tags, 1), 0) <= 20),
   constraint varieties_alias_count_check check (coalesce(array_length(alias_names, 1), 0) <= 20)
 );
+
+alter table public.varieties add column if not exists registration_number text;
+alter table public.varieties add column if not exists application_number text;
+alter table public.varieties add column if not exists registration_date date;
+alter table public.varieties add column if not exists application_date date;
+alter table public.varieties add column if not exists publication_date date;
+alter table public.varieties add column if not exists scientific_name text;
+alter table public.varieties add column if not exists japanese_name text;
+alter table public.varieties add column if not exists breeder_right_holder text;
+alter table public.varieties add column if not exists applicant text;
+alter table public.varieties add column if not exists breeding_place text;
+alter table public.varieties add column if not exists characteristics_summary text;
+alter table public.varieties add column if not exists right_duration text;
+alter table public.varieties add column if not exists usage_conditions text;
+alter table public.varieties add column if not exists remarks text;
+alter table public.varieties add column if not exists maff_detail_url text;
+alter table public.varieties add column if not exists last_scraped_at timestamptz;
+alter table public.varieties add column if not exists source_system text not null default 'manual';
 
 create table if not exists public.variety_parent_links (
   id uuid primary key default gen_random_uuid(),
@@ -100,50 +135,34 @@ create table if not exists public.notes (
   constraint notes_tags_count_check check (coalesce(array_length(tags, 1), 0) <= 20)
 );
 
-create table if not exists public.scraped_articles (
-  id uuid primary key default gen_random_uuid(),
-  source_key text not null,
-  source_name text not null,
-  listing_url text not null,
-  article_url text not null,
-  title text not null,
-  summary text not null check (char_length(summary) <= 3000),
-  article_hash text not null unique,
-  published_at timestamptz,
-  scraped_at timestamptz not null default now(),
-  is_read boolean not null default false,
-  read_at timestamptz,
-  related_variety_id uuid references public.varieties(id),
-  raw_metadata jsonb not null default '{}'::jsonb
-);
+drop table if exists public.scrape_source_logs cascade;
+drop table if exists public.scrape_runs cascade;
+drop table if exists public.scraped_articles cascade;
 
-create table if not exists public.scrape_runs (
+create table if not exists public.variety_scrape_runs (
   id uuid primary key default gen_random_uuid(),
-  trigger_type text not null check (trigger_type in ('schedule', 'manual')),
+  trigger_type text not null check (trigger_type in ('manual')),
   status text not null check (status in ('running', 'success', 'error', 'partial_success')),
   github_run_id bigint,
   github_run_url text,
   started_at timestamptz not null,
   finished_at timestamptz,
-  total_sources integer not null default 0,
-  total_fetched integer not null default 0,
-  total_inserted integer not null default 0,
-  total_skipped integer not null default 0,
+  listed_count integer not null default 0,
+  processed_count integer not null default 0,
+  upserted_count integer not null default 0,
+  failed_count integer not null default 0,
   error_message text
 );
 
-create table if not exists public.scrape_source_logs (
+create table if not exists public.variety_scrape_logs (
   id uuid primary key default gen_random_uuid(),
-  scrape_run_id uuid not null references public.scrape_runs(id) on delete cascade,
-  source_key text not null,
-  source_name text not null,
-  status text not null check (status in ('running', 'success', 'error', 'skipped')),
-  started_at timestamptz not null,
-  finished_at timestamptz,
-  fetched_count integer not null default 0,
-  inserted_count integer not null default 0,
-  skipped_count integer not null default 0,
-  error_message text
+  variety_scrape_run_id uuid not null references public.variety_scrape_runs(id) on delete cascade,
+  registration_number text,
+  variety_name text,
+  detail_url text,
+  status text not null check (status in ('upserted', 'skipped', 'failed')),
+  message text,
+  created_at timestamptz not null default now()
 );
 
 drop trigger if exists set_varieties_updated_at on public.varieties;

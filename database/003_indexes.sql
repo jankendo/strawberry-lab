@@ -2,6 +2,13 @@ create unique index if not exists varieties_active_name_unique_idx
 on public.varieties (lower(name))
 where deleted_at is null;
 
+create unique index if not exists varieties_active_registration_number_unique_idx
+on public.varieties (registration_number)
+where registration_number is not null and deleted_at is null;
+
+create index if not exists varieties_registration_number_idx
+on public.varieties (registration_number);
+
 create index if not exists varieties_tags_gin_idx
 on public.varieties using gin (tags);
 
@@ -30,17 +37,11 @@ on public.notes using gin (body gin_trgm_ops);
 create index if not exists notes_tags_gin_idx
 on public.notes using gin (tags);
 
-create unique index if not exists scraped_articles_article_url_unique_idx
-on public.scraped_articles (article_url);
+create index if not exists variety_scrape_runs_started_at_desc_idx
+on public.variety_scrape_runs (started_at desc);
 
-create index if not exists scraped_articles_scraped_at_desc_idx
-on public.scraped_articles (scraped_at desc);
+create index if not exists variety_scrape_logs_run_created_at_idx
+on public.variety_scrape_logs (variety_scrape_run_id, created_at desc);
 
-create index if not exists scraped_articles_source_key_idx
-on public.scraped_articles (source_key);
-
-create index if not exists scraped_articles_title_trgm_idx
-on public.scraped_articles using gin (title gin_trgm_ops);
-
-create index if not exists scraped_articles_summary_trgm_idx
-on public.scraped_articles using gin (summary gin_trgm_ops);
+create index if not exists variety_scrape_logs_registration_number_idx
+on public.variety_scrape_logs (registration_number);

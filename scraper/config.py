@@ -13,9 +13,9 @@ class SourceConfig:
     source_key: str
     source_name: str
     enabled: bool
-    listing_urls: list[str]
+    search_url: str
     min_interval_seconds: int
-    max_articles_per_run: int
+    max_pages_per_run: int
 
 
 @dataclass(frozen=True)
@@ -37,12 +37,17 @@ def load_config() -> ScraperConfig:
         supabase_url=os.environ["SUPABASE_URL"],
         supabase_service_role_key=os.environ["SUPABASE_SERVICE_ROLE_KEY"],
         app_timezone=os.getenv("APP_TIMEZONE", "Asia/Tokyo"),
-        user_agent="StrawberryLabScraper/2.0 (+https://github.com/)",
+        user_agent="StrawberryLabScraper/3.0 (+https://github.com/jankendo/strawberry-lab)",
         timeout_seconds=20,
         max_retries=3,
         sources={
-            "maff": SourceConfig("maff", "MAFF", True, ["https://www.maff.go.jp/j/seisan/"], 5, 30),
-            "naro": SourceConfig("naro", "NARO", True, ["https://www.naro.go.jp/publicity_report/"], 5, 30),
-            "ja_news": SourceConfig("ja_news", "JA News", True, ["https://www.agrinews.co.jp/"], 5, 30),
+            "maff": SourceConfig(
+                source_key="maff",
+                source_name="MAFF Variety Registry",
+                enabled=True,
+                search_url="https://www.hinshu2.maff.go.jp/vips/cmm/apCMM110.aspx?MOSS=1",
+                min_interval_seconds=5,
+                max_pages_per_run=200,
+            )
         },
     )

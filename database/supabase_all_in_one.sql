@@ -1,9 +1,11 @@
--- StrawberryLab Supabase setup (single-run script)
--- Execute in Supabase SQL Editor in a single paste/run.
 
+-- BEGIN: database\000_extensions.sql
 create extension if not exists pgcrypto;
 create extension if not exists pg_trgm;
 
+-- END: database\000_extensions.sql
+
+-- BEGIN: database\001_functions.sql
 create or replace function public.update_updated_at_column()
 returns trigger
 language plpgsql
@@ -121,6 +123,9 @@ begin
 end;
 $$;
 
+-- END: database\001_functions.sql
+
+-- BEGIN: database\002_tables.sql
 create table if not exists public.app_users (
   user_id uuid primary key references auth.users(id) on delete cascade,
   email text not null unique,
@@ -130,12 +135,29 @@ create table if not exists public.app_users (
 
 create table if not exists public.varieties (
   id uuid primary key default gen_random_uuid(),
+  registration_number text,
+  application_number text,
+  registration_date date,
+  application_date date,
+  publication_date date,
   name text not null check (char_length(name) between 1 and 100),
-  alias_names text[] not null default '{}',
-  origin_prefecture text,
+  scientific_name text,
+  japanese_name text,
+  breeder_right_holder text,
+  applicant text,
+  breeding_place text,
   developer text check (developer is null or char_length(developer) <= 200),
   registered_year integer check (registered_year is null or (registered_year >= 1900 and registered_year <= extract(year from now())::int + 1)),
   description text check (description is null or char_length(description) <= 5000),
+  characteristics_summary text,
+  right_duration text,
+  usage_conditions text,
+  remarks text,
+  maff_detail_url text,
+  last_scraped_at timestamptz,
+  source_system text not null default 'manual',
+  alias_names text[] not null default '{}',
+  origin_prefecture text,
   skin_color text,
   flesh_color text,
   brix_min numeric(4,1) check (brix_min is null or (brix_min >= 0 and brix_min <= 30)),
@@ -151,6 +173,24 @@ create table if not exists public.varieties (
   constraint varieties_tags_count_check check (coalesce(array_length(tags, 1), 0) <= 20),
   constraint varieties_alias_count_check check (coalesce(array_length(alias_names, 1), 0) <= 20)
 );
+
+alter table public.varieties add column if not exists registration_number text;
+alter table public.varieties add column if not exists application_number text;
+alter table public.varieties add column if not exists registration_date date;
+alter table public.varieties add column if not exists application_date date;
+alter table public.varieties add column if not exists publication_date date;
+alter table public.varieties add column if not exists scientific_name text;
+alter table public.varieties add column if not exists japanese_name text;
+alter table public.varieties add column if not exists breeder_right_holder text;
+alter table public.varieties add column if not exists applicant text;
+alter table public.varieties add column if not exists breeding_place text;
+alter table public.varieties add column if not exists characteristics_summary text;
+alter table public.varieties add column if not exists right_duration text;
+alter table public.varieties add column if not exists usage_conditions text;
+alter table public.varieties add column if not exists remarks text;
+alter table public.varieties add column if not exists maff_detail_url text;
+alter table public.varieties add column if not exists last_scraped_at timestamptz;
+alter table public.varieties add column if not exists source_system text not null default 'manual';
 
 create table if not exists public.variety_parent_links (
   id uuid primary key default gen_random_uuid(),
@@ -223,50 +263,34 @@ create table if not exists public.notes (
   constraint notes_tags_count_check check (coalesce(array_length(tags, 1), 0) <= 20)
 );
 
-create table if not exists public.scraped_articles (
-  id uuid primary key default gen_random_uuid(),
-  source_key text not null,
-  source_name text not null,
-  listing_url text not null,
-  article_url text not null,
-  title text not null,
-  summary text not null check (char_length(summary) <= 3000),
-  article_hash text not null unique,
-  published_at timestamptz,
-  scraped_at timestamptz not null default now(),
-  is_read boolean not null default false,
-  read_at timestamptz,
-  related_variety_id uuid references public.varieties(id),
-  raw_metadata jsonb not null default '{}'::jsonb
-);
+drop table if exists public.scrape_source_logs cascade;
+drop table if exists public.scrape_runs cascade;
+drop table if exists public.scraped_articles cascade;
 
-create table if not exists public.scrape_runs (
+create table if not exists public.variety_scrape_runs (
   id uuid primary key default gen_random_uuid(),
-  trigger_type text not null check (trigger_type in ('schedule', 'manual')),
+  trigger_type text not null check (trigger_type in ('manual')),
   status text not null check (status in ('running', 'success', 'error', 'partial_success')),
   github_run_id bigint,
   github_run_url text,
   started_at timestamptz not null,
   finished_at timestamptz,
-  total_sources integer not null default 0,
-  total_fetched integer not null default 0,
-  total_inserted integer not null default 0,
-  total_skipped integer not null default 0,
+  listed_count integer not null default 0,
+  processed_count integer not null default 0,
+  upserted_count integer not null default 0,
+  failed_count integer not null default 0,
   error_message text
 );
 
-create table if not exists public.scrape_source_logs (
+create table if not exists public.variety_scrape_logs (
   id uuid primary key default gen_random_uuid(),
-  scrape_run_id uuid not null references public.scrape_runs(id) on delete cascade,
-  source_key text not null,
-  source_name text not null,
-  status text not null check (status in ('running', 'success', 'error', 'skipped')),
-  started_at timestamptz not null,
-  finished_at timestamptz,
-  fetched_count integer not null default 0,
-  inserted_count integer not null default 0,
-  skipped_count integer not null default 0,
-  error_message text
+  variety_scrape_run_id uuid not null references public.variety_scrape_runs(id) on delete cascade,
+  registration_number text,
+  variety_name text,
+  detail_url text,
+  status text not null check (status in ('upserted', 'skipped', 'failed')),
+  message text,
+  created_at timestamptz not null default now()
 );
 
 drop trigger if exists set_varieties_updated_at on public.varieties;
@@ -305,9 +329,19 @@ before insert on public.review_images
 for each row
 execute function public.enforce_review_image_limit();
 
+-- END: database\002_tables.sql
+
+-- BEGIN: database\003_indexes.sql
 create unique index if not exists varieties_active_name_unique_idx
 on public.varieties (lower(name))
 where deleted_at is null;
+
+create unique index if not exists varieties_active_registration_number_unique_idx
+on public.varieties (registration_number)
+where registration_number is not null and deleted_at is null;
+
+create index if not exists varieties_registration_number_idx
+on public.varieties (registration_number);
 
 create index if not exists varieties_tags_gin_idx
 on public.varieties using gin (tags);
@@ -337,21 +371,18 @@ on public.notes using gin (body gin_trgm_ops);
 create index if not exists notes_tags_gin_idx
 on public.notes using gin (tags);
 
-create unique index if not exists scraped_articles_article_url_unique_idx
-on public.scraped_articles (article_url);
+create index if not exists variety_scrape_runs_started_at_desc_idx
+on public.variety_scrape_runs (started_at desc);
 
-create index if not exists scraped_articles_scraped_at_desc_idx
-on public.scraped_articles (scraped_at desc);
+create index if not exists variety_scrape_logs_run_created_at_idx
+on public.variety_scrape_logs (variety_scrape_run_id, created_at desc);
 
-create index if not exists scraped_articles_source_key_idx
-on public.scraped_articles (source_key);
+create index if not exists variety_scrape_logs_registration_number_idx
+on public.variety_scrape_logs (registration_number);
 
-create index if not exists scraped_articles_title_trgm_idx
-on public.scraped_articles using gin (title gin_trgm_ops);
+-- END: database\003_indexes.sql
 
-create index if not exists scraped_articles_summary_trgm_idx
-on public.scraped_articles using gin (summary gin_trgm_ops);
-
+-- BEGIN: database\004_rls.sql
 alter table public.app_users enable row level security;
 alter table public.varieties enable row level security;
 alter table public.variety_parent_links enable row level security;
@@ -359,9 +390,8 @@ alter table public.reviews enable row level security;
 alter table public.variety_images enable row level security;
 alter table public.review_images enable row level security;
 alter table public.notes enable row level security;
-alter table public.scraped_articles enable row level security;
-alter table public.scrape_runs enable row level security;
-alter table public.scrape_source_logs enable row level security;
+alter table public.variety_scrape_runs enable row level security;
+alter table public.variety_scrape_logs enable row level security;
 
 drop policy if exists app_users_select_self on public.app_users;
 create policy app_users_select_self
@@ -390,13 +420,14 @@ drop policy if exists admin_all_review_images on public.review_images;
 create policy admin_all_review_images on public.review_images for all to authenticated using (public.is_admin()) with check (public.is_admin());
 drop policy if exists admin_all_notes on public.notes;
 create policy admin_all_notes on public.notes for all to authenticated using (public.is_admin()) with check (public.is_admin());
-drop policy if exists admin_all_scraped_articles on public.scraped_articles;
-create policy admin_all_scraped_articles on public.scraped_articles for all to authenticated using (public.is_admin()) with check (public.is_admin());
-drop policy if exists admin_all_scrape_runs on public.scrape_runs;
-create policy admin_all_scrape_runs on public.scrape_runs for all to authenticated using (public.is_admin()) with check (public.is_admin());
-drop policy if exists admin_all_scrape_source_logs on public.scrape_source_logs;
-create policy admin_all_scrape_source_logs on public.scrape_source_logs for all to authenticated using (public.is_admin()) with check (public.is_admin());
+drop policy if exists admin_all_variety_scrape_runs on public.variety_scrape_runs;
+create policy admin_all_variety_scrape_runs on public.variety_scrape_runs for all to authenticated using (public.is_admin()) with check (public.is_admin());
+drop policy if exists admin_all_variety_scrape_logs on public.variety_scrape_logs;
+create policy admin_all_variety_scrape_logs on public.variety_scrape_logs for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
+-- END: database\004_rls.sql
+
+-- BEGIN: database\005_storage.sql
 insert into storage.buckets (id, name, public)
 values ('variety-images', 'variety-images', false)
 on conflict (id) do nothing;
@@ -435,6 +466,9 @@ to authenticated
 using (bucket_id = 'review-images' and public.is_admin())
 with check (bucket_id = 'review-images' and public.is_admin());
 
+-- END: database\005_storage.sql
+
+-- BEGIN: database\006_rpc.sql
 create or replace function public.search_notes(search_query text)
 returns setof public.notes
 language sql
@@ -456,11 +490,5 @@ as $$
   order by n.updated_at desc;
 $$;
 
--- After creating Supabase Auth user manually, replace email and run:
--- insert into public.app_users (user_id, email, role)
--- select id, email, 'admin'
--- from auth.users
--- where email = 'your-email@example.com'
--- on conflict (user_id) do update
--- set email = excluded.email,
---     role = excluded.role;
+-- END: database\006_rpc.sql
+

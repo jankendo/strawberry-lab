@@ -57,16 +57,19 @@ class GitHubClient:
             return "main"
         return ref
 
-    def dispatch_scrape(self, source: str) -> None:
-        """Dispatch the configured workflow with a source input."""
+    def dispatch_scrape(self, source: str | None = None) -> None:
+        """Dispatch the configured workflow."""
         if not self.is_available():
             raise RuntimeError("GitHub workflow settings are incomplete.")
         url = f"{self._base}/actions/workflows/{self._config.github_workflow_file}/dispatches"
         dispatch_ref = self.get_dispatch_ref()
+        payload: dict[str, object] = {"ref": dispatch_ref}
+        if source:
+            payload["inputs"] = {"source": source}
         response = requests.post(
             url,
             headers=self._headers,
-            json={"ref": dispatch_ref, "inputs": {"source": source}},
+            json=payload,
             timeout=20,
         )
         if response.status_code >= 300:

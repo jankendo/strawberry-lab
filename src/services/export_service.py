@@ -14,9 +14,8 @@ EXPORT_TABLES = {
     "variety_parent_links": "variety_parent_links",
     "reviews": "reviews",
     "notes": "notes",
-    "scraped_articles": "scraped_articles",
-    "scrape_runs": "scrape_runs",
-    "scrape_source_logs": "scrape_source_logs",
+    "variety_scrape_runs": "variety_scrape_runs",
+    "variety_scrape_logs": "variety_scrape_logs",
 }
 
 ORDER_COLUMNS = {
@@ -24,9 +23,8 @@ ORDER_COLUMNS = {
     "variety_parent_links": "created_at",
     "reviews": "created_at",
     "notes": "created_at",
-    "scraped_articles": "scraped_at",
-    "scrape_runs": "started_at",
-    "scrape_source_logs": "started_at",
+    "variety_scrape_runs": "started_at",
+    "variety_scrape_logs": "created_at",
 }
 
 

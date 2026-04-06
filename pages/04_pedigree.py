@@ -5,22 +5,39 @@ from __future__ import annotations
 import streamlit as st
 from streamlit_plotly_events import plotly_events
 
+from src.components.layout import inject_app_style, render_page_header, render_section_title
 from src.components.sidebar import render_sidebar
 from src.services.auth_service import require_admin_session
-from src.services.pedigree_service import build_figure, build_graph, fetch_graph_data, layered_layout, subgraph_by_root
+from src.services.pedigree_service import (
+    build_figure,
+    build_graph,
+    fetch_graph_data,
+    layered_layout,
+    subgraph_by_root,
+)
 
 st.set_page_config(page_title="交配図", layout="wide")
 require_admin_session()
+inject_app_style()
 render_sidebar()
-st.title("交配図")
+render_page_header("交配図", "品種系統を可視化し、ノード選択から品種詳細へ移動できます。")
 
-include_deleted = st.checkbox("削除済みを含む", value=False)
-direction = st.selectbox("方向", ["ancestors", "descendants", "both"], index=2)
-max_depth = st.slider("最大深さ", 1, 5, 3)
+render_section_title("表示条件")
+c1, c2, c3 = st.columns(3)
+with c1:
+    include_deleted = st.checkbox("削除済みを含む", value=False)
+with c2:
+    direction = st.selectbox("方向", ["ancestors", "descendants", "both"], index=2)
+with c3:
+    max_depth = st.slider("最大深さ", 1, 5, 3)
 
 varieties, links = fetch_graph_data(include_deleted=include_deleted)
 name_by_id = {v["id"]: v["name"] for v in varieties}
-root_id = st.selectbox("起点品種", [""] + list(name_by_id.keys()), format_func=lambda x: "全体" if not x else name_by_id[x])
+root_id = st.selectbox(
+    "起点品種",
+    [""] + list(name_by_id.keys()),
+    format_func=lambda x: "全体" if not x else name_by_id[x],
+)
 
 try:
     graph = build_graph(varieties, links)

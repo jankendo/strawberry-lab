@@ -1,12 +1,12 @@
 # StrawberryLab
 
-Private single-user Streamlit app for strawberry variety research, tasting reviews, analytics, pedigree visualization, notes, and scraper ingestion.
+Private single-user Streamlit app for strawberry variety research, tasting reviews, analytics, pedigree visualization, notes, and MAFF variety-registry ingestion.
 
 ## Stack
 - Python 3.12
 - Streamlit
 - Supabase (PostgreSQL/Auth/Storage)
-- GitHub Actions (scraper schedule)
+- GitHub Actions (workflow_dispatch for manual MAFF scraping)
 
 ## Local setup
 1. Install dependencies:
@@ -23,14 +23,21 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
    6. `database/005_storage.sql`
    7. `database/006_rpc.sql`
    8. `database/007_seed_admin.sql.template` (after auth user creation)
+   - Existing article-scrape tables are dropped by `002_tables.sql`.
 
 ## Run app
 - `streamlit run Home.py`
 
-## Run scraper locally
-- `python -m scraper.main --source all`
-- `python -m scraper.main --source maff`
-- `python -m scraper.heartbeat`
+## Run MAFF variety scraper locally
+- `python -m scraper.main`
+- (optional health check) `python -m scraper.heartbeat`
+
+## Run MAFF variety scraper on GitHub Actions
+- Trigger `.github/workflows/scrape.yml` via **Run workflow** (manual only).
+- Required repository secrets:
+  - `SUPABASE_URL`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+  - `APP_TIMEZONE` (`Asia/Tokyo` recommended)
 
 ## Run tests
 - `pytest -q`
