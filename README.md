@@ -36,11 +36,14 @@ $env:SUPABASE_SERVICE_ROLE_KEY = "YOUR_SERVICE_ROLE_KEY"
 $env:APP_TIMEZONE = "Asia/Tokyo"
 $env:MAFF_MIN_INTERVAL_SECONDS = "0"
 $env:MAFF_MAX_PAGES_PER_RUN = "200"
+$env:MAFF_FETCH_IMAGES = "1"
+$env:MAFF_MAX_IMAGES_PER_VARIETY = "3"
 $env:SUPABASE_UPSERT_BATCH_SIZE = "200"
 python -m scraper.main
 ```
 
 - Optional heartbeat check: `python -m scraper.heartbeat`
+- MAFF詳細画像は `variety-images` バケットへ同期され、`variety_images` テーブルへメタデータ保存されます。
 - If schema-related errors occur, re-apply `database/supabase_all_in_one.sql`.
 
 ## Run tests

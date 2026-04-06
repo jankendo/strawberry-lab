@@ -6,7 +6,7 @@ import streamlit as st
 
 from src.components.forms import comma_values_input
 from src.components.image_gallery import render_image_gallery
-from src.components.layout import inject_app_style, render_page_header, render_section_title
+from src.components.layout import inject_app_style, render_info_card, render_page_header, render_section_title
 from src.components.pagination import render_pagination_controls
 from src.components.sidebar import render_sidebar
 from src.components.tables import render_table
@@ -65,7 +65,51 @@ with tab_list:
         detail = get_variety_detail(selected_id)
         c1, c2 = st.columns([3, 2])
         with c1:
-            st.json(detail)
+            if detail:
+                render_info_card(
+                    f"<strong>{detail.get('name', '-')}</strong><br>"
+                    f"登録番号: {detail.get('registration_number') or '-'} / "
+                    f"出願番号: {detail.get('application_number') or '-'}"
+                )
+                d1, d2 = st.columns(2)
+                with d1:
+                    st.write("**基本情報**")
+                    st.write(
+                        {
+                            "学名": detail.get("scientific_name") or "-",
+                            "和名": detail.get("japanese_name") or "-",
+                            "登録年月日": detail.get("registration_date") or "-",
+                            "出願年月日": detail.get("application_date") or "-",
+                            "出願公表年月日": detail.get("publication_date") or "-",
+                            "開発者": detail.get("developer") or "-",
+                            "育成者権者": detail.get("breeder_right_holder") or "-",
+                            "出願者": detail.get("applicant") or "-",
+                            "育成地": detail.get("breeding_place") or "-",
+                            "都道府県": detail.get("origin_prefecture") or "-",
+                        }
+                    )
+                with d2:
+                    st.write("**品質・運用情報**")
+                    st.write(
+                        {
+                            "糖度(下限)": detail.get("brix_min"),
+                            "糖度(上限)": detail.get("brix_max"),
+                            "酸味レベル": detail.get("acidity_level") or "-",
+                            "収穫開始月": detail.get("harvest_start_month"),
+                            "収穫終了月": detail.get("harvest_end_month"),
+                            "利用条件": detail.get("usage_conditions") or "-",
+                            "権利存続期間": detail.get("right_duration") or "-",
+                            "備考": detail.get("remarks") or "-",
+                        }
+                    )
+                if detail.get("characteristics_summary"):
+                    st.write("**特性の概要**")
+                    st.write(detail["characteristics_summary"])
+                elif detail.get("description"):
+                    st.write("**説明**")
+                    st.write(detail["description"])
+            else:
+                st.info("品種詳細を取得できませんでした。")
         with c2:
             images = list_images_with_signed_urls("variety_images", "variety_id", selected_id)
             render_image_gallery(images, "variety")

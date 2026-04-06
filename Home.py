@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src.components.layout import inject_app_style, render_page_header, render_section_title
+from src.components.layout import (
+    inject_app_style,
+    render_info_card,
+    render_kpi_cards,
+    render_lead,
+    render_page_header,
+    render_section_title,
+)
 from src.components.sidebar import render_sidebar
 from src.services.auth_service import initialize_auth_state, login_user
 
@@ -15,6 +22,7 @@ inject_app_style()
 
 def _render_login() -> None:
     render_page_header("StrawberryLab", "いちご品種の研究・評価を一元管理するための管理アプリです。")
+    render_lead("品種登録情報・試食評価・分析・メモを一体運用する管理者向けワークスペースです。")
     with st.container():
         st.subheader("ログイン")
         with st.form("login_form"):
@@ -75,13 +83,19 @@ def _render_dashboard() -> None:
     latest_status = latest_scrape[0]["status"] if latest_scrape else "-"
     latest_upserted = latest_scrape[0]["upserted_count"] if latest_scrape else 0
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("有効品種数", active_varieties)
-    col2.metric("有効レビュー数", active_reviews)
-    col3.metric("ノート数", notes_count)
-    col4.metric("直近取得件数", latest_upserted)
-    col5.metric("平均総合評価", avg_score)
-    st.caption(f"最新品種取得状態: {latest_status}")
+    render_kpi_cards(
+        [
+            ("有効品種数", str(active_varieties), None),
+            ("有効レビュー数", str(active_reviews), None),
+            ("研究メモ数", str(notes_count), None),
+            ("直近取得件数", str(latest_upserted), f"状態: {latest_status}"),
+            ("平均総合評価", f"{avg_score:.2f}", "10点満点"),
+        ]
+    )
+    render_info_card(
+        "運用ヒント: 新規取得後は <strong>品種管理</strong> で画像と説明を確認し、"
+        "必要に応じて補足メモを追記してください。"
+    )
 
     render_section_title("最新レビュー", "直近5件の試食評価を表示します。")
     reviews = (
@@ -108,10 +122,11 @@ def _render_dashboard() -> None:
     )
     st.dataframe(recent_runs, use_container_width=True, hide_index=True)
 
+    render_section_title("主要メニュー")
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.page_link("pages/01_varieties.py", label="品種管理")
     c2.page_link("pages/02_reviews.py", label="試食評価")
-    c3.page_link("pages/03_analytics.py", label="分析")
+    c3.page_link("pages/03_analytics.py", label="分析ダッシュボード")
     c4.page_link("pages/04_pedigree.py", label="交配図")
     c5.page_link("pages/06_notes.py", label="研究メモ")
 

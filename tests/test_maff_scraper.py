@@ -98,6 +98,7 @@ def test_fetch_varieties_parses_listing_and_detail() -> None:
       <span id="lblJgakumeiName">Fragaria L.</span>
       <span id="lblJshuruiName">イチゴ属</span>
       <span id="lblShtgaiyo">果実は大果で甘味が強い。</span>
+      <img src="file_library/10000/999/999_1_1.jpg" />
     </body></html>
     """
 
@@ -138,3 +139,6 @@ def test_fetch_varieties_parses_listing_and_detail() -> None:
     assert row["breeding_place"] == "栃木県宇都宮市"
     assert row["usage_conditions"] is not None
     assert "生産する行為の制限: 北海道" in row["usage_conditions"]
+    assert row["detail_image_urls"] == [
+        "https://www.hinshu2.maff.go.jp/vips/cmm/file_library/10000/999/999_1_1.jpg"
+    ]

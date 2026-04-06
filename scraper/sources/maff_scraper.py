@@ -9,12 +9,14 @@ from scraper.sources.base_scraper import BaseScraper
 from scraper.utils.normalization import normalize_text
 
 _DETAIL_HOST = "https://www.hinshu2.maff.go.jp"
+_CMM_BASE_URL = "https://www.hinshu2.maff.go.jp/vips/cmm/"
 _SEARCH_FIELD_NAME = "txtShuruiJFskFsh"
 _SEARCH_TERM = "Fragaria L."
 _SEARCH_BUTTON_NAME = "btnSearch"
 _RESULT_GRID_ID = "gvwCMM110JFskFsh"
 _NEXT_PAGE_TEXT = "次へ"
 _DETAIL_HREF_RE = re.compile(r"apCMM112\.aspx\?TOUROKU_NO=", re.IGNORECASE)
+_DETAIL_IMAGE_RE = re.compile(r"(?:file_library/|/vips/cmm/file_library/)", re.IGNORECASE)
 
 _FIELD_LABELS: dict[str, list[str]] = {
     "registration_number": ["登録番号"],
@@ -82,6 +84,13 @@ def _extract_postback(href: str) -> tuple[str, str] | None:
     if not match:
         return None
     return (match.group(1), match.group(2))
+
+
+def _normalize_image_url(detail_url: str, src: str) -> str:
+    normalized_src = src.replace("&amp;", "&").strip()
+    if normalized_src.startswith("file_library/"):
+        return urljoin(_CMM_BASE_URL, normalized_src)
+    return urljoin(detail_url, normalized_src)
 
 
 class MaffScraper(BaseScraper):
@@ -178,7 +187,7 @@ class MaffScraper(BaseScraper):
             if not registration_number or registration_number in seen:
                 continue
             seen.add(registration_number)
-            detail_url = urljoin(_DETAIL_HOST, raw_href)
+            detail_url = urljoin(_CMM_BASE_URL, raw_href)
             listed_name = _strip_annotations(normalize_text(cells[3].get_text(" ", strip=True))) or ""
             rows.append(
                 {
@@ -214,6 +223,21 @@ class MaffScraper(BaseScraper):
         if characteristics_node:
             data[_normalize_label("登録品種の特性の概要")] = normalize_text(characteristics_node.get_text(" ", strip=True))
         return data
+
+    def _extract_detail_image_urls(self, html: str, detail_url: str) -> list[str]:
+        soup = self._soup(html)
+        image_urls: list[str] = []
+        seen: set[str] = set()
+        for image in soup.find_all("img", src=True):
+            src = image.get("src", "").strip()
+            if not src or not _DETAIL_IMAGE_RE.search(src):
+                continue
+            image_url = _normalize_image_url(detail_url, src)
+            if image_url in seen:
+                continue
+            seen.add(image_url)
+            image_urls.append(image_url)
+        return image_urls
 
     def _pick(self, detail_map: dict[str, str], key: str) -> str | None:
         for label in _FIELD_LABELS[key]:
@@ -317,7 +341,9 @@ class MaffScraper(BaseScraper):
         for row in targets:
             try:
                 detail_response = self._get(row["detail_url"])
-                detail_map = self._extract_detail_map(detail_response.text)
+                detail_html = detail_response.text
+                detail_map = self._extract_detail_map(detail_html)
+                detail_image_urls = self._extract_detail_image_urls(detail_html, row["detail_url"])
                 registration_number = self._pick(detail_map, "registration_number") or row["registration_number"]
                 scientific_name = self._extract_scientific_name(detail_map, row.get("listed_scientific_name"))
                 if not self._is_target_scientific_name(scientific_name):
@@ -341,6 +367,7 @@ class MaffScraper(BaseScraper):
                     "usage_conditions": self._compose_usage_conditions(detail_map),
                     "remarks": self._pick(detail_map, "remarks"),
                     "maff_detail_url": row["detail_url"],
+                    "detail_image_urls": detail_image_urls,
                     "source_system": "maff",
                 }
             except Exception as exc:
