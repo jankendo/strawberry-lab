@@ -53,6 +53,7 @@ st.code(
             '$env:APP_TIMEZONE = "Asia/Tokyo"',
             '$env:MAFF_MIN_INTERVAL_SECONDS = "0"',
             '$env:MAFF_MAX_PAGES_PER_RUN = "200"',
+            '$env:SUPABASE_UPSERT_BATCH_SIZE = "200"',
             "python -m scraper.main",
         ]
     )

@@ -6,6 +6,7 @@ import os
 import traceback
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import TypeVar
 from uuid import uuid4
 
 from src.constants.prefectures import PREFECTURES
@@ -15,6 +16,10 @@ from scraper.sources.maff_scraper import MaffScraper
 from scraper.utils.hashing import compute_variety_hash
 from scraper.utils.normalization import normalize_text
 from scraper.utils.supabase_admin import get_admin_client
+
+_UPSERT_BATCH_SIZE = max(1, int(os.getenv("SUPABASE_UPSERT_BATCH_SIZE", "200")))
+_LOG_INSERT_BATCH_SIZE = max(1, int(os.getenv("SCRAPE_LOG_BATCH_SIZE", "300")))
+_T = TypeVar("_T")
 
 
 def _now_iso() -> str:
@@ -131,6 +136,48 @@ def _safe_insert_log(
         print(f"[WARN] Failed to insert variety scrape log: {exc}")
 
 
+def _safe_insert_logs_batch(client, logs: list[dict]) -> None:
+    if not logs:
+        return
+    try:
+        client.table("variety_scrape_logs").insert(logs).execute()
+    except Exception as exc:
+        print(f"[WARN] Failed to insert variety scrape logs batch ({len(logs)}): {exc}")
+        for log in logs:
+            _safe_insert_log(
+                client,
+                run_id=log["variety_scrape_run_id"],
+                registration_number=log.get("registration_number"),
+                variety_name=log.get("variety_name"),
+                detail_url=log.get("detail_url"),
+                status=log["status"],
+                message=log.get("message"),
+            )
+
+
+def _chunked(items: list[_T], size: int) -> list[list[_T]]:
+    return [items[index : index + size] for index in range(0, len(items), size)]
+
+
+def _build_log_payload(
+    run_id: str,
+    *,
+    registration_number: str | None,
+    variety_name: str | None,
+    detail_url: str | None,
+    status: str,
+    message: str | None,
+) -> dict:
+    return {
+        "variety_scrape_run_id": run_id,
+        "registration_number": registration_number,
+        "variety_name": variety_name,
+        "detail_url": detail_url,
+        "status": status,
+        "message": message,
+    }
+
+
 def _ensure_required_schema(client) -> None:
     checks: list[tuple[str, Callable[[], object]]] = [
         (
@@ -210,16 +257,27 @@ def _build_variety_payload(variety: dict) -> dict:
     }
 
 
-def _upsert_variety(client, variety: dict) -> None:
-    registration_number = normalize_text(variety.get("registration_number", ""))
-    if not registration_number:
-        raise ValueError("registration_number is missing.")
-    payload = _build_variety_payload({**variety, "registration_number": registration_number})
-    existing_rows = client.table("varieties").select("id").eq("registration_number", registration_number).limit(1).execute().data or []
-    if existing_rows:
-        client.table("varieties").update(payload).eq("id", existing_rows[0]["id"]).execute()
-    else:
-        client.table("varieties").insert({"id": str(uuid4()), **payload}).execute()
+def _load_existing_variety_ids(client, registration_numbers: list[str]) -> dict[str, str]:
+    existing: dict[str, str] = {}
+    unique_numbers = sorted({number for number in registration_numbers if number})
+    if not unique_numbers:
+        return existing
+    for chunk in _chunked(unique_numbers, _UPSERT_BATCH_SIZE):
+        rows = (
+            client.table("varieties")
+            .select("id,registration_number")
+            .in_("registration_number", chunk)
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+        for row in rows:
+            registration_number = row.get("registration_number")
+            row_id = row.get("id")
+            if registration_number and row_id:
+                existing[registration_number] = row_id
+    return existing
 
 
 def run_scraper() -> int:
@@ -238,6 +296,13 @@ def run_scraper() -> int:
         varieties = scraper.fetch_varieties()
         listed_count = len(varieties)
         print(f"[INFO] Listed records: {listed_count}")
+        if not run_id:
+            raise RuntimeError("Scrape run ID was not created.")
+
+        pending_logs: list[dict] = []
+        prepared_rows: list[dict] = []
+        row_contexts: list[dict] = []
+
         for variety in varieties:
             processed_count += 1
             registration_number = variety.get("registration_number")
@@ -246,44 +311,125 @@ def run_scraper() -> int:
             fetch_error = variety.get("_fetch_error")
             if fetch_error:
                 failed_count += 1
-                _safe_insert_log(
-                    client,
-                    run_id=run_id,
-                    registration_number=registration_number,
-                    variety_name=name,
-                    detail_url=detail_url,
-                    status="failed",
-                    message=f"詳細ページ取得失敗: {fetch_error}"[:1500],
+                pending_logs.append(
+                    _build_log_payload(
+                        run_id,
+                        registration_number=registration_number,
+                        variety_name=name,
+                        detail_url=detail_url,
+                        status="failed",
+                        message=f"詳細ページ取得失敗: {fetch_error}"[:1500],
+                    )
                 )
                 continue
             try:
-                _upsert_variety(client, variety)
-                upserted_count += 1
-                fingerprint = compute_variety_hash(
-                    registration_number or "",
-                    name or "",
-                    detail_url or "",
-                )
-                _safe_insert_log(
-                    client,
-                    run_id=run_id,
-                    registration_number=registration_number,
-                    variety_name=name,
-                    detail_url=detail_url,
-                    status="upserted",
-                    message=f"fingerprint={fingerprint}",
+                normalized_registration_number = normalize_text(variety.get("registration_number", ""))
+                if not normalized_registration_number:
+                    raise ValueError("registration_number is missing.")
+                payload = _build_variety_payload({**variety, "registration_number": normalized_registration_number})
+                prepared_rows.append(payload)
+                row_contexts.append(
+                    {
+                        "registration_number": normalized_registration_number,
+                        "name": payload.get("name"),
+                        "detail_url": payload.get("maff_detail_url"),
+                    }
                 )
             except Exception as exc:
                 failed_count += 1
-                _safe_insert_log(
-                    client,
-                    run_id=run_id,
-                    registration_number=registration_number,
-                    variety_name=name,
-                    detail_url=detail_url,
-                    status="failed",
-                    message=str(exc)[:1500],
+                pending_logs.append(
+                    _build_log_payload(
+                        run_id,
+                        registration_number=registration_number,
+                        variety_name=name,
+                        detail_url=detail_url,
+                        status="failed",
+                        message=str(exc)[:1500],
+                    )
                 )
+
+            if len(pending_logs) >= _LOG_INSERT_BATCH_SIZE:
+                _safe_insert_logs_batch(client, pending_logs)
+                pending_logs.clear()
+
+        existing_map = _load_existing_variety_ids(
+            client,
+            [context["registration_number"] for context in row_contexts],
+        )
+
+        for row_batch, context_batch in zip(
+            _chunked(prepared_rows, _UPSERT_BATCH_SIZE),
+            _chunked(row_contexts, _UPSERT_BATCH_SIZE),
+            strict=True,
+        ):
+            records: list[dict] = []
+            for payload, context in zip(row_batch, context_batch, strict=True):
+                registration_number = context["registration_number"]
+                row_id = existing_map.get(registration_number)
+                if not row_id:
+                    row_id = str(uuid4())
+                    existing_map[registration_number] = row_id
+                records.append({"id": row_id, **payload})
+            try:
+                client.table("varieties").upsert(records, on_conflict="id").execute()
+                for context in context_batch:
+                    upserted_count += 1
+                    fingerprint = compute_variety_hash(
+                        context.get("registration_number", ""),
+                        context.get("name", ""),
+                        context.get("detail_url", ""),
+                    )
+                    pending_logs.append(
+                        _build_log_payload(
+                            run_id,
+                            registration_number=context.get("registration_number"),
+                            variety_name=context.get("name"),
+                            detail_url=context.get("detail_url"),
+                            status="upserted",
+                            message=f"fingerprint={fingerprint}",
+                        )
+                    )
+            except Exception as batch_exc:
+                print(f"[WARN] Batched upsert failed; retrying row-by-row: {batch_exc}")
+                for record, context in zip(records, context_batch, strict=True):
+                    try:
+                        client.table("varieties").upsert(record, on_conflict="id").execute()
+                        upserted_count += 1
+                        fingerprint = compute_variety_hash(
+                            context.get("registration_number", ""),
+                            context.get("name", ""),
+                            context.get("detail_url", ""),
+                        )
+                        pending_logs.append(
+                            _build_log_payload(
+                                run_id,
+                                registration_number=context.get("registration_number"),
+                                variety_name=context.get("name"),
+                                detail_url=context.get("detail_url"),
+                                status="upserted",
+                                message=f"fingerprint={fingerprint}",
+                            )
+                        )
+                    except Exception as row_exc:
+                        failed_count += 1
+                        pending_logs.append(
+                            _build_log_payload(
+                                run_id,
+                                registration_number=context.get("registration_number"),
+                                variety_name=context.get("name"),
+                                detail_url=context.get("detail_url"),
+                                status="failed",
+                                message=str(row_exc)[:1500],
+                            )
+                        )
+
+            if len(pending_logs) >= _LOG_INSERT_BATCH_SIZE:
+                _safe_insert_logs_batch(client, pending_logs)
+                pending_logs.clear()
+
+        if pending_logs:
+            _safe_insert_logs_batch(client, pending_logs)
+
         error_message = None
         if listed_count == 0:
             status = "error"
