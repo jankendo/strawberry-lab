@@ -1,0 +1,55 @@
+name: scrape
+
+on:
+  schedule:
+    - cron: "0 21 * * *"
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Source to scrape"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - maff
+          - naro
+          - ja_news
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install scraper dependencies
+        run: pip install -r requirements-scraper.txt
+      - name: Run scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          APP_TIMEZONE: ${{ secrets.APP_TIMEZONE }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scraper/main.py --source "${{ inputs.source || 'all' }}"
+
+  heartbeat:
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [scrape]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install scraper dependencies
+        run: pip install -r requirements-scraper.txt
+      - name: Heartbeat
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          APP_TIMEZONE: ${{ secrets.APP_TIMEZONE }}
+        run: python scraper/heartbeat.py
