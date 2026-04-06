@@ -1,0 +1,6 @@
+requests>=2.31,<3.0
+beautifulsoup4>=4.12,<5.0
+lxml>=5.0,<6.0
+supabase>=2.4,<3.0
+python-dateutil>=2.9,<3.0
+tenacity>=8.2,<9.0
