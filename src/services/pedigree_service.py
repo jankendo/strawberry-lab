@@ -6,8 +6,10 @@ from collections import defaultdict, deque
 
 import networkx as nx
 import plotly.graph_objects as go
+import streamlit as st
 
 
+@st.cache_data(ttl=180)
 def fetch_graph_data(include_deleted: bool = False) -> tuple[list[dict], list[dict]]:
     """Fetch varieties and parent links for graph build."""
     from src.services.auth_service import get_user_client
@@ -136,6 +138,32 @@ def layered_layout(graph: nx.DiGraph) -> dict[str, tuple[float, float]]:
         node: (x_by_node[node], -depth_by_node[node] * vertical_spacing)
         for node in topological_order
     }
+
+
+@st.cache_data(ttl=300)
+def _cached_layered_layout(
+    node_ids: tuple[str, ...],
+    edge_pairs: tuple[tuple[str, str], ...],
+) -> dict[str, tuple[float, float]]:
+    graph = nx.DiGraph()
+    graph.add_nodes_from(node_ids)
+    graph.add_edges_from(edge_pairs)
+    return layered_layout(graph)
+
+
+def get_cached_layout(graph: nx.DiGraph) -> dict[str, tuple[float, float]]:
+    """Return cached layered layout for a graph signature."""
+    if graph.number_of_nodes() == 0:
+        return {}
+    node_ids = tuple(sorted(str(node) for node in graph.nodes()))
+    edge_pairs = tuple(sorted((str(source), str(target)) for source, target in graph.edges()))
+    return _cached_layered_layout(node_ids, edge_pairs)
+
+
+def clear_pedigree_cache() -> None:
+    """Clear cached pedigree data/layout for immediate consistency after edits."""
+    fetch_graph_data.clear()
+    _cached_layered_layout.clear()
 
 
 def build_figure(graph: nx.DiGraph, positions: dict[str, tuple[float, float]], review_stats: dict[str, dict]) -> go.Figure:

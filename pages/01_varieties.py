@@ -138,6 +138,15 @@ _LATEST_REVIEW_METRICS: list[tuple[str, str, int]] = [
 ]
 
 
+def _resolve_select_index(options: list[str], value: object, *, fallback: int = 0) -> int:
+    text = str(value or "").strip()
+    if text in options:
+        return options.index(text)
+    if 0 <= fallback < len(options):
+        return fallback
+    return 0
+
+
 def _build_variety_summary(row: dict, *, discovered: bool, max_length: int = 96) -> str:
     if not discovered:
         return "試食評価を1件登録すると、詳細情報と画像が開示されます。"
@@ -695,14 +704,16 @@ def _render_variety_edit_section() -> None:
     )
     base = get_variety_detail(edit_id) if edit_id != "新規作成" else {}
     with st.form("variety_form"):
+        prefecture_options = [""] + PREFECTURES
+        acidity_options = [x.value for x in AcidityLevel]
         c1, c2 = st.columns(2)
         with c1:
             name = st.text_input("品種名*", value=base.get("name", ""))
             alias_names = comma_values_input("別名 (カンマ区切り)", "alias_names_input", 20, 50)
             origin_prefecture = st.selectbox(
                 "都道府県",
-                [""] + PREFECTURES,
-                index=([""] + PREFECTURES).index(base.get("origin_prefecture", "")),
+                prefecture_options,
+                index=_resolve_select_index(prefecture_options, base.get("origin_prefecture", "")),
             )
             developer = st.text_input("開発者", value=base.get("developer", ""))
             registered_year = st.number_input(
@@ -718,8 +729,8 @@ def _render_variety_edit_section() -> None:
             brix_max = st.number_input("糖度上限", min_value=0.0, max_value=30.0, value=float(base.get("brix_max") or 0.0))
             acidity_level = st.selectbox(
                 "酸味",
-                [x.value for x in AcidityLevel],
-                index=[x.value for x in AcidityLevel].index(base.get("acidity_level", "unknown")),
+                acidity_options,
+                index=_resolve_select_index(acidity_options, base.get("acidity_level", "unknown")),
             )
             harvest_start_month = st.number_input(
                 "収穫開始月",

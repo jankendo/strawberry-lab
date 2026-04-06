@@ -11,6 +11,7 @@ import streamlit as st
 
 from src.services.auth_service import get_user_client
 from src.services.export_service import clear_export_cache
+from src.services.pedigree_service import clear_pedigree_cache
 from src.utils.validation import validate_variety_payload
 
 LIST_TAB_FIELDS = "id,name,origin_prefecture,registration_number,application_number,description,characteristics_summary"
@@ -208,6 +209,7 @@ def _clear_variety_related_caches() -> None:
     get_pokedex_progress.clear()
     get_review_counts_for_varieties.clear()
     get_latest_review_summary_for_varieties.clear()
+    clear_pedigree_cache()
     clear_export_cache()
 
 

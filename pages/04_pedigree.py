@@ -16,12 +16,13 @@ from src.components.layout import (
     render_surface,
 )
 from src.components.sidebar import render_primary_nav, render_sidebar
+from src.components.tables import is_mobile_client
 from src.services.auth_service import require_admin_session
 from src.services.pedigree_service import (
     build_figure,
     build_graph,
     fetch_graph_data,
-    layered_layout,
+    get_cached_layout,
     subgraph_by_root,
 )
 
@@ -42,6 +43,8 @@ render_action_bar(
     actions=["起点品種を選ぶ", "表示方向を切り替える", "最大深さを調整する", "ノードから詳細へ移動"],
 )
 
+mobile_client = is_mobile_client()
+
 with st.expander("交配図の使い方", expanded=False):
     st.markdown(
         """
@@ -52,21 +55,31 @@ with st.expander("交配図の使い方", expanded=False):
     )
 
 render_section_title("表示条件", "見たい系譜だけに絞って可視化します。")
-c1, c2, c3, c4 = st.columns(4)
-with c1:
+direction_map = {
+    "祖先を表示": "ancestors",
+    "子孫を表示": "descendants",
+    "祖先＋子孫を表示": "both",
+}
+if mobile_client:
     include_deleted = st.checkbox("削除済みを含む", value=False)
-with c2:
-    direction_map = {
-        "祖先を表示": "ancestors",
-        "子孫を表示": "descendants",
-        "祖先＋子孫を表示": "both",
-    }
     direction_label = st.selectbox("表示方向", list(direction_map.keys()), index=2)
     direction = direction_map[direction_label]
-with c3:
     max_depth = st.slider("最大深さ", 1, 5, 3)
-with c4:
     max_nodes = st.slider("最大表示ノード数", 50, 120, 80, step=10)
+    full_canvas_mode = st.checkbox("全幅グラフ表示", value=True)
+else:
+    c1, c2, c3, c4, c5 = st.columns([1, 1.4, 1, 1.2, 1.1], gap="small")
+    with c1:
+        include_deleted = st.checkbox("削除済みを含む", value=False)
+    with c2:
+        direction_label = st.selectbox("表示方向", list(direction_map.keys()), index=2)
+        direction = direction_map[direction_label]
+    with c3:
+        max_depth = st.slider("最大深さ", 1, 5, 3)
+    with c4:
+        max_nodes = st.slider("最大表示ノード数", 50, 120, 80, step=10)
+    with c5:
+        full_canvas_mode = st.checkbox("全幅グラフ表示", value=True)
 
 varieties, links = fetch_graph_data(include_deleted=include_deleted)
 if not links:
@@ -79,11 +92,12 @@ if not links:
     )
     st.stop()
 
-name_by_id = {v["id"]: v["name"] for v in varieties}
+name_by_id = {str(v["id"]): str(v["name"]) for v in varieties}
+root_options = sorted(name_by_id.keys(), key=lambda variety_id: name_by_id.get(variety_id, variety_id))
 root_id = st.selectbox(
     "起点品種",
-    [""] + list(name_by_id.keys()),
-    format_func=lambda x: "全体" if not x else name_by_id[x],
+    [""] + root_options,
+    format_func=lambda x: "全体" if not x else name_by_id.get(x, x),
 )
 
 try:
@@ -124,9 +138,8 @@ if graph.number_of_nodes() > max_nodes:
     graph = graph.subgraph(ordered_nodes[:max_nodes]).copy()
     render_surface(f"表示ノード数を {max_nodes} 件に制限しました。", title="表示上限を適用", tone="warning")
 
-positions = layered_layout(graph)
-review_stats = {}
-fig = build_figure(graph, positions, review_stats)
+positions = get_cached_layout(graph)
+fig = build_figure(graph, positions, {})
 root_name = "全体" if not root_id else name_by_id.get(root_id, root_id)
 render_kpi_cards(
     [
@@ -137,30 +150,28 @@ render_kpi_cards(
     ]
 )
 
-render_section_title("交配グラフ", "fit-to-viewで初期表示。ドラッグ移動・ホイール拡大縮小ができます。")
-graph_col, detail_col = st.columns([3, 1.2], gap="large")
-with graph_col:
-    graph_height = int(fig.layout.height) if fig.layout.height else 720
-    events = plotly_events(
-        fig,
-        click_event=True,
-        key="pedigree_graph",
-        override_height=graph_height,
-        override_width="100%",
-    )
-    if events:
-        point = events[0]
-        selected_variety_id = point.get("customdata")
-        if selected_variety_id is None and point.get("curveNumber") in (None, 1):
-            point_index = point.get("pointIndex")
-            node_ids = list(graph.nodes())
-            if isinstance(point_index, int) and 0 <= point_index < len(node_ids):
-                selected_variety_id = node_ids[point_index]
-        if selected_variety_id and selected_variety_id in graph:
-            st.session_state["pedigree_selected_node"] = selected_variety_id
-            st.rerun()
+render_section_title(
+    "交配グラフ",
+    "全幅表示では画面全体を使って可視化できます。ドラッグ移動・ホイール拡大縮小・ノード選択に対応しています。",
+)
 
-with detail_col:
+
+def _apply_node_selection(events: list[dict]) -> None:
+    if not events:
+        return
+    point = events[0]
+    selected_variety_id = point.get("customdata")
+    if selected_variety_id is None and point.get("curveNumber") in (None, 1):
+        point_index = point.get("pointIndex")
+        node_ids = list(graph.nodes())
+        if isinstance(point_index, int) and 0 <= point_index < len(node_ids):
+            selected_variety_id = node_ids[point_index]
+    if selected_variety_id and selected_variety_id in graph:
+        st.session_state["pedigree_selected_node"] = selected_variety_id
+        st.rerun()
+
+
+def _render_selected_node_panel() -> None:
     selected_node = st.session_state.get("pedigree_selected_node")
     if selected_node and selected_node in graph:
         with st.container(border=True):
@@ -168,8 +179,40 @@ with detail_col:
             render_status_badge("選択中ノード", tone="info")
             st.caption(f"親ノード数: {graph.in_degree(selected_node)}")
             st.caption(f"子ノード数: {graph.out_degree(selected_node)}")
-            if st.button("品種詳細を開く", key="open_selected_pedigree_node", use_container_width=True, type="primary"):
-                st.session_state["selected_variety_id"] = selected_node
-                st.switch_page("pages/01_varieties.py")
+            btn_col1, btn_col2 = st.columns(2)
+            with btn_col1:
+                if st.button("品種詳細を開く", key="open_selected_pedigree_node", use_container_width=True, type="primary"):
+                    st.session_state["selected_variety_id"] = selected_node
+                    st.switch_page("pages/01_varieties.py")
+            with btn_col2:
+                if st.button("選択解除", key="clear_selected_pedigree_node", use_container_width=True, type="secondary"):
+                    st.session_state.pop("pedigree_selected_node", None)
+                    st.rerun()
     else:
         render_surface("ノードをクリックすると詳細をここに表示します。", title="ノード詳細", tone="soft")
+
+
+base_height = int(fig.layout.height) if fig.layout.height else 720
+if full_canvas_mode:
+    events = plotly_events(
+        fig,
+        click_event=True,
+        key="pedigree_graph_full",
+        override_height=max(base_height, 620 if mobile_client else 860),
+        override_width="100%",
+    )
+    _apply_node_selection(events)
+    _render_selected_node_panel()
+else:
+    graph_col, detail_col = st.columns([3.4, 1.2], gap="large")
+    with graph_col:
+        events = plotly_events(
+            fig,
+            click_event=True,
+            key="pedigree_graph_split",
+            override_height=max(base_height, 620 if mobile_client else 760),
+            override_width="100%",
+        )
+        _apply_node_selection(events)
+    with detail_col:
+        _render_selected_node_panel()
