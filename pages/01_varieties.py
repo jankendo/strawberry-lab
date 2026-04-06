@@ -310,6 +310,11 @@ def _display_variety_name(row: dict, *, discovered: bool) -> str:
     return f"No.{token} ？？？？？"
 
 
+def _open_review_entry(variety_id: str) -> None:
+    st.session_state["review_variety_id"] = variety_id
+    st.switch_page("pages/02_reviews.py")
+
+
 def _render_variety_list_item(
     row: dict,
     review_count: int,
@@ -403,7 +408,8 @@ def _render_variety_detail_panel(
             title="情報ロック中",
             tone="soft",
         )
-        st.page_link("pages/02_reviews.py", label="📝 試食評価を開く", use_container_width=True)
+        if st.button("📝 この品種を評価", key=f"go_review_locked_{selected_id}", use_container_width=True, type="primary"):
+            _open_review_entry(selected_id)
         return
 
     images = list_images_with_signed_urls("variety_images", "variety_id", selected_id)
@@ -426,6 +432,8 @@ def _render_variety_detail_panel(
             subtitle=f"レビュー件数: {review_count}件",
             tone="soft",
         )
+        if st.button("📝 この品種を評価", key=f"go_review_mobile_{selected_id}", use_container_width=True, type="primary"):
+            _open_review_entry(selected_id)
     else:
         hero_image_col, hero_meta_col = st.columns([1, 1.1], gap="medium")
         with hero_image_col:
@@ -437,6 +445,8 @@ def _render_variety_detail_panel(
                 subtitle=f"レビュー件数: {review_count}件",
                 tone="soft",
             )
+            if st.button("📝 この品種を評価", key=f"go_review_desktop_{selected_id}", use_container_width=True, type="primary"):
+                _open_review_entry(selected_id)
 
     if latest_review:
         latest_date = _clean_text(latest_review.get("tasted_date"))
@@ -660,6 +670,23 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
             st.session_state["variety_mobile_panel"] = "list"
             render_section_title("一覧", f"表示件数: {len(visible_rows)}件 / 全体: {total}件")
             if visible_rows:
+                discovered_rows = [row for row in visible_rows if int(review_counts.get(row["id"], 0)) > 0]
+                if discovered_rows:
+                    quick_jump_options = [""] + [str(row["id"]) for row in discovered_rows[:50]]
+                    quick_jump_id = st.selectbox(
+                        "図鑑クイックジャンプ（発見済み）",
+                        quick_jump_options,
+                        format_func=lambda x: (
+                            "選択してください"
+                            if not x
+                            else _clean_text(next((row.get("name") for row in discovered_rows if str(row["id"]) == str(x)), "")) or str(x)
+                        ),
+                        key="variety_mobile_quick_jump",
+                    )
+                    if quick_jump_id and st.button("選択品種を開く", key="variety_mobile_jump_open", use_container_width=True):
+                        st.session_state["variety_selected_from_list"] = str(quick_jump_id)
+                        st.session_state["variety_mobile_panel"] = "detail"
+                        st.rerun()
                 selected_from_cards = _render_mobile_variety_cards(
                     visible_rows,
                     review_counts,

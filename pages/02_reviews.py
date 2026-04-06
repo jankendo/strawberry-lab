@@ -19,7 +19,7 @@ from src.components.layout import (
 )
 from src.components.pagination import render_pagination_controls
 from src.components.sidebar import render_primary_nav, render_sidebar
-from src.components.tables import render_table
+from src.components.tables import is_mobile_client, render_table
 from src.constants.ui import EMPTY_STATE_MESSAGE
 from src.services.auth_service import require_admin_session
 from src.services.review_service import create_or_update_review, list_reviews, restore_review, soft_delete_review
@@ -83,6 +83,7 @@ render_action_bar(
     actions=["作成・編集", "履歴管理", "削除復元"],
 )
 active_varieties = list_active_varieties()
+mobile_client = is_mobile_client()
 
 tab_edit, tab_history, tab_deleted = st.tabs(["レビュー登録", "履歴管理", "削除済み復元"])
 
@@ -99,12 +100,15 @@ with tab_edit:
                 action_path="pages/01_varieties.py",
             )
         else:
+            variety_options = [v["id"] for v in varieties]
+            if st.session_state.get("review_variety_id") not in variety_options:
+                st.session_state["review_variety_id"] = variety_options[0]
             with st.form("review_entry_form", clear_on_submit=False):
                 st.caption("※ * は必須項目です。任意項目は空欄でも保存できます。")
                 st.markdown("##### 1) 試食情報")
                 variety_id = st.selectbox(
                     "品種 *",
-                    [v["id"] for v in varieties],
+                    variety_options,
                     format_func=lambda x: variety_names.get(str(x), str(x)),
                     key="review_variety_id",
                 )
@@ -114,15 +118,27 @@ with tab_edit:
                     max_value=date.today(),
                     key="review_tasted_date",
                 )
-                purchase_place = st.text_input("購入場所", key="review_purchase_place")
-                price_jpy = st.number_input(
-                    "価格（円）",
-                    min_value=0,
-                    max_value=1_000_000,
-                    value=0,
-                    step=10,
-                    key="review_price_jpy",
-                )
+                if mobile_client:
+                    with st.popover("任意の購入情報を入力"):
+                        purchase_place = st.text_input("購入場所", key="review_purchase_place")
+                        price_jpy = st.number_input(
+                            "価格（円）",
+                            min_value=0,
+                            max_value=1_000_000,
+                            value=0,
+                            step=10,
+                            key="review_price_jpy",
+                        )
+                else:
+                    purchase_place = st.text_input("購入場所", key="review_purchase_place")
+                    price_jpy = st.number_input(
+                        "価格（円）",
+                        min_value=0,
+                        max_value=1_000_000,
+                        value=0,
+                        step=10,
+                        key="review_price_jpy",
+                    )
 
                 st.markdown("##### 2) 味覚スコア（必須）")
                 st.caption(f"スコア目安: {_SCORE_GUIDE_TEXT}")
@@ -143,21 +159,38 @@ with tab_edit:
                 render_kpi_cards([("総合スコア（自動）", f"{overall}/10", "5項目平均から算出")])
 
                 st.markdown("##### 3) コメント・画像（任意）")
-                comment = st.text_area("コメント", height=140, key="review_comment")
-                uploaded_files = st.file_uploader(
-                    "画像アップロード（最大3枚）",
-                    type=["jpg", "jpeg", "png", "webp"],
-                    accept_multiple_files=True,
-                    key="review_uploaded_files",
-                )
-                current_upload_count = len(uploaded_files or [])
-                if uploaded_files:
-                    preview_targets = uploaded_files[:3]
-                    st.image(
-                        [file.getvalue() for file in preview_targets],
-                        caption=[file.name for file in preview_targets],
-                        use_container_width=True,
+                if mobile_client:
+                    with st.expander("任意入力を開く", expanded=False):
+                        comment = st.text_area("コメント", height=140, key="review_comment")
+                        uploaded_files = st.file_uploader(
+                            "画像アップロード（最大3枚）",
+                            type=["jpg", "jpeg", "png", "webp"],
+                            accept_multiple_files=True,
+                            key="review_uploaded_files",
+                        )
+                        if uploaded_files:
+                            preview_targets = uploaded_files[:3]
+                            st.image(
+                                [file.getvalue() for file in preview_targets],
+                                caption=[file.name for file in preview_targets],
+                                use_container_width=True,
+                            )
+                else:
+                    comment = st.text_area("コメント", height=140, key="review_comment")
+                    uploaded_files = st.file_uploader(
+                        "画像アップロード（最大3枚）",
+                        type=["jpg", "jpeg", "png", "webp"],
+                        accept_multiple_files=True,
+                        key="review_uploaded_files",
                     )
+                    if uploaded_files:
+                        preview_targets = uploaded_files[:3]
+                        st.image(
+                            [file.getvalue() for file in preview_targets],
+                            caption=[file.name for file in preview_targets],
+                            use_container_width=True,
+                        )
+                current_upload_count = len(uploaded_files or [])
 
                 selected_name = variety_names.get(str(variety_id), str(variety_id))
                 render_surface(
@@ -256,7 +289,8 @@ with tab_edit:
                     st.info("上書きをキャンセルしました。")
                     st.rerun()
 
-with tab_history:
+@st.fragment
+def _render_reviews_history_fragment() -> None:
     with st.container(border=True):
         render_section_title("評価履歴", "フィルタで絞り込み、内容確認や削除操作を行えます。")
         varieties = active_varieties
@@ -275,64 +309,67 @@ with tab_history:
 
     if date_from > date_to:
         st.error("開始日は終了日以前で指定してください。")
-    else:
-        page, page_size = render_pagination_controls("reviews_history")
-        rows, total = list_reviews(
-            variety_id=variety_filter or None,
-            date_from=date_from,
-            date_to=date_to,
-            page=page,
-            page_size=page_size,
+        return
+
+    page, page_size = render_pagination_controls("reviews_history")
+    rows, total = list_reviews(
+        variety_id=variety_filter or None,
+        date_from=date_from,
+        date_to=date_to,
+        page=page,
+        page_size=page_size,
+    )
+    with st.container(border=True):
+        render_kpi_cards(
+            [
+                ("ヒット件数", str(total), "検索条件に一致した総件数"),
+                ("現在ページ", str(len(rows)), f"{page_size}件表示設定"),
+            ]
         )
-        with st.container(border=True):
-            render_kpi_cards(
-                [
-                    ("ヒット件数", str(total), "検索条件に一致した総件数"),
-                    ("現在ページ", str(len(rows)), f"{page_size}件表示設定"),
-                ]
+        if rows:
+            render_table(rows)
+        else:
+            render_empty_state(
+                "条件に一致するレビューはありません。",
+                title="検索結果がありません",
+                hint="フィルタを調整して再検索してください。",
             )
-            if rows:
-                render_table(rows)
-            else:
-                render_empty_state(
-                    "条件に一致するレビューはありません。",
-                    title="検索結果がありません",
-                    hint="フィルタを調整して再検索してください。",
-                )
 
-        with st.container(border=True):
-            render_section_title("履歴アクション", "表示中のレビューから削除対象を選択します。")
-            delete_col, delete_action_col = st.columns([2, 1], gap="medium")
-            with delete_col:
-                delete_id = st.selectbox(
-                    "削除対象",
-                    [""] + [r["id"] for r in rows],
-                    format_func=lambda x: next(
-                        (f"{r['tasted_date']} {r['id'][:8]}" for r in rows if r["id"] == x),
-                        "未選択",
-                    ),
-                    key="reviews_delete_select",
-                )
-                delete_confirm_key = f"reviews_delete_confirm_{delete_id or 'none'}"
-                delete_confirmed = st.checkbox(
-                    "選択したレビューを削除することを確認しました",
-                    key=delete_confirm_key,
-                    disabled=not delete_id,
-                )
-            with delete_action_col:
-                delete_clicked = st.button(
-                    "選択したレビューを削除",
-                    key="delete_review_action",
-                    use_container_width=True,
-                    disabled=not (delete_id and delete_confirmed),
-                    type="secondary",
-                )
-        if delete_clicked:
-            soft_delete_review(delete_id)
-            st.success("削除しました。")
-            st.rerun()
+    with st.container(border=True):
+        render_section_title("履歴アクション", "表示中のレビューから削除対象を選択します。")
+        delete_col, delete_action_col = st.columns([2, 1], gap="medium")
+        with delete_col:
+            delete_id = st.selectbox(
+                "削除対象",
+                [""] + [r["id"] for r in rows],
+                format_func=lambda x: next(
+                    (f"{r['tasted_date']} {r['id'][:8]}" for r in rows if r["id"] == x),
+                    "未選択",
+                ),
+                key="reviews_delete_select",
+            )
+            delete_confirm_key = f"reviews_delete_confirm_{delete_id or 'none'}"
+            delete_confirmed = st.checkbox(
+                "選択したレビューを削除することを確認しました",
+                key=delete_confirm_key,
+                disabled=not delete_id,
+            )
+        with delete_action_col:
+            delete_clicked = st.button(
+                "選択したレビューを削除",
+                key="delete_review_action",
+                use_container_width=True,
+                disabled=not (delete_id and delete_confirmed),
+                type="secondary",
+            )
+    if delete_clicked:
+        soft_delete_review(delete_id)
+        st.success("削除しました。")
+        st.rerun()
 
-with tab_deleted:
+
+@st.fragment
+def _render_reviews_deleted_fragment() -> None:
     with st.container(border=True):
         render_section_title("削除済みレビュー", "復元可能なレビューを確認し、必要に応じて戻します。")
         page, page_size = render_pagination_controls("reviews_deleted")
@@ -371,3 +408,10 @@ with tab_deleted:
             st.rerun()
         except Exception as exc:
             st.error(str(exc))
+
+
+with tab_history:
+    _render_reviews_history_fragment()
+
+with tab_deleted:
+    _render_reviews_deleted_fragment()

@@ -134,6 +134,7 @@ def inject_app_style() -> None:
     [data-testid="stAppViewContainer"] {
         background: var(--sl-bg);
         color: var(--sl-text);
+        -webkit-tap-highlight-color: transparent;
     }
     .block-container {
         max-width: 1320px;
@@ -147,18 +148,18 @@ def inject_app_style() -> None:
     }
 
     h1 {
-        font-size: 2.35rem;   /* ~38px */
+        font-size: clamp(2rem, 5.2vw, 2.45rem);
         line-height: 1.25;
         margin-top: var(--sl-space-1);
         margin-bottom: var(--sl-space-2);
     }
     h2 {
-        font-size: 1.72rem;   /* ~27px */
+        font-size: clamp(1.42rem, 3.8vw, 1.78rem);
         line-height: 1.3;
         margin-bottom: var(--sl-space-2);
     }
     h3 {
-        font-size: 1.2rem;    /* ~19px */
+        font-size: clamp(1.08rem, 2.8vw, 1.24rem);
         line-height: 1.35;
         margin-bottom: var(--sl-space-1);
     }
@@ -168,7 +169,7 @@ def inject_app_style() -> None:
     }
     p, label, [data-testid="stMarkdownContainer"] {
         color: var(--sl-text);
-        font-size: var(--sl-body-size);
+        font-size: clamp(0.92rem, 2.7vw, var(--sl-body-size));
         line-height: 1.6;
     }
     [data-testid="stCaptionContainer"] {
@@ -215,7 +216,12 @@ def inject_app_style() -> None:
         color: var(--sl-text);
         font-weight: 600;
         padding: 0 var(--sl-space-2);
-        transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+        transition:
+            border-color 0.2s ease,
+            background-color 0.2s ease,
+            box-shadow 0.2s ease,
+            color 0.2s ease,
+            transform 0.08s ease-out;
     }
     [data-testid="stButton"] > button:hover,
     [data-testid="stDownloadButton"] > button:hover,
@@ -228,6 +234,11 @@ def inject_app_style() -> None:
     [data-testid="stFormSubmitButton"] > button:focus-visible {
         outline: 3px solid rgba(232, 51, 74, 0.24);
         outline-offset: 2px;
+    }
+    [data-testid="stButton"] > button:active,
+    [data-testid="stDownloadButton"] > button:active,
+    [data-testid="stFormSubmitButton"] > button:active {
+        transform: scale(0.985);
     }
     [data-testid="stButton"] > button[kind="primary"],
     [data-testid="stFormSubmitButton"] > button[kind="primary"],
@@ -600,6 +611,11 @@ def inject_app_style() -> None:
             word-break: keep-all;
             box-sizing: border-box;
             overflow: hidden;
+            transition:
+                border-color 0.2s ease,
+                background-color 0.2s ease,
+                color 0.2s ease,
+                transform 0.08s ease-out;
         }
         .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button p {
             width: 100%;
@@ -610,8 +626,22 @@ def inject_app_style() -> None:
             word-break: keep-all;
             text-align: center;
         }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button:active {
+            transform: scale(0.97);
+            background: #fdf2f4;
+            border-color: var(--sl-primary);
+        }
         [data-testid="stSidebar"] {
             display: none !important;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        [data-testid="stButton"] > button,
+        [data-testid="stDownloadButton"] > button,
+        [data-testid="stFormSubmitButton"] > button,
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button {
+            transition: none !important;
         }
     }
     .sl-status-neutral {
