@@ -13,11 +13,22 @@ from src.services.auth_service import get_user_client
 from src.utils.validation import validate_variety_payload
 
 
-def _base_query(include_deleted: bool):
-    client = get_user_client()
-    query = client.table("varieties").select("*")
+def _apply_variety_filters(
+    query,
+    *,
+    include_deleted: bool,
+    keyword: str | None,
+    prefecture: str | None,
+    tags: Sequence[str] | None,
+):
     if not include_deleted:
         query = query.is_("deleted_at", "null")
+    if keyword:
+        query = query.or_(f"name.ilike.%{keyword}%,developer.ilike.%{keyword}%,description.ilike.%{keyword}%")
+    if prefecture:
+        query = query.eq("origin_prefecture", prefecture)
+    if tags:
+        query = query.contains("tags", list(tags))
     return query
 
 
@@ -34,28 +45,25 @@ def list_varieties(
     page_size: int = 20,
 ) -> tuple[list[dict], int]:
     """List varieties with filters and pagination."""
-    query = _base_query(include_deleted)
-    if keyword:
-        query = query.or_(
-            f"name.ilike.%{keyword}%,developer.ilike.%{keyword}%,description.ilike.%{keyword}%"
-        )
-    if prefecture:
-        query = query.eq("origin_prefecture", prefecture)
-    if tags:
-        query = query.contains("tags", list(tags))
+    client = get_user_client()
+    query = _apply_variety_filters(
+        client.table("varieties").select("*"),
+        include_deleted=include_deleted,
+        keyword=keyword,
+        prefecture=prefecture,
+        tags=tags,
+    )
     allowed_sort = {"name", "updated_at", "registered_year", "created_at"}
     if sort_field not in allowed_sort:
         sort_field = "updated_at"
     result = query.order(sort_field, desc=sort_desc).range((page - 1) * page_size, page * page_size - 1).execute()
-    count_query = _base_query(include_deleted).select("id", count="exact", head=True)
-    if keyword:
-        count_query = count_query.or_(
-            f"name.ilike.%{keyword}%,developer.ilike.%{keyword}%,description.ilike.%{keyword}%"
-        )
-    if prefecture:
-        count_query = count_query.eq("origin_prefecture", prefecture)
-    if tags:
-        count_query = count_query.contains("tags", list(tags))
+    count_query = _apply_variety_filters(
+        client.table("varieties").select("id", count="exact", head=True),
+        include_deleted=include_deleted,
+        keyword=keyword,
+        prefecture=prefecture,
+        tags=tags,
+    )
     count_result = count_query.execute()
     total = int(count_result.count or 0)
     return result.data or [], total
