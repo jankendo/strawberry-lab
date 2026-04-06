@@ -57,30 +57,85 @@ def subgraph_by_root(graph: nx.DiGraph, root_id: str, direction: str, max_depth:
     return graph.subgraph(visited).copy()
 
 
+def _spread_layer_positions(
+    nodes: list[str],
+    target_positions: dict[str, float],
+    min_separation: float,
+) -> dict[str, float]:
+    """Place nodes in one layer with stable ordering and minimum spacing."""
+    ordered_nodes = sorted(nodes, key=lambda node: (target_positions[node], str(node)))
+    laid_out: dict[str, float] = {}
+    for index, node in enumerate(ordered_nodes):
+        position = target_positions[node]
+        if index > 0:
+            previous_node = ordered_nodes[index - 1]
+            position = max(position, laid_out[previous_node] + min_separation)
+        laid_out[node] = position
+    if not ordered_nodes:
+        return laid_out
+    target_center = sum(target_positions[node] for node in ordered_nodes) / len(ordered_nodes)
+    current_center = (laid_out[ordered_nodes[0]] + laid_out[ordered_nodes[-1]]) / 2
+    center_shift = target_center - current_center
+    return {node: position + center_shift for node, position in laid_out.items()}
+
+
 def layered_layout(graph: nx.DiGraph) -> dict[str, tuple[float, float]]:
-    """Compute pure-Python top-down layered layout."""
-    in_degree = dict(graph.in_degree())
-    roots = [n for n, degree in in_degree.items() if degree == 0] or list(graph.nodes)
-    level: dict[str, int] = {}
-    queue: deque[tuple[str, int]] = deque((root, 0) for root in roots)
-    while queue:
-        node, depth = queue.popleft()
-        if node in level and level[node] <= depth:
-            continue
-        level[node] = depth
-        for child in graph.successors(node):
-            queue.append((child, depth + 1))
-    by_level: defaultdict[int, list[str]] = defaultdict(list)
-    for node in graph.nodes:
-        by_level[level.get(node, 0)].append(node)
-    pos: dict[str, tuple[float, float]] = {}
-    for depth, nodes in sorted(by_level.items()):
-        count = len(nodes)
-        for idx, node in enumerate(sorted(nodes, key=str)):
-            x = idx - (count - 1) / 2
-            y = -depth
-            pos[node] = (x, y)
-    return pos
+    """Compute deterministic layered layout with adaptive spacing for dense DAGs."""
+    if graph.number_of_nodes() == 0:
+        return {}
+
+    topological_order = list(nx.lexicographical_topological_sort(graph, key=str))
+    depth_by_node: dict[str, int] = {}
+    for node in topological_order:
+        parent_depths = [depth_by_node[parent] for parent in graph.predecessors(node)]
+        depth_by_node[node] = (max(parent_depths) + 1) if parent_depths else 0
+
+    nodes_by_depth: defaultdict[int, list[str]] = defaultdict(list)
+    for node in topological_order:
+        nodes_by_depth[depth_by_node[node]].append(node)
+
+    def _layer_spacing(node_count: int) -> float:
+        return 2.2 + min(1.0, node_count * 0.04)
+
+    x_by_node: dict[str, float] = {}
+    sorted_depths = sorted(nodes_by_depth)
+    for depth in sorted_depths:
+        layer_nodes = nodes_by_depth[depth]
+        spacing = _layer_spacing(len(layer_nodes))
+        start_x = -((len(layer_nodes) - 1) * spacing) / 2
+        for index, node in enumerate(layer_nodes):
+            x_by_node[node] = start_x + index * spacing
+
+    for _ in range(2):
+        for depth in sorted_depths[1:]:
+            layer_nodes = nodes_by_depth[depth]
+            spacing = _layer_spacing(len(layer_nodes))
+            target_positions: dict[str, float] = {}
+            for node in layer_nodes:
+                parent_positions = [x_by_node[parent] for parent in graph.predecessors(node) if parent in x_by_node]
+                if parent_positions:
+                    target_positions[node] = sum(parent_positions) / len(parent_positions)
+                else:
+                    target_positions[node] = x_by_node[node]
+            x_by_node.update(_spread_layer_positions(layer_nodes, target_positions, spacing))
+        for depth in reversed(sorted_depths[:-1]):
+            layer_nodes = nodes_by_depth[depth]
+            spacing = _layer_spacing(len(layer_nodes))
+            target_positions = {}
+            for node in layer_nodes:
+                child_positions = [x_by_node[child] for child in graph.successors(node) if child in x_by_node]
+                if child_positions:
+                    target_positions[node] = sum(child_positions) / len(child_positions)
+                else:
+                    target_positions[node] = x_by_node[node]
+            x_by_node.update(_spread_layer_positions(layer_nodes, target_positions, spacing))
+
+    max_layer_size = max(len(nodes) for nodes in nodes_by_depth.values())
+    vertical_spacing = 2.4 + min(1.2, max_layer_size * 0.03)
+    return {
+        node: (x_by_node[node], -depth_by_node[node] * vertical_spacing)
+        for node in topological_order
+    }
 
 
 def build_figure(graph: nx.DiGraph, positions: dict[str, tuple[float, float]], review_stats: dict[str, dict]) -> go.Figure:
@@ -122,4 +177,23 @@ def build_figure(graph: nx.DiGraph, positions: dict[str, tuple[float, float]], r
         customdata=node_ids,
         hovertemplate="%{text}<extra></extra>",
     )
-    return go.Figure(data=[edge_trace, node_trace]).update_layout(showlegend=False, xaxis={"visible": False}, yaxis={"visible": False}, margin={"l": 10, "r": 10, "t": 10, "b": 10})
+    if node_x:
+        min_x, max_x = min(node_x), max(node_x)
+        min_y, max_y = min(node_y), max(node_y)
+    else:
+        min_x, max_x = -1.0, 1.0
+        min_y, max_y = -1.0, 1.0
+    x_span = max(max_x - min_x, 1.0)
+    y_span = max(max_y - min_y, 1.0)
+    x_padding = max(2.5, x_span * 0.12)
+    y_padding = max(1.8, y_span * 0.25)
+    height = int(max(620, min(1400, 460 + y_span * 80)))
+    return go.Figure(data=[edge_trace, node_trace]).update_layout(
+        showlegend=False,
+        hovermode="closest",
+        dragmode="pan",
+        height=height,
+        xaxis={"visible": False, "range": [min_x - x_padding, max_x + x_padding], "fixedrange": False},
+        yaxis={"visible": False, "range": [min_y - y_padding, max_y + y_padding], "fixedrange": False},
+        margin={"l": 30, "r": 30, "t": 30, "b": 30},
+    )

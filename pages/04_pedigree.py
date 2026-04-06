@@ -8,6 +8,7 @@ from streamlit_plotly_events import plotly_events
 from src.components.layout import (
     inject_app_style,
     render_action_bar,
+    render_empty_state,
     render_hero_banner,
     render_kpi_cards,
     render_section_title,
@@ -30,7 +31,7 @@ render_sidebar()
 render_hero_banner(
     "交配図",
     "品種系統をネットワークで可視化し、起点指定や深さ制御で必要な系譜だけを素早く確認できます。",
-    eyebrow="PEDIGREE",
+    eyebrow="系統ネットワーク",
     chips=["起点品種指定", "祖先/子孫切替", "ノードクリック遷移"],
 )
 render_action_bar(
@@ -96,6 +97,13 @@ except ValueError as exc:
     st.stop()
 
 graph = subgraph_by_root(graph, root_id, direction, max_depth)
+if graph.number_of_nodes() == 0:
+    render_empty_state(
+        "条件に一致する系統データがありません。",
+        title="交配図の表示対象がありません",
+        hint="起点品種・表示方向・最大深さを調整して再表示してください。",
+    )
+    st.stop()
 positions = layered_layout(graph)
 review_stats = {}
 fig = build_figure(graph, positions, review_stats)
@@ -108,14 +116,27 @@ render_kpi_cards(
         ("最大深さ", str(max_depth), "探索範囲"),
     ]
 )
-render_section_title("交配グラフ", "ノードをクリックすると品種管理ページへ移動します。")
-render_surface("ヒント: ノードが密集する場合は、起点品種を指定して最大深さを2〜3に調整すると読みやすくなります。", tone="soft")
-events = plotly_events(fig, click_event=True, key="pedigree_graph")
+render_section_title("交配グラフ", "ノードをクリックして詳細へ。ドラッグで移動、マウスホイールで拡大縮小できます。")
+render_surface(
+    "初期表示は見やすさ重視で広めに確保しています。ノードが密集する場合は、起点品種と最大深さ(2〜3)の調整がおすすめです。",
+    tone="soft",
+)
+graph_height = int(fig.layout.height) if fig.layout.height else 720
+events = plotly_events(
+    fig,
+    click_event=True,
+    key="pedigree_graph",
+    override_height=graph_height,
+    override_width="100%",
+)
 if events:
     point = events[0]
-    point_index = point.get("pointIndex")
-    node_ids = list(graph.nodes())
-    if point_index is not None and point_index < len(node_ids):
-        selected_variety_id = node_ids[point_index]
+    selected_variety_id = point.get("customdata")
+    if selected_variety_id is None and point.get("curveNumber") in (None, 1):
+        point_index = point.get("pointIndex")
+        node_ids = list(graph.nodes())
+        if isinstance(point_index, int) and 0 <= point_index < len(node_ids):
+            selected_variety_id = node_ids[point_index]
+    if selected_variety_id and selected_variety_id in graph:
         st.session_state["selected_variety_id"] = selected_variety_id
         st.switch_page("pages/01_varieties.py")

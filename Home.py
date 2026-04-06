@@ -18,6 +18,7 @@ from src.services.auth_service import (
 try:
     from src.components.layout import (
         render_action_bar,
+        render_empty_state,
         render_hero_banner,
         render_info_card,
         render_kpi_cards,
@@ -65,6 +66,17 @@ except ImportError:
         """Fallback info card renderer for partially refreshed runtimes."""
         plain = text.replace("<strong>", "").replace("</strong>", "").replace("<br>", " ")
         st.info(plain)
+
+    def render_empty_state(
+        message: str,
+        *,
+        title: str = "表示できるデータがありません",
+        hint: str | None = None,
+    ) -> None:
+        """Fallback empty-state renderer for partially refreshed runtimes."""
+        if title:
+            st.caption(title)
+        st.info(" ".join(part for part in [message, hint] if part))
 
 
     def render_kpi_cards(items: list[tuple[str, str, str | None]]) -> None:
@@ -220,6 +232,16 @@ def _format_recent_scrape_runs(rows: list[dict]) -> list[dict]:
     ]
 
 
+def _render_navigation_cards(items: list[tuple[str, str, str, str]]) -> None:
+    for start in range(0, len(items), 3):
+        row_items = items[start : start + 3]
+        columns = st.columns(len(row_items))
+        for column, (path, label, description, icon) in zip(columns, row_items, strict=True):
+            with column:
+                render_surface(description, title=label, tone="soft")
+                st.page_link(path, label=f"{icon} {label}を開く", use_container_width=True)
+
+
 def _render_login() -> None:
     persistence = get_auth_persistence_status()
     render_hero_banner(
@@ -289,6 +311,14 @@ def _render_dashboard() -> None:
         description="取得ログ確認 → 品種管理 → 試食評価 → 分析の順で更新すると運用が安定します。",
         actions=["品種管理", "試食評価", "分析", "研究メモ"],
     )
+    render_section_title("クイックアクション", "よく使う画面へワンクリックで移動できます。")
+    _render_navigation_cards(
+        [
+            ("pages/01_varieties.py", "品種管理", "図鑑進捗の確認・品種情報の更新を行います。", "🍓"),
+            ("pages/02_reviews.py", "試食評価", "試食レビューを登録して図鑑の開示を進めます。", "📝"),
+            ("pages/03_analytics.py", "分析ダッシュボード", "評価傾向を俯瞰して改善ポイントを確認します。", "📊"),
+        ]
+    )
 
     render_kpi_cards(
         [
@@ -303,7 +333,7 @@ def _render_dashboard() -> None:
     status_col, tips_col = st.columns([1, 2])
     with status_col:
         render_surface(
-            f"直近の取り込み件数は <strong>{metrics['latest_upserted']}件</strong> です。",
+            f"直近の取り込み件数は **{metrics['latest_upserted']}件** です。",
             title="最新取得ジョブ",
             subtitle="MAFF品種レジストリ同期",
             tone="accent",
@@ -312,35 +342,46 @@ def _render_dashboard() -> None:
         render_status_badge(f"ステータス: {metrics['latest_status']}", tone=status_tone, icon=status_icon)
     with tips_col:
         render_info_card(
-            "運用ヒント: 新規取得後は <strong>品種管理</strong> で画像と説明を確認し、"
-            "必要に応じて補足メモを追記してください。"
+            "運用ヒント: 新規取得後は **品種管理** で画像と説明を確認し、"
+            "必要に応じて研究メモへ補足を残すと運用が安定します。"
         )
 
     render_section_title("最新レビュー", "直近5件の試食評価を表示します。")
     render_surface("気になる品種は「品種管理」から詳細を確認し、必要なら評価を追記しましょう。", tone="soft")
     reviews = _format_latest_reviews(_load_latest_reviews())
-    st.dataframe(reviews, use_container_width=True, hide_index=True)
+    if reviews:
+        st.dataframe(reviews, use_container_width=True, hide_index=True)
+    else:
+        render_empty_state(
+            "表示できるレビューがまだありません。",
+            title="最新レビューはまだありません",
+            hint="「試食評価」ページで最初のレビューを登録するとここに表示されます。",
+        )
+    st.page_link("pages/02_reviews.py", label="📝 試食評価ページでレビューを追加", use_container_width=True)
 
     render_section_title("最新品種取得ログ", "直近5件のMAFF品種取得結果を表示します。")
     render_surface("失敗件数がある場合は設定ページの診断情報を確認し、再取得の前に環境を点検してください。", tone="soft")
     recent_runs = _format_recent_scrape_runs(_load_recent_scrape_runs())
-    st.dataframe(recent_runs, use_container_width=True, hide_index=True)
+    if recent_runs:
+        st.dataframe(recent_runs, use_container_width=True, hide_index=True)
+    else:
+        render_empty_state(
+            "表示できる取得ログがまだありません。",
+            title="取得ログはまだありません",
+            hint="設定ページで履歴を再読み込みすると最新結果を確認できます。",
+        )
+    st.page_link("pages/07_settings.py", label="⚙️ 設定ページで診断情報を確認", use_container_width=True)
 
-    render_section_title("主要メニュー", "目的別に画面へ移動できます。")
+    render_section_title("全メニュー", "目的別に画面へ移動できます。")
     menu_items = [
-        ("pages/01_varieties.py", "品種管理", "図鑑進捗の確認・品種データ編集・画像管理"),
-        ("pages/02_reviews.py", "試食評価", "レビュー登録・履歴確認・復元"),
-        ("pages/03_analytics.py", "分析ダッシュボード", "評価傾向と品質指標の可視化"),
-        ("pages/04_pedigree.py", "交配図", "親子関係のグラフ確認"),
-        ("pages/06_notes.py", "研究メモ", "調査メモや運用ログの蓄積"),
+        ("pages/01_varieties.py", "品種管理", "図鑑進捗の確認・品種データ編集・画像管理", "🍓"),
+        ("pages/02_reviews.py", "試食評価", "レビュー登録・履歴確認・復元", "📝"),
+        ("pages/03_analytics.py", "分析ダッシュボード", "評価傾向と品質指標の可視化", "📊"),
+        ("pages/04_pedigree.py", "交配図", "親子関係のグラフ確認", "🧬"),
+        ("pages/06_notes.py", "研究メモ", "調査メモや運用ログの蓄積", "📓"),
+        ("pages/07_settings.py", "設定", "接続設定・同期診断・運用パラメータの確認", "⚙️"),
     ]
-    for start in range(0, len(menu_items), 3):
-        row_items = menu_items[start : start + 3]
-        columns = st.columns(len(row_items))
-        for column, (path, label, description) in zip(columns, row_items, strict=True):
-            with column:
-                render_surface(description, title=label, tone="soft")
-                st.page_link(path, label=f"{label}を開く")
+    _render_navigation_cards(menu_items)
 
 
 if st.session_state.get("is_authenticated"):

@@ -33,6 +33,11 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 - **Sidebar navigation cleanup**: removed Streamlit's default multipage sidebar menu (`showSidebarNavigation = false`) to avoid duplicate navigation entries.
 - **All-page UI refresh**: Home / 品種管理 / 試食評価 / 分析 / 交配図 / 研究メモ / 設定 now share upgraded header, card, and section styling for a more consistent experience.
 
+## v7 updates (UX / behavior)
+- **Quick actions on Home**: dashboard now highlights one-click page shortcuts and follow-up links for review/log operations.
+- **Consistent empty states**: Home / 品種管理 / 試食評価 / 分析 / 交配図 / 研究メモ / 設定 show guided empty-state cards with next steps.
+- **Pedigree graph readability**: denser lineage graphs use improved layout spacing, viewport sizing, and click navigation reliability.
+
 ## Login persistence (30 days)
 - This app supports login skip on revisit by storing encrypted auth session cookies.
 - For stable persistence across restarts, set:
