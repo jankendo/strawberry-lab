@@ -118,6 +118,12 @@ def inject_app_style() -> None:
         --sl-space-4: 2rem;     /* 32px */
         --sl-space-5: 2.5rem;   /* 40px */
         --sl-space-6: 3rem;     /* 48px */
+        --sl-touch-target: 44px;
+        --sl-touch-target-mobile: 48px;
+        --sl-safe-bottom: env(safe-area-inset-bottom, 0px);
+        --sl-body-size: 0.95rem;
+        --sl-caption-size: 0.84rem;
+        --sl-mobile-gap: 0.72rem;
     }
 
     [data-testid="stAppViewContainer"],
@@ -161,12 +167,12 @@ def inject_app_style() -> None:
     }
     p, label, [data-testid="stMarkdownContainer"] {
         color: var(--sl-text);
-        font-size: 0.95rem; /* 15px */
+        font-size: var(--sl-body-size);
         line-height: 1.6;
     }
     [data-testid="stCaptionContainer"] {
         color: var(--sl-muted);
-        font-size: 0.84rem;  /* 13px */
+        font-size: var(--sl-caption-size);
     }
 
     div[data-testid="stVerticalBlockBorderWrapper"] {
@@ -201,7 +207,7 @@ def inject_app_style() -> None:
     [data-testid="stButton"] > button,
     [data-testid="stDownloadButton"] > button,
     [data-testid="stFormSubmitButton"] > button {
-        min-height: 44px;
+        min-height: var(--sl-touch-target);
         border-radius: 10px;
         border: 1px solid var(--sl-border-strong);
         background: #ffffff;
@@ -252,7 +258,7 @@ def inject_app_style() -> None:
         display: flex;
         align-items: center;
         justify-content: space-between;
-        min-height: 44px;
+        min-height: var(--sl-touch-target);
         border-radius: 10px;
         border: 1px solid var(--sl-border-strong);
         background: #ffffff;
@@ -278,7 +284,7 @@ def inject_app_style() -> None:
         border-color: var(--sl-border-strong) !important;
         background: #ffffff !important;
         border-radius: 10px !important;
-        min-height: 44px;
+        min-height: var(--sl-touch-target);
     }
     div[data-baseweb="input"] input,
     div[data-baseweb="textarea"] textarea {
@@ -298,12 +304,40 @@ def inject_app_style() -> None:
         box-shadow: 0 0 0 2px rgba(194, 53, 53, 0.16) !important;
     }
 
+    [data-testid="stSlider"] [data-baseweb="slider"] {
+        min-height: var(--sl-touch-target);
+        padding: 0.72rem 0.35rem 0.24rem;
+    }
+    [data-testid="stSlider"] [data-baseweb="slider"] > div > div {
+        min-height: 0.5rem !important;
+        border-radius: 999px !important;
+    }
+    [data-testid="stSlider"] [data-baseweb="slider"] > div > div:first-child {
+        background: #d0d8e6 !important;
+    }
+    [data-testid="stSlider"] [data-baseweb="slider"] > div > div > div {
+        background: linear-gradient(90deg, var(--sl-primary), var(--sl-primary-strong)) !important;
+        border-radius: 999px !important;
+    }
+    [data-testid="stSlider"] [role="slider"] {
+        width: 1.55rem !important;
+        height: 1.55rem !important;
+        margin-top: -0.48rem !important;
+        border: 3px solid #ffffff !important;
+        background: var(--sl-primary) !important;
+        box-shadow: 0 0 0 2px rgba(185, 35, 56, 0.22), 0 4px 10px rgba(17, 24, 39, 0.2) !important;
+    }
+    [data-testid="stSlider"] [role="slider"]:focus-visible {
+        outline: 3px solid rgba(232, 51, 74, 0.24) !important;
+        outline-offset: 2px;
+    }
+
     .stTabs [data-baseweb="tab-list"] {
         gap: var(--sl-space-1);
         margin-bottom: var(--sl-space-2);
     }
     .stTabs [data-baseweb="tab"] {
-        min-height: 44px;
+        min-height: var(--sl-touch-target);
         border-radius: 10px;
         border: 1px solid var(--sl-border-strong);
         padding: 0 var(--sl-space-2);
@@ -344,7 +378,7 @@ def inject_app_style() -> None:
     [data-testid="stSidebar"] .sl-sidebar-active {
         display: flex;
         align-items: center;
-        min-height: 44px;
+        min-height: var(--sl-touch-target);
         border-radius: 10px;
         border: 1px solid var(--sl-primary);
         background: rgba(232, 51, 74, 0.1);
@@ -360,17 +394,35 @@ def inject_app_style() -> None:
         padding: var(--sl-space-2);
         margin-top: var(--sl-space-2);
     }
-    .sl-mobile-nav-active {
+    .sl-bottom-nav-anchor {
+        display: none;
+    }
+    .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] {
+        display: none;
+    }
+    .sl-bottom-nav-tab-active {
         display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
-        min-height: 44px;
-        border-radius: 10px;
+        gap: 0.16rem;
+        min-height: 56px;
+        border-radius: 12px;
         border: 1px solid var(--sl-primary);
-        background: rgba(232, 51, 74, 0.12);
+        background: rgba(232, 51, 74, 0.14);
         color: var(--sl-heading);
         font-weight: 700;
-        padding: 0 var(--sl-space-1);
+        text-align: center;
+        line-height: 1.12;
+        padding: 0.2rem 0.15rem;
+    }
+    .sl-bottom-nav-tab-active .sl-bottom-nav-icon {
+        font-size: 1rem;
+        line-height: 1;
+    }
+    .sl-bottom-nav-tab-active .sl-bottom-nav-label {
+        font-size: 0.72rem;
+        white-space: nowrap;
     }
 
     .sl-workspace-meta-row {
@@ -381,7 +433,7 @@ def inject_app_style() -> None:
         align-items: center;
         justify-content: center;
         width: 100%;
-        min-height: 44px;
+        min-height: var(--sl-touch-target);
         padding: 0 var(--sl-space-1);
         border: 1px solid var(--sl-border-strong);
         border-radius: 10px;
@@ -407,7 +459,7 @@ def inject_app_style() -> None:
         align-items: center;
         justify-content: center;
         width: 100%;
-        min-height: 44px;
+        min-height: var(--sl-touch-target);
         padding: 0 var(--sl-space-1);
         border-radius: 10px;
         border: 1px solid var(--sl-border-strong);
@@ -434,33 +486,33 @@ def inject_app_style() -> None:
             padding-top: var(--sl-space-2);
             padding-right: 0.75rem;
             padding-left: 0.75rem;
-            padding-bottom: 5.2rem;
+            padding-bottom: calc(8rem + var(--sl-safe-bottom));
         }
         [data-testid="stVerticalBlock"] {
-            gap: 0.85rem;
+            gap: var(--sl-mobile-gap);
         }
         h1 {
-            font-size: 1.8rem;
+            font-size: 1.7rem;
             line-height: 1.3;
         }
         h2 {
-            font-size: 1.45rem;
-            line-height: 1.32;
+            font-size: 1.38rem;
+            line-height: 1.33;
         }
         h3 {
-            font-size: 1.12rem;
+            font-size: 1.08rem;
         }
         p, label, [data-testid="stMarkdownContainer"] {
-            font-size: 1rem;
-            line-height: 1.55;
+            font-size: 0.98rem;
+            line-height: 1.52;
         }
         [data-testid="stCaptionContainer"] {
-            font-size: 0.88rem;
+            font-size: 0.86rem;
         }
         div[data-testid="stVerticalBlockBorderWrapper"] {
             border-radius: 12px;
-            padding: 0.88rem;
-            margin-bottom: 0.85rem;
+            padding: 0.84rem;
+            margin-bottom: var(--sl-mobile-gap);
         }
         [data-testid="stButton"] > button,
         [data-testid="stDownloadButton"] > button,
@@ -468,23 +520,69 @@ def inject_app_style() -> None:
         .stTabs [data-baseweb="tab"],
         .sl-meta-chip,
         .sl-user-chip {
-            min-height: 48px;
+            min-height: var(--sl-touch-target-mobile);
             font-size: 0.98rem;
         }
         div[data-baseweb="input"] > div,
         div[data-baseweb="select"] > div,
         div[data-baseweb="textarea"] > div {
-            min-height: 48px;
+            min-height: var(--sl-touch-target-mobile);
+        }
+        [data-testid="stSlider"] [data-baseweb="slider"] {
+            min-height: calc(var(--sl-touch-target-mobile) + 4px);
+            padding-top: 0.84rem;
+        }
+        [data-testid="stSlider"] [role="slider"] {
+            width: 1.68rem !important;
+            height: 1.68rem !important;
         }
         [data-testid="stHorizontalBlock"] {
             flex-direction: column !important;
-            gap: 0.72rem !important;
+            gap: var(--sl-mobile-gap) !important;
         }
         [data-testid="stHorizontalBlock"] > div {
             min-width: 100% !important;
             max-width: 100% !important;
             width: 100% !important;
             flex: 1 1 100% !important;
+        }
+        .sl-bottom-nav-anchor {
+            display: block;
+            height: 0;
+            margin: 0;
+            padding: 0;
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] {
+            display: flex !important;
+            flex-direction: row !important;
+            gap: 0.3rem !important;
+            position: fixed;
+            left: 0.55rem;
+            right: 0.55rem;
+            bottom: calc(var(--sl-safe-bottom) + 0.45rem);
+            z-index: 45;
+            padding: 0.34rem;
+            border: 1px solid var(--sl-border);
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.97);
+            box-shadow: 0 -8px 24px rgba(17, 24, 39, 0.18);
+            backdrop-filter: blur(8px);
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] > div {
+            min-width: 0 !important;
+            max-width: none !important;
+            width: 0 !important;
+            flex: 1 1 0 !important;
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button {
+            min-height: 56px !important;
+            border-radius: 12px;
+            margin-bottom: 0 !important;
+            padding: 0.2rem 0.15rem;
+            line-height: 1.12;
+            font-size: 0.72rem;
+            white-space: pre-line;
+            overflow-wrap: anywhere;
         }
         [data-testid="stSidebar"] {
             display: none !important;
@@ -666,6 +764,15 @@ def render_action_bar(
                 "".join(f'<span class="sl-context-chip">{action}</span>' for action in clean_actions),
                 unsafe_allow_html=True,
             )
+
+
+def render_sticky_primary_action_anchor(anchor_id: str) -> None:
+    """Mark the next primary action so it can dock near the viewport bottom on mobile."""
+    marker = _keyify(anchor_id)
+    st.markdown(
+        f'<div class="sl-sticky-primary-anchor" data-sl-sticky-anchor="{marker}" aria-hidden="true"></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_lead(text: str) -> None:

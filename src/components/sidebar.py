@@ -7,7 +7,7 @@ import streamlit as st
 from src.constants.ui import APP_NAME
 from src.services.auth_service import logout_user
 
-_NAV_ITEMS: list[tuple[str, str, str, str]] = [
+_SIDEBAR_NAV_ITEMS: list[tuple[str, str, str, str]] = [
     ("dashboard", "Home.py", "ダッシュボード", "🏠"),
     ("varieties", "pages/01_varieties.py", "品種管理", "🍓"),
     ("reviews", "pages/02_reviews.py", "試食評価", "📝"),
@@ -16,38 +16,70 @@ _NAV_ITEMS: list[tuple[str, str, str, str]] = [
     ("notes", "pages/06_notes.py", "研究メモ", "📓"),
     ("settings", "pages/07_settings.py", "設定", "⚙️"),
 ]
+_MOBILE_TAB_ITEMS: list[tuple[str, str, str, str]] = [
+    ("dashboard", "Home.py", "ダッシュボード", "🏠"),
+    ("varieties", "pages/01_varieties.py", "品種管理", "🍓"),
+    ("reviews", "pages/02_reviews.py", "試食評価", "📝"),
+    ("analytics", "pages/03_analytics.py", "分析", "📊"),
+    ("more", "pages/07_settings.py", "その他", "⋯"),
+]
+_CORE_TAB_KEYS = {tab_key for tab_key, _, _, _ in _MOBILE_TAB_ITEMS if tab_key != "more"}
+_MORE_PAGE_KEYS = {"pedigree", "notes", "settings"}
 
 
-def _render_nav_button(page_key: str, page_path: str, page_label: str, page_icon: str, *, active_page: str) -> None:
-    if page_key == active_page:
+def _resolve_mobile_active_tab(active_page: str) -> str:
+    return active_page if active_page in _CORE_TAB_KEYS else "more"
+
+
+def _render_mobile_tab(
+    tab_key: str,
+    tab_path: str,
+    tab_label: str,
+    tab_icon: str,
+    *,
+    active_tab: str,
+    active_page: str,
+) -> None:
+    if tab_key == active_tab and not (tab_key == "more" and active_page in _MORE_PAGE_KEYS and active_page != "settings"):
         st.markdown(
-            f'<div class="sl-mobile-nav-active">{page_icon} {page_label}</div>',
+            (
+                '<div class="sl-bottom-nav-tab-active">'
+                f'<span class="sl-bottom-nav-icon">{tab_icon}</span>'
+                f'<span class="sl-bottom-nav-label">{tab_label}</span>'
+                "</div>"
+            ),
             unsafe_allow_html=True,
         )
         return
+
+    button_kind = "primary" if tab_key == "more" and active_page in _MORE_PAGE_KEYS and active_page != "settings" else "secondary"
     if st.button(
-        f"{page_icon} {page_label}",
-        key=f"top_nav_{active_page}_{page_key}",
+        f"{tab_icon}\n{tab_label}",
+        key=f"mobile_bottom_nav_{active_page}_{tab_key}",
         use_container_width=True,
-        type="secondary",
+        type=button_kind,
     ):
-        st.switch_page(page_path)
+        st.switch_page(tab_path)
 
 
 def render_primary_nav(*, active_page: str) -> None:
-    """Render in-page primary navigation used for mobile-first operation."""
+    """Render fixed bottom-tab navigation for mobile contexts."""
     if not st.session_state.get("is_authenticated"):
         return
 
-    with st.container(border=True):
-        st.caption("主要ナビゲーション")
-        first_row = _NAV_ITEMS[:4]
-        second_row = _NAV_ITEMS[4:]
-        for row in (first_row, second_row):
-            cols = st.columns(len(row), gap="small")
-            for col, (page_key, page_path, page_label, page_icon) in zip(cols, row, strict=True):
-                with col:
-                    _render_nav_button(page_key, page_path, page_label, page_icon, active_page=active_page)
+    active_tab = _resolve_mobile_active_tab(active_page)
+    st.markdown('<div class="sl-bottom-nav-anchor" aria-hidden="true"></div>', unsafe_allow_html=True)
+    columns = st.columns(len(_MOBILE_TAB_ITEMS), gap="small")
+    for col, (tab_key, tab_path, tab_label, tab_icon) in zip(columns, _MOBILE_TAB_ITEMS, strict=True):
+        with col:
+            _render_mobile_tab(
+                tab_key,
+                tab_path,
+                tab_label,
+                tab_icon,
+                active_tab=active_tab,
+                active_page=active_page,
+            )
 
 
 def render_sidebar(*, active_page: str) -> None:
@@ -64,7 +96,7 @@ def render_sidebar(*, active_page: str) -> None:
             unsafe_allow_html=True,
         )
         st.caption("ナビゲーション")
-        for page_key, page_path, page_label, page_icon in _NAV_ITEMS:
+        for page_key, page_path, page_label, page_icon in _SIDEBAR_NAV_ITEMS:
             if page_key == active_page:
                 st.markdown(
                     f'<div class="sl-sidebar-active">{page_icon} {page_label}</div>',

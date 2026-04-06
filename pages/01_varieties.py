@@ -9,9 +9,10 @@ from src.components.image_gallery import render_image_gallery
 from src.components.layout import inject_app_style, render_page_header, render_section_title
 from src.components.pagination import render_pagination_controls
 from src.components.sidebar import render_primary_nav, render_sidebar
-from src.components.tables import render_table
+from src.components.tables import is_mobile_client, render_card_list, render_table
 from src.constants.enums import AcidityLevel
 from src.constants.prefectures import PREFECTURES
+from src.constants.ui import DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS
 from src.services.auth_service import require_admin_session
 from src.services.storage_service import (
     list_images_with_signed_urls,
@@ -120,12 +121,8 @@ except ImportError:
         st.caption(badge_text)
         return badge_text
 
-def _completion_badge_tone(completion_rate: float) -> str:
-    if completion_rate >= 80:
-        return "success"
-    if completion_rate >= 40:
-        return "info"
-    return "warning"
+
+_VARIETY_SECTION_ORDER = ["一覧", "作成・編集", "削除済み"]
 
 
 def _build_variety_summary(row: dict, *, discovered: bool, max_length: int = 96) -> str:
@@ -139,35 +136,141 @@ def _build_variety_summary(row: dict, *, discovered: bool, max_length: int = 96)
     return summary
 
 
-def _render_discovered_dex_card(row: dict, review_count: int) -> bool:
-    token = str(row.get("registration_number") or row.get("application_number") or "----")
-    title = row.get("name") or "名称未設定"
-    short_description = _build_variety_summary(row, discovered=True)
-    render_surface(
-        f"登録番号: No.{token}\n\n{short_description}\n\nレビュー件数: **{int(review_count)}件**",
-        title=title,
-        subtitle="発見済み",
-        tone="accent",
-        elevated=True,
+def _normalize_page_number(value: object) -> int:
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _normalize_page_size(value: object) -> int:
+    try:
+        candidate = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_PAGE_SIZE
+    return candidate if candidate in PAGE_SIZE_OPTIONS else DEFAULT_PAGE_SIZE
+
+
+def _read_pagination_state(key_prefix: str) -> tuple[int, int]:
+    page = st.session_state.get(
+        f"{key_prefix}_page_input",
+        st.session_state.get(f"{key_prefix}_page", 1),
     )
-    return st.button("詳細を見る", key=f"dex_open_discovered_{row['id']}", use_container_width=True)
+    page_size = st.session_state.get(
+        f"{key_prefix}_size_select",
+        st.session_state.get(f"{key_prefix}_page_size", DEFAULT_PAGE_SIZE),
+    )
+    return _normalize_page_number(page), _normalize_page_size(page_size)
 
 
-def _render_undiscovered_dex_row(row: dict) -> bool:
-    token = str(row.get("registration_number") or row.get("application_number") or "----")
+def _render_variety_filters(*, mobile_client: bool) -> tuple[str, str, str]:
     with st.container(border=True):
-        info_col, action_col = st.columns([4.2, 1.2])
-        with info_col:
-            st.markdown(f"**No.{token} ？？？？？**")
-            st.caption(_build_variety_summary(row, discovered=False))
-        with action_col:
-            return st.button("開示条件を見る", key=f"dex_open_undiscovered_{row['id']}", use_container_width=True)
-    return False
+        render_section_title("フィルタ", "条件を指定して表示対象を絞り込みます。")
+        if mobile_client:
+            keyword = st.text_input("キーワード", key="variety_keyword")
+            prefecture = st.selectbox("都道府県", [""] + PREFECTURES, key="variety_pref_filter")
+            discovery_filter = st.radio(
+                "開示モード",
+                ["すべて", "発見済み", "未発見"],
+                key="variety_discovery_filter",
+            )
+        else:
+            f1, f2, f3 = st.columns([2, 1, 1.4], gap="medium")
+            with f1:
+                keyword = st.text_input("キーワード", key="variety_keyword")
+            with f2:
+                prefecture = st.selectbox("都道府県", [""] + PREFECTURES, key="variety_pref_filter")
+            with f3:
+                discovery_filter = st.radio(
+                    "開示モード",
+                    ["すべて", "発見済み", "未発見"],
+                    horizontal=True,
+                    key="variety_discovery_filter",
+                )
+    return keyword, prefecture, discovery_filter
 
 
-def _open_variety_detail(variety_id: str) -> None:
-    st.session_state["selected_variety_id"] = variety_id
-    st.rerun()
+def _display_variety_name(row: dict, *, discovered: bool) -> str:
+    if discovered:
+        return row.get("name") or "名称未設定"
+    token = row.get("registration_number") or row.get("application_number") or "----"
+    return f"No.{token} ？？？？？"
+
+
+def _render_variety_list_item(row: dict, review_count: int, *, key_prefix: str) -> bool:
+    discovered = review_count > 0
+    with st.container(border=True):
+        st.markdown(f"**{_display_variety_name(row, discovered=discovered)}**")
+        render_status_badge("発見済み" if discovered else "未発見", tone="success" if discovered else "neutral")
+        st.caption(f"都道府県: {row.get('origin_prefecture') or '-'}")
+        st.caption(f"レビュー件数: {int(review_count)}件")
+        st.caption(_build_variety_summary(row, discovered=discovered, max_length=120))
+        return st.button("この品種を開く", key=f"{key_prefix}_{row['id']}", use_container_width=True)
+
+
+def _build_mobile_variety_cards(rows: list[dict], review_counts: dict[str, int]) -> list[dict]:
+    cards: list[dict] = []
+    for row in rows:
+        variety_id = row["id"]
+        review_count = int(review_counts.get(variety_id, 0))
+        discovered = review_count > 0
+        cards.append(
+            {
+                "id": variety_id,
+                "品種": _display_variety_name(row, discovered=discovered),
+                "状態": "発見済み" if discovered else "未発見",
+                "都道府県": row.get("origin_prefecture") or "-",
+                "レビュー": f"{review_count}件",
+                "概要": _build_variety_summary(row, discovered=discovered, max_length=120),
+            }
+        )
+    return cards
+
+
+def _render_variety_detail_panel(selected_id: str, *, discovered: bool, mobile_client: bool) -> None:
+    detail = get_variety_detail(selected_id)
+    if not detail:
+        render_empty_state("品種詳細を取得できませんでした。", title="品種詳細を表示できません")
+        return
+
+    if not discovered:
+        render_surface(
+            f"No.{str(detail.get('registration_number') or '----')} は未発見です。\n\n"
+            "「試食評価」ページでこの品種のレビューを1件登録すると、詳細情報と画像が開示されます。",
+            title="情報ロック中",
+            tone="soft",
+        )
+        st.page_link("pages/02_reviews.py", label="📝 試食評価を開く", use_container_width=True)
+        return
+
+    render_info_card(
+        f"**{detail.get('name', '-')}**\n\n"
+        f"登録番号: {detail.get('registration_number') or '-'} / "
+        f"出願番号: {detail.get('application_number') or '-'}"
+    )
+    st.write(
+        {
+            "都道府県": detail.get("origin_prefecture") or "-",
+            "開発者": detail.get("developer") or "-",
+            "糖度(下限)": detail.get("brix_min"),
+            "糖度(上限)": detail.get("brix_max"),
+            "酸味レベル": detail.get("acidity_level") or "-",
+            "収穫期": f"{detail.get('harvest_start_month') or '-'}〜{detail.get('harvest_end_month') or '-'}月",
+        }
+    )
+    if detail.get("characteristics_summary"):
+        render_surface(detail["characteristics_summary"], title="特性の概要", tone="accent")
+    elif detail.get("description"):
+        render_surface(detail["description"], title="説明", tone="soft")
+    images = list_images_with_signed_urls("variety_images", "variety_id", selected_id)
+    render_image_gallery(images, "variety")
+    if st.button("この品種を削除", key=f"delete_variety_{selected_id}", use_container_width=True):
+        soft_delete_variety(selected_id)
+        st.session_state["variety_selected_from_list"] = ""
+        if mobile_client:
+            st.session_state["variety_mobile_panel"] = "list"
+        st.success("削除しました。")
+        st.rerun()
 
 
 st.set_page_config(page_title="品種管理", layout="wide")
@@ -188,20 +291,52 @@ render_action_bar(
 )
 
 
-tab_list, tab_edit, tab_deleted = st.tabs(["一覧", "作成・編集", "削除済み"])
-
-with tab_list:
-    render_section_title("品種一覧", "フィルタ / 一覧 / 詳細パネルで管理できます。")
+def _render_variety_section_switcher(*, mobile_client: bool) -> str:
+    default_section = str(st.session_state.get("variety_active_section") or _VARIETY_SECTION_ORDER[0])
+    if default_section not in _VARIETY_SECTION_ORDER:
+        default_section = _VARIETY_SECTION_ORDER[0]
     with st.container(border=True):
-        f1, f2, f3 = st.columns([2, 1, 1.4], gap="medium")
-        with f1:
-            keyword = st.text_input("キーワード", key="variety_keyword")
-        with f2:
-            prefecture = st.selectbox("都道府県", [""] + PREFECTURES, key="variety_pref_filter")
-        with f3:
-            discovery_filter = st.radio("表示状態", ["すべて", "発見済み", "未発見"], horizontal=True, key="variety_discovery_filter")
-        page, page_size = render_pagination_controls("variety_list")
+        render_section_title("表示セクション", "必要なセクションだけ読み込みます。")
+        if mobile_client:
+            active_section = st.selectbox(
+                "表示セクション",
+                _VARIETY_SECTION_ORDER,
+                index=_VARIETY_SECTION_ORDER.index(default_section),
+                key="variety_active_section",
+            )
+        else:
+            active_section = st.radio(
+                "表示セクション",
+                _VARIETY_SECTION_ORDER,
+                index=_VARIETY_SECTION_ORDER.index(default_section),
+                horizontal=True,
+                key="variety_active_section",
+            )
+    return active_section
 
+
+def _render_variety_list_section(*, mobile_client: bool) -> None:
+    render_section_title("品種一覧", "フィルタで絞り込み、一覧から詳細へ進みます。")
+    keyword, prefecture, discovery_filter = _render_variety_filters(mobile_client=mobile_client)
+
+    if "variety_selected_from_list" not in st.session_state:
+        st.session_state["variety_selected_from_list"] = ""
+    if "variety_mobile_panel" not in st.session_state:
+        st.session_state["variety_mobile_panel"] = "list"
+
+    preselected = st.session_state.pop("selected_variety_id", "")
+    if preselected:
+        st.session_state["variety_selected_from_list"] = preselected
+        if mobile_client:
+            st.session_state["variety_mobile_panel"] = "detail"
+
+    filter_signature = (keyword.strip(), prefecture or "", discovery_filter)
+    if st.session_state.get("variety_list_filter_signature") != filter_signature:
+        st.session_state["variety_list_filter_signature"] = filter_signature
+        st.session_state["variety_list_page"] = 1
+        st.session_state["variety_list_page_input"] = 1
+
+    page, page_size = _read_pagination_state("variety_list")
     rows, total = list_varieties(
         keyword=keyword or None,
         prefecture=prefecture or None,
@@ -209,7 +344,16 @@ with tab_list:
         page_size=page_size,
         fields="id,name,origin_prefecture,registration_number,application_number,description,characteristics_summary",
     )
-    review_counts = get_review_counts_for_varieties([row["id"] for row in rows])
+    if not rows and total > 0 and page > 1:
+        st.session_state["variety_list_page"] = 1
+        st.session_state["variety_list_page_input"] = 1
+        st.rerun()
+
+    selected_id = st.session_state.get("variety_selected_from_list", "")
+    count_targets = [row["id"] for row in rows]
+    if selected_id and selected_id not in count_targets:
+        count_targets.append(selected_id)
+    review_counts = get_review_counts_for_varieties(count_targets)
     progress = get_pokedex_progress()
     completion_ratio = (float(progress["completion_rate"]) / 100) if progress["total_varieties"] else 0.0
 
@@ -233,93 +377,75 @@ with tab_list:
     else:
         visible_rows = rows
 
-    if "variety_selected_from_list" not in st.session_state:
-        st.session_state["variety_selected_from_list"] = ""
-    preselected = st.session_state.pop("selected_variety_id", "")
-    if preselected:
-        st.session_state["variety_selected_from_list"] = preselected
+    if selected_id and not any(row["id"] == selected_id for row in visible_rows):
+        selected_id = visible_rows[0]["id"] if visible_rows else ""
+        st.session_state["variety_selected_from_list"] = selected_id
+        if mobile_client and not selected_id:
+            st.session_state["variety_mobile_panel"] = "list"
 
-    list_col, detail_col = st.columns([1.4, 1], gap="large")
-    with list_col:
-        render_section_title("一覧", f"現在ページ: {len(visible_rows)}件 / 全体: {total}件")
-        if not visible_rows:
-            render_empty_state(
-                "条件に一致する品種がありません。",
-                title="表示できる品種がありません",
-                hint="キーワードや都道府県条件を調整してください。",
-            )
-        else:
-            for row in visible_rows:
-                variety_id = row["id"]
-                discovered = review_counts.get(variety_id, 0) > 0
-                display_name = row.get("name") or "名称未設定"
-                if not discovered:
-                    token = row.get("registration_number") or row.get("application_number") or "----"
-                    display_name = f"No.{token} ？？？？？"
-                with st.container(border=True):
-                    st.markdown(f"**{display_name}**")
-                    st.caption(f"都道府県: {row.get('origin_prefecture') or '-'}")
-                    render_status_badge("発見済み" if discovered else "未発見", tone="success" if discovered else "neutral")
-                    st.caption(f"レビュー件数: {review_counts.get(variety_id, 0)}件")
-                    action_col, quick_col = st.columns(2, gap="small")
-                    with action_col:
-                        if st.button("詳細を表示", key=f"variety_open_{variety_id}", use_container_width=True):
-                            st.session_state["variety_selected_from_list"] = variety_id
-                            st.rerun()
-                    with quick_col:
-                        if not discovered:
-                            st.page_link("pages/02_reviews.py", label="📝 レビュー登録", use_container_width=True)
-
-    with detail_col:
-        selected_id = st.session_state.get("variety_selected_from_list", "")
-        if selected_id and not any(row["id"] == selected_id for row in visible_rows):
-            selected_id = visible_rows[0]["id"] if visible_rows else ""
-            st.session_state["variety_selected_from_list"] = selected_id
-
-        if selected_id:
+    if mobile_client:
+        mobile_panel = st.session_state.get("variety_mobile_panel", "list")
+        if mobile_panel == "detail" and selected_id:
+            render_section_title("品種詳細", "一覧に戻って別の品種を選択できます。")
+            if st.button("← 一覧に戻る", key="variety_mobile_back", use_container_width=True):
+                st.session_state["variety_mobile_panel"] = "list"
+                st.rerun()
             discovered = review_counts.get(selected_id, 0) > 0
-            detail = get_variety_detail(selected_id)
-            if detail:
-                if not discovered:
-                    render_surface(
-                        f"No.{str(detail.get('registration_number') or '----')} は未発見です。\n\n"
-                        "「試食評価」ページでこの品種のレビューを1件登録すると、詳細情報と画像が開示されます。",
-                        title="情報ロック中",
-                        tone="soft",
-                    )
-                    st.page_link("pages/02_reviews.py", label="📝 試食評価を開く", use_container_width=True)
-                else:
-                    render_info_card(
-                        f"**{detail.get('name', '-')}**\n\n"
-                        f"登録番号: {detail.get('registration_number') or '-'} / "
-                        f"出願番号: {detail.get('application_number') or '-'}"
-                    )
-                    st.write(
-                        {
-                            "都道府県": detail.get("origin_prefecture") or "-",
-                            "開発者": detail.get("developer") or "-",
-                            "糖度(下限)": detail.get("brix_min"),
-                            "糖度(上限)": detail.get("brix_max"),
-                            "酸味レベル": detail.get("acidity_level") or "-",
-                            "収穫期": f"{detail.get('harvest_start_month') or '-'}〜{detail.get('harvest_end_month') or '-'}月",
-                        }
-                    )
-                    if detail.get("characteristics_summary"):
-                        render_surface(detail["characteristics_summary"], title="特性の概要", tone="accent")
-                    elif detail.get("description"):
-                        render_surface(detail["description"], title="説明", tone="soft")
-                    images = list_images_with_signed_urls("variety_images", "variety_id", selected_id)
-                    render_image_gallery(images, "variety")
-                    if st.button("この品種を削除", key=f"delete_variety_{selected_id}", use_container_width=True):
-                        soft_delete_variety(selected_id)
-                        st.success("削除しました。")
-                        st.rerun()
-            else:
-                render_empty_state("品種詳細を取得できませんでした。", title="品種詳細を表示できません")
+            _render_variety_detail_panel(selected_id, discovered=discovered, mobile_client=True)
         else:
-            render_empty_state("一覧から品種を選択すると詳細が表示されます。", title="品種未選択")
+            st.session_state["variety_mobile_panel"] = "list"
+            render_section_title("一覧", f"現在ページ: {len(visible_rows)}件 / 全体: {total}件")
+            if visible_rows:
+                selected_from_cards = render_card_list(
+                    _build_mobile_variety_cards(visible_rows, review_counts),
+                    title_key="品種",
+                    subtitle_key="状態",
+                    metadata_keys=["都道府県", "レビュー", "概要"],
+                    tap_action_label="この品種を開く",
+                    tap_action_value_key="id",
+                )
+                if selected_from_cards:
+                    st.session_state["variety_selected_from_list"] = str(selected_from_cards)
+                    st.session_state["variety_mobile_panel"] = "detail"
+                    st.rerun()
+            else:
+                render_empty_state(
+                    "条件に一致する品種がありません。",
+                    title="表示できる品種がありません",
+                    hint="キーワードや都道府県条件を調整してください。",
+                )
+            with st.container(border=True):
+                st.caption("ページ設定")
+                render_pagination_controls("variety_list")
+    else:
+        list_col, detail_col = st.columns([1.4, 1], gap="large")
+        with list_col:
+            render_section_title("一覧", f"現在ページ: {len(visible_rows)}件 / 全体: {total}件")
+            if visible_rows:
+                for row in visible_rows:
+                    review_count = int(review_counts.get(row["id"], 0))
+                    if _render_variety_list_item(row, review_count, key_prefix="variety_open"):
+                        selected_id = row["id"]
+                        st.session_state["variety_selected_from_list"] = selected_id
+            else:
+                render_empty_state(
+                    "条件に一致する品種がありません。",
+                    title="表示できる品種がありません",
+                    hint="キーワードや都道府県条件を調整してください。",
+                )
+            with st.container(border=True):
+                st.caption("ページ設定")
+                render_pagination_controls("variety_list")
 
-with tab_edit:
+        with detail_col:
+            if selected_id:
+                discovered = review_counts.get(selected_id, 0) > 0
+                _render_variety_detail_panel(selected_id, discovered=discovered, mobile_client=False)
+            else:
+                render_empty_state("一覧から品種を選択すると詳細が表示されます。", title="品種未選択")
+
+
+def _render_variety_edit_section() -> None:
     render_section_title("作成・編集", "品種情報と画像を登録・更新します。")
     render_action_bar(
         title="入力ガイド",
@@ -439,7 +565,8 @@ with tab_edit:
             st.success("メイン画像を更新しました。")
             st.rerun()
 
-with tab_deleted:
+
+def _render_variety_deleted_section() -> None:
     render_section_title("削除済み品種", "復元対象を選択して戻せます。")
     render_surface("誤削除した品種はここから復元できます。復元後は一覧タブですぐ確認できます。", tone="soft")
     page, page_size = render_pagination_controls("variety_deleted")
@@ -465,3 +592,13 @@ with tab_deleted:
             st.rerun()
         except Exception as exc:
             st.error(str(exc))
+
+
+mobile_client = is_mobile_client()
+active_section = _render_variety_section_switcher(mobile_client=mobile_client)
+if active_section == "一覧":
+    _render_variety_list_section(mobile_client=mobile_client)
+elif active_section == "作成・編集":
+    _render_variety_edit_section()
+else:
+    _render_variety_deleted_section()

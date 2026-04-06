@@ -6,6 +6,7 @@ import streamlit as st
 
 from src.components.layout import inject_app_style, render_page_header, render_section_title
 from src.components.sidebar import render_primary_nav, render_sidebar
+from src.components.tables import render_table
 from src.services.auth_service import (
     ensure_auth_cookie_persistence,
     get_auth_persistence_status,
@@ -129,8 +130,8 @@ def _load_dashboard_metrics() -> dict:
         return {
             "active_varieties": 0,
             "active_reviews": 0,
-            "notes_count": 0,
             "avg_score": 0.0,
+            "avg_score_sample_size": 0,
             "latest_status": "-",
             "latest_upserted": 0,
         }
@@ -141,9 +142,18 @@ def _load_dashboard_metrics() -> dict:
     active_reviews = (
         client.table("reviews").select("id", count="exact", head=True).is_("deleted_at", "null").execute().count or 0
     )
-    notes_count = client.table("notes").select("id", count="exact", head=True).is_("deleted_at", "null").execute().count or 0
-    overall_rows = client.table("reviews").select("overall").is_("deleted_at", "null").execute().data or []
-    avg_score = round(sum(row["overall"] for row in overall_rows) / len(overall_rows), 2) if overall_rows else 0
+    recent_score_rows = (
+        client.table("reviews")
+        .select("overall")
+        .is_("deleted_at", "null")
+        .order("tasted_date", desc=True)
+        .limit(60)
+        .execute()
+        .data
+        or []
+    )
+    score_values = [row.get("overall") for row in recent_score_rows if row.get("overall") is not None]
+    avg_score = round(sum(score_values) / len(score_values), 2) if score_values else 0
     latest_scrape = (
         client.table("variety_scrape_runs")
         .select("status,upserted_count")
@@ -156,15 +166,15 @@ def _load_dashboard_metrics() -> dict:
     return {
         "active_varieties": int(active_varieties),
         "active_reviews": int(active_reviews),
-        "notes_count": int(notes_count),
         "avg_score": float(avg_score),
+        "avg_score_sample_size": len(score_values),
         "latest_status": latest_scrape[0]["status"] if latest_scrape else "-",
         "latest_upserted": int(latest_scrape[0]["upserted_count"]) if latest_scrape else 0,
     }
 
 
 @st.cache_data(ttl=120)
-def _load_latest_reviews() -> list[dict]:
+def _load_latest_reviews(limit: int = 4) -> list[dict]:
     client = get_user_client()
     if client is None:
         return []
@@ -173,7 +183,7 @@ def _load_latest_reviews() -> list[dict]:
         .select("tasted_date,overall,varieties(name)")
         .is_("deleted_at", "null")
         .order("tasted_date", desc=True)
-        .limit(5)
+        .limit(limit)
         .execute()
         .data
         or []
@@ -181,7 +191,7 @@ def _load_latest_reviews() -> list[dict]:
 
 
 @st.cache_data(ttl=120)
-def _load_recent_scrape_runs() -> list[dict]:
+def _load_recent_scrape_runs(limit: int = 4) -> list[dict]:
     client = get_user_client()
     if client is None:
         return []
@@ -189,7 +199,7 @@ def _load_recent_scrape_runs() -> list[dict]:
         client.table("variety_scrape_runs")
         .select("started_at,finished_at,status,upserted_count,failed_count")
         .order("started_at", desc=True)
-        .limit(5)
+        .limit(limit)
         .execute()
         .data
         or []
@@ -236,14 +246,45 @@ def _format_recent_scrape_runs(rows: list[dict]) -> list[dict]:
     ]
 
 
-def _render_navigation_cards(items: list[tuple[str, str, str, str]]) -> None:
-    for start in range(0, len(items), 3):
-        row_items = items[start : start + 3]
-        columns = st.columns(len(row_items))
-        for column, (path, label, description, icon) in zip(columns, row_items, strict=True):
-            with column:
-                render_surface(description, title=label, tone="soft")
-                st.page_link(path, label=f"{icon} {label}を開く", use_container_width=True)
+def _build_today_tasks(metrics: dict, *, status_tone: str) -> list[tuple[str, str, str]]:
+    pending_reviews = max(int(metrics["active_varieties"]) - int(metrics["active_reviews"]), 0)
+    tasks: list[tuple[str, str, str]] = []
+
+    if status_tone == "danger":
+        tasks.append(
+            (
+                "⚙️ 取得エラーを確認",
+                "最新取得が失敗しています。設定ページで実行履歴とエラー内容を確認してください。",
+                "pages/07_settings.py",
+            )
+        )
+    variety_title = (
+        f"🍓 未評価候補を整理（{pending_reviews}件）"
+        if pending_reviews > 0
+        else "🍓 品種データを確認"
+    )
+    variety_hint = (
+        "今日レビューする候補を品種管理で確認します。"
+        if pending_reviews > 0
+        else "新規品種や更新対象がないかを品種管理で確認します。"
+    )
+    tasks.append((variety_title, variety_hint, "pages/01_varieties.py"))
+
+    tasks.append(
+        (
+            "📝 試食レビューを登録",
+            "今日の評価を登録して分析に反映します。",
+            "pages/02_reviews.py",
+        )
+    )
+    tasks.append(
+        (
+            "📊 分析を確認",
+            "最新レビューの傾向を確認します。",
+            "pages/03_analytics.py",
+        )
+    )
+    return tasks[:3]
 
 
 def _render_login() -> None:
@@ -299,88 +340,77 @@ def _render_dashboard() -> None:
     render_sidebar(active_page="dashboard")
     render_primary_nav(active_page="dashboard")
     metrics = _load_dashboard_metrics()
+    pending_reviews = max(metrics["active_varieties"] - metrics["active_reviews"], 0)
     status_tone, status_icon = _status_badge_theme(metrics["latest_status"])
-
-    render_hero_banner(
-        "ダッシュボード",
-        "今日の状況、優先タスク、最新ログを迷わず確認できる運用ハブです。",
-        eyebrow="研究運用ハブ",
-        chips=[
-            f"有効品種 {metrics['active_varieties']}種",
-            f"未評価候補 {max(metrics['active_varieties'] - metrics['active_reviews'], 0)}種",
-            f"平均評価 {metrics['avg_score']:.2f}/10",
-        ],
+    average_hint = (
+        f"直近{metrics['avg_score_sample_size']}件"
+        if metrics["avg_score_sample_size"] > 0
+        else "レビュー未登録"
     )
 
+    render_page_header(
+        "ダッシュボード",
+        "今日の状況 → 今日やること → 最新ログの順で、必要な操作だけ進めます。",
+    )
+
+    render_section_title("今日の状況")
     render_kpi_cards(
         [
             ("有効品種数", str(metrics["active_varieties"]), None),
+            ("未評価候補", str(pending_reviews), "レビュー待ち"),
             ("有効レビュー数", str(metrics["active_reviews"]), None),
-            ("研究メモ数", str(metrics["notes_count"]), None),
             ("直近取得件数", str(metrics["latest_upserted"]), f"状態: {metrics['latest_status']}"),
-            ("平均総合評価", f"{metrics['avg_score']:.2f}", "10点満点"),
+            ("直近評価平均", f"{metrics['avg_score']:.2f}", average_hint),
         ]
     )
+    render_status_badge(f"最新取得ステータス: {metrics['latest_status']}", tone=status_tone, icon=status_icon)
 
-    alert_rows: list[tuple[str, str]] = []
-    if status_tone == "danger":
-        alert_rows.append(
-            (
-                "danger",
-                "最新取得ジョブが失敗しています。設定ページの実行履歴とエラー詳細を確認してください。",
-            )
-        )
-    if metrics["active_reviews"] == 0:
-        alert_rows.append(("warning", "レビューが未登録です。まず1件登録して分析と図鑑開示を開始してください。"))
-    if metrics["latest_upserted"] == 0 and metrics["latest_status"] in {"-", "success"}:
-        alert_rows.append(("info", "最新取得件数が0件です。必要に応じてローカル取込を再実行してください。"))
-    for tone, message in alert_rows:
-        render_surface(message, title="要対応事項", tone=tone)
+    render_section_title("今日やること", "上から順に実行すると進捗が止まりにくくなります。")
+    for index, (title, hint, path) in enumerate(_build_today_tasks(metrics, status_tone=status_tone), start=1):
+        st.page_link(path, label=f"{index}. {title}", use_container_width=True)
+        st.caption(hint)
 
-    render_section_title("今日やること", "主要アクションだけを優先して実行します。")
-    task_cols = st.columns(3, gap="large")
-    with task_cols[0]:
-        with st.container(border=True):
-            st.markdown("**1. 品種進捗を確認**")
-            st.caption("未発見品種と詳細更新対象を確認")
-            st.page_link("pages/01_varieties.py", label="🍓 品種管理を開く", use_container_width=True)
-    with task_cols[1]:
-        with st.container(border=True):
-            st.markdown("**2. 試食レビューを登録**")
-            st.caption("今日の評価を入力し、図鑑開示を進める")
-            st.page_link("pages/02_reviews.py", label="📝 試食評価を開く", use_container_width=True)
-    with task_cols[2]:
-        with st.container(border=True):
-            st.markdown("**3. 分析結果を確認**")
-            st.caption("最新レビューを反映した傾向を確認")
-            st.page_link("pages/03_analytics.py", label="📊 分析を開く", use_container_width=True)
+    render_section_title("最新レビュー / 最新取得ログ", "初期表示は1つだけ読み込み、必要時に切り替えます。")
+    feed_view = st.radio(
+        "更新情報",
+        options=["最新レビュー", "最新取得ログ"],
+        horizontal=True,
+        key="dashboard_feed_view",
+        label_visibility="collapsed",
+    )
 
-    reviews_col, logs_col = st.columns(2, gap="large")
-    with reviews_col:
-        render_section_title("最新レビュー", "直近5件")
-        reviews = _format_latest_reviews(_load_latest_reviews())
+    if feed_view == "最新レビュー":
+        reviews = _format_latest_reviews(_load_latest_reviews(limit=4))
         if reviews:
-            st.dataframe(reviews, use_container_width=True, hide_index=True)
+            render_table(
+                reviews,
+                mobile_title_key="品種名",
+                mobile_subtitle_key="試食日",
+                mobile_metadata_keys=["総合評価"],
+            )
         else:
             render_empty_state(
-                "表示できるレビューがまだありません。",
+                "評価データが登録されていないため、最新レビューを表示できません。",
                 title="最新レビューはまだありません",
-                hint="「試食評価」ページで最初のレビューを登録してください。",
+                hint="まずは1件レビューを登録すると、ここに時系列で表示されます。",
                 action_label="📝 試食評価ページを開く",
                 action_path="pages/02_reviews.py",
             )
-
-    with logs_col:
-        render_section_title("最新取得ログ", "直近5件")
+    else:
         render_status_badge(f"ステータス: {metrics['latest_status']}", tone=status_tone, icon=status_icon)
-        recent_runs = _format_recent_scrape_runs(_load_recent_scrape_runs())
+        recent_runs = _format_recent_scrape_runs(_load_recent_scrape_runs(limit=4))
         if recent_runs:
-            st.dataframe(recent_runs, use_container_width=True, hide_index=True)
+            render_table(
+                recent_runs,
+                mobile_title_key="状態",
+                mobile_subtitle_key="開始日時",
+                mobile_metadata_keys=["終了日時", "更新件数", "失敗件数"],
+            )
         else:
             render_empty_state(
-                "表示できる取得ログがまだありません。",
+                "取得ジョブがまだ実行されていないため、履歴を表示できません。",
                 title="取得ログはまだありません",
-                hint="設定ページで履歴を再読み込みすると最新結果を確認できます。",
+                hint="設定ページで取得を実行すると、最新ログがここに表示されます。",
                 action_label="⚙️ 設定ページを開く",
                 action_path="pages/07_settings.py",
             )

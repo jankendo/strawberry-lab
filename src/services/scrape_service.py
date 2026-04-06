@@ -6,6 +6,8 @@ import streamlit as st
 
 from src.services.auth_service import get_user_client
 
+_RUN_SELECT_FIELDS = "id,status,started_at,finished_at,upserted_count,failed_count,processed_count,listed_count"
+
 
 @st.cache_data(ttl=300)
 def get_recent_variety_scrape_runs(limit: int = 20) -> list[dict]:
@@ -13,7 +15,7 @@ def get_recent_variety_scrape_runs(limit: int = 20) -> list[dict]:
     client = get_user_client()
     return (
         client.table("variety_scrape_runs")
-        .select("*")
+        .select(_RUN_SELECT_FIELDS)
         .order("started_at", desc=True)
         .limit(limit)
         .execute()

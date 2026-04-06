@@ -9,6 +9,7 @@ from uuid import uuid4
 import streamlit as st
 
 from src.services.auth_service import get_user_client
+from src.services.export_service import clear_export_cache
 from src.utils.validation import validate_note_payload
 
 
@@ -65,6 +66,7 @@ def create_note(payload: dict) -> str:
     result = client.table("notes").insert(payload).execute()
     list_notes.clear()
     get_note_detail.clear()
+    clear_export_cache()
     return result.data[0]["id"]
 
 
@@ -75,6 +77,7 @@ def update_note(note_id: str, payload: dict) -> None:
     client.table("notes").update(payload).eq("id", note_id).execute()
     list_notes.clear()
     get_note_detail.clear()
+    clear_export_cache()
 
 
 def soft_delete_note(note_id: str) -> None:
@@ -83,6 +86,7 @@ def soft_delete_note(note_id: str) -> None:
     client.table("notes").update({"deleted_at": datetime.now(tz=UTC).isoformat()}).eq("id", note_id).execute()
     list_notes.clear()
     get_note_detail.clear()
+    clear_export_cache()
 
 
 def restore_note(note_id: str) -> None:
@@ -91,3 +95,4 @@ def restore_note(note_id: str) -> None:
     client.table("notes").update({"deleted_at": None}).eq("id", note_id).execute()
     list_notes.clear()
     get_note_detail.clear()
+    clear_export_cache()

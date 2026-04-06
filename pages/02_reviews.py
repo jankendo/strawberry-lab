@@ -14,6 +14,7 @@ from src.components.layout import (
     render_kpi_cards,
     render_section_title,
     render_status_badge,
+    render_sticky_primary_action_anchor,
     render_surface,
 )
 from src.components.pagination import render_pagination_controls
@@ -28,6 +29,14 @@ from src.utils.validation import normalize_review_tasted_date
 
 _PENDING_DUPLICATE_PAYLOAD_KEY = "reviews_pending_duplicate_payload"
 _PENDING_DUPLICATE_FILES_KEY = "reviews_pending_duplicate_files"
+_SCORE_GUIDE_TEXT = "1=弱い / 3=普通 / 5=強い"
+_SCORE_LEVEL_LABELS = {
+    1: "弱い",
+    2: "やや弱い",
+    3: "普通",
+    4: "やや強い",
+    5: "強い",
+}
 
 
 def _variety_name_map(varieties: list[dict]) -> dict[str, str]:
@@ -53,6 +62,10 @@ def _normalize_pending_payload(payload: dict) -> dict:
     normalized_payload["tasted_date"] = normalize_review_tasted_date(normalized_payload["tasted_date"])
     return normalized_payload
 
+
+def _score_level_label(value: int) -> str:
+    return _SCORE_LEVEL_LABELS.get(int(value), "普通")
+
 st.set_page_config(page_title="試食評価", layout="wide")
 require_admin_session()
 inject_app_style()
@@ -69,13 +82,14 @@ render_action_bar(
     description="必須入力は最小限、重複時は上書き確認付きで安全に保存します。",
     actions=["作成・編集", "履歴管理", "削除復元"],
 )
+active_varieties = list_active_varieties()
 
 tab_edit, tab_history, tab_deleted = st.tabs(["レビュー登録", "履歴管理", "削除済み復元"])
 
 with tab_edit:
     with st.container(border=True):
         render_section_title("評価登録", "必須項目を入力すると総合スコアを自動算出して保存できます。")
-        varieties = list_active_varieties()
+        varieties = active_varieties
         variety_names = _variety_name_map(varieties)
         if not varieties:
             render_empty_state(
@@ -85,52 +99,53 @@ with tab_edit:
                 action_path="pages/01_varieties.py",
             )
         else:
-            form_col, summary_col = st.columns([2.2, 1], gap="large")
-            with form_col:
+            with st.form("review_entry_form", clear_on_submit=False):
+                st.caption("※ * は必須項目です。任意項目は空欄でも保存できます。")
                 st.markdown("##### 1) 試食情報")
-                c1, c2 = st.columns([1.3, 1], gap="large")
-                with c1:
-                    variety_id = st.selectbox(
-                        "品種 *",
-                        [v["id"] for v in varieties],
-                        format_func=lambda x: variety_names.get(str(x), str(x)),
-                        key="review_variety_id",
-                    )
-                    tasted_date = st.date_input(
-                        "試食日 *",
-                        value=date.today(),
-                        max_value=date.today(),
-                        key="review_tasted_date",
-                    )
-                with c2:
-                    purchase_place = st.text_input("購入場所（任意）", key="review_purchase_place")
-                    price_jpy = st.number_input(
-                        "価格（円・任意）",
-                        min_value=0,
-                        max_value=1_000_000,
-                        value=0,
-                        step=10,
-                        key="review_price_jpy",
-                    )
+                variety_id = st.selectbox(
+                    "品種 *",
+                    [v["id"] for v in varieties],
+                    format_func=lambda x: variety_names.get(str(x), str(x)),
+                    key="review_variety_id",
+                )
+                tasted_date = st.date_input(
+                    "試食日 *",
+                    value=date.today(),
+                    max_value=date.today(),
+                    key="review_tasted_date",
+                )
+                purchase_place = st.text_input("購入場所", key="review_purchase_place")
+                price_jpy = st.number_input(
+                    "価格（円）",
+                    min_value=0,
+                    max_value=1_000_000,
+                    value=0,
+                    step=10,
+                    key="review_price_jpy",
+                )
 
-                st.markdown("##### 2) 味覚スコア")
-                st.caption("基準: 1=弱い / 3=普通 / 5=強い")
-                s1, s2, s3 = st.columns(3, gap="large")
-                with s1:
-                    sweetness = st.slider("甘味", 1, 5, 3, key="review_sweetness")
-                    sourness = st.slider("酸味", 1, 5, 3, key="review_sourness")
-                with s2:
-                    aroma = st.slider("香り", 1, 5, 3, key="review_aroma")
-                    texture = st.slider("食感", 1, 5, 3, key="review_texture")
-                with s3:
-                    appearance = st.slider("見た目", 1, 5, 3, key="review_appearance")
+                st.markdown("##### 2) 味覚スコア（必須）")
+                st.caption(f"スコア目安: {_SCORE_GUIDE_TEXT}")
+                sweetness = st.slider("甘味 *", 1, 5, 3, key="review_sweetness", help=_SCORE_GUIDE_TEXT)
+                sourness = st.slider("酸味 *", 1, 5, 3, key="review_sourness", help=_SCORE_GUIDE_TEXT)
+                aroma = st.slider("香り *", 1, 5, 3, key="review_aroma", help=_SCORE_GUIDE_TEXT)
+                texture = st.slider("食感 *", 1, 5, 3, key="review_texture", help=_SCORE_GUIDE_TEXT)
+                appearance = st.slider("見た目 *", 1, 5, 3, key="review_appearance", help=_SCORE_GUIDE_TEXT)
+                st.caption(
+                    "現在値: "
+                    f"甘味 {sweetness}/5（{_score_level_label(sweetness)}）・"
+                    f"酸味 {sourness}/5（{_score_level_label(sourness)}）・"
+                    f"香り {aroma}/5（{_score_level_label(aroma)}）・"
+                    f"食感 {texture}/5（{_score_level_label(texture)}）・"
+                    f"見た目 {appearance}/5（{_score_level_label(appearance)}）"
+                )
                 overall = max(1, min(10, int(round((sweetness + sourness + aroma + texture + appearance) / 5 * 2))))
                 render_kpi_cards([("総合スコア（自動）", f"{overall}/10", "5項目平均から算出")])
 
-                st.markdown("##### 3) コメント・画像")
-                comment = st.text_area("コメント（任意）", height=140, key="review_comment")
+                st.markdown("##### 3) コメント・画像（任意）")
+                comment = st.text_area("コメント", height=140, key="review_comment")
                 uploaded_files = st.file_uploader(
-                    "画像アップロード（最大3枚・任意）",
+                    "画像アップロード（最大3枚）",
                     type=["jpg", "jpeg", "png", "webp"],
                     accept_multiple_files=True,
                     key="review_uploaded_files",
@@ -138,25 +153,26 @@ with tab_edit:
                 current_upload_count = len(uploaded_files or [])
                 if uploaded_files:
                     preview_targets = uploaded_files[:3]
-                    st.image([file.getvalue() for file in preview_targets], caption=[file.name for file in preview_targets], width=180)
+                    st.image(
+                        [file.getvalue() for file in preview_targets],
+                        caption=[file.name for file in preview_targets],
+                        use_container_width=True,
+                    )
 
-                with st.container(border=True):
-                    st.caption("保存")
-                    submit = st.button("この内容で保存", use_container_width=True, type="primary", key="review_submit")
-
-            with summary_col:
                 selected_name = variety_names.get(str(variety_id), str(variety_id))
                 render_surface(
-                    f"品種: **{selected_name}**\n\n"
-                    f"試食日: **{tasted_date}**\n\n"
-                    f"総合スコア: **{overall}/10**\n\n"
+                    f"品種: **{selected_name}** / "
+                    f"試食日: **{tasted_date}** / "
+                    f"総合スコア: **{overall}/10** / "
                     f"画像枚数: **{current_upload_count}枚**",
-                    title="入力サマリー",
-                    subtitle="保存前に確認",
+                    title="保存前サマリー",
+                    subtitle="必須: 品種・試食日・5項目スコア",
                     tone="soft",
                 )
-                render_status_badge("必須: 品種・試食日・5項目", tone="info")
+                render_status_badge("任意項目（購入場所・価格・コメント・画像）は後から追記可能", tone="info")
                 st.page_link("pages/01_varieties.py", label="🍓 品種情報を確認", use_container_width=True)
+                render_sticky_primary_action_anchor("reviews-save")
+                submit = st.form_submit_button("この内容で保存", use_container_width=True, type="primary")
 
             if submit:
                 payload = {
@@ -202,38 +218,35 @@ with tab_edit:
                     title="重複レビューを検出しました",
                     tone="accent",
                 )
-                a1, a2 = st.columns([2, 1], gap="medium")
-                with a1:
-                    if st.button(
-                        "既存記録を上書き保存する",
-                        key="overwrite_review",
-                        use_container_width=True,
-                        type="primary",
-                    ):
-                        try:
-                            review_id, _ = create_or_update_review(
-                                pending_payload,
-                                overwrite_duplicate=True,
-                            )
-                            _upload_review_images(
-                                review_id,
-                                st.session_state.get(_PENDING_DUPLICATE_FILES_KEY, []),
-                            )
-                            _clear_pending_duplicate()
-                            st.success("既存記録を更新しました。")
-                            st.rerun()
-                        except Exception as exc:
-                            st.error(str(exc))
-                with a2:
-                    if st.button("上書きを取り消す", key="cancel_overwrite_review", use_container_width=True):
+                if st.button(
+                    "既存記録を上書き保存する",
+                    key="overwrite_review",
+                    use_container_width=True,
+                    type="primary",
+                ):
+                    try:
+                        review_id, _ = create_or_update_review(
+                            pending_payload,
+                            overwrite_duplicate=True,
+                        )
+                        _upload_review_images(
+                            review_id,
+                            st.session_state.get(_PENDING_DUPLICATE_FILES_KEY, []),
+                        )
                         _clear_pending_duplicate()
-                        st.info("上書きをキャンセルしました。")
+                        st.success("既存記録を更新しました。")
                         st.rerun()
+                    except Exception as exc:
+                        st.error(str(exc))
+                if st.button("上書きを取り消す", key="cancel_overwrite_review", use_container_width=True):
+                    _clear_pending_duplicate()
+                    st.info("上書きをキャンセルしました。")
+                    st.rerun()
 
 with tab_history:
     with st.container(border=True):
         render_section_title("評価履歴", "フィルタで絞り込み、内容確認や削除操作を行えます。")
-        varieties = list_active_varieties()
+        varieties = active_varieties
         variety_names = _variety_name_map(varieties)
         f1, f2, f3 = st.columns(3, gap="large")
         with f1:

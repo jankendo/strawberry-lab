@@ -8,6 +8,7 @@ from uuid import uuid4
 import streamlit as st
 
 from src.services.auth_service import get_user_client
+from src.services.export_service import clear_export_cache
 from src.services.variety_service import get_pokedex_progress, get_review_counts_for_varieties
 from src.utils.validation import validate_review_payload
 
@@ -72,7 +73,7 @@ def _find_duplicate(variety_id: str, tasted_date: str) -> dict | None:
     client = get_user_client()
     result = (
         client.table("reviews")
-        .select("*")
+        .select("id")
         .eq("variety_id", variety_id)
         .eq("tasted_date", tasted_date)
         .is_("deleted_at", "null")
@@ -98,6 +99,7 @@ def create_or_update_review(payload: dict, *, overwrite_duplicate: bool = False)
         list_reviews.clear()
         get_pokedex_progress.clear()
         get_review_counts_for_varieties.clear()
+        clear_export_cache()
         return review_id, True
     review_id = str(uuid4())
     payload["id"] = review_id
@@ -105,6 +107,7 @@ def create_or_update_review(payload: dict, *, overwrite_duplicate: bool = False)
     list_reviews.clear()
     get_pokedex_progress.clear()
     get_review_counts_for_varieties.clear()
+    clear_export_cache()
     return review_id, False
 
 
@@ -116,6 +119,7 @@ def update_review(review_id: str, payload: dict) -> None:
     list_reviews.clear()
     get_pokedex_progress.clear()
     get_review_counts_for_varieties.clear()
+    clear_export_cache()
 
 
 def soft_delete_review(review_id: str) -> None:
@@ -125,6 +129,7 @@ def soft_delete_review(review_id: str) -> None:
     list_reviews.clear()
     get_pokedex_progress.clear()
     get_review_counts_for_varieties.clear()
+    clear_export_cache()
 
 
 def restore_review(review_id: str) -> None:
@@ -146,3 +151,4 @@ def restore_review(review_id: str) -> None:
     list_reviews.clear()
     get_pokedex_progress.clear()
     get_review_counts_for_varieties.clear()
+    clear_export_cache()

@@ -10,6 +10,7 @@ import networkx as nx
 import streamlit as st
 
 from src.services.auth_service import get_user_client
+from src.services.export_service import clear_export_cache
 from src.utils.validation import validate_variety_payload
 
 
@@ -137,6 +138,15 @@ def get_pokedex_progress() -> dict[str, int]:
     }
 
 
+def _clear_variety_related_caches() -> None:
+    list_varieties.clear()
+    list_active_varieties.clear()
+    get_variety_detail.clear()
+    get_pokedex_progress.clear()
+    get_review_counts_for_varieties.clear()
+    clear_export_cache()
+
+
 def create_variety(payload: dict, parent_links: list[dict]) -> str:
     """Create a new variety and optional parent links."""
     client = get_user_client()
@@ -146,10 +156,7 @@ def create_variety(payload: dict, parent_links: list[dict]) -> str:
     variety_id = insert_result.data[0]["id"]
     if parent_links:
         upsert_parent_links(variety_id, parent_links)
-    list_varieties.clear()
-    get_variety_detail.clear()
-    get_pokedex_progress.clear()
-    get_review_counts_for_varieties.clear()
+    _clear_variety_related_caches()
     return variety_id
 
 
@@ -161,20 +168,14 @@ def update_variety(variety_id: str, payload: dict, parent_links: list[dict]) -> 
     client.table("variety_parent_links").delete().eq("child_variety_id", variety_id).execute()
     if parent_links:
         upsert_parent_links(variety_id, parent_links)
-    list_varieties.clear()
-    get_variety_detail.clear()
-    get_pokedex_progress.clear()
-    get_review_counts_for_varieties.clear()
+    _clear_variety_related_caches()
 
 
 def soft_delete_variety(variety_id: str) -> None:
     """Soft delete variety."""
     client = get_user_client()
     client.table("varieties").update({"deleted_at": datetime.now(tz=UTC).isoformat()}).eq("id", variety_id).execute()
-    list_varieties.clear()
-    get_variety_detail.clear()
-    get_pokedex_progress.clear()
-    get_review_counts_for_varieties.clear()
+    _clear_variety_related_caches()
 
 
 def restore_variety(variety_id: str) -> None:
@@ -192,10 +193,7 @@ def restore_variety(variety_id: str) -> None:
     if duplicate.data:
         raise ValueError("同名の有効な品種が存在するため復元できません。")
     client.table("varieties").update({"deleted_at": None}).eq("id", variety_id).execute()
-    list_varieties.clear()
-    get_variety_detail.clear()
-    get_pokedex_progress.clear()
-    get_review_counts_for_varieties.clear()
+    _clear_variety_related_caches()
 
 
 def upsert_parent_links(child_variety_id: str, parent_links: list[dict]) -> None:
@@ -217,6 +215,7 @@ def upsert_parent_links(child_variety_id: str, parent_links: list[dict]) -> None
         for link in parent_links
     ]
     client.table("variety_parent_links").insert(rows).execute()
+    clear_export_cache()
 
 
 def would_create_cycle(parent_variety_id: str, child_variety_id: str) -> bool:

@@ -10,6 +10,9 @@ import streamlit as st
 
 from src.services.auth_service import get_user_client
 
+_REVIEW_SELECT_FIELDS = "id,variety_id,tasted_date,overall,sweetness,sourness,aroma,texture,appearance"
+_VARIETY_SELECT_FIELDS = "id,name,origin_prefecture,tags,brix_min,brix_max"
+
 
 @st.cache_data(ttl=300)
 def get_filtered_review_dataframe(
@@ -22,32 +25,70 @@ def get_filtered_review_dataframe(
 ) -> pd.DataFrame:
     """Fetch filtered active reviews joined with variety data."""
     client = get_user_client()
-    reviews = (
+    normalized_variety_ids = [str(variety_id) for variety_id in dict.fromkeys(variety_ids or []) if str(variety_id)]
+    normalized_tags = [str(tag).strip() for tag in (tags or []) if str(tag).strip()]
+    required_tag_set = set(normalized_tags)
+
+    review_query = (
         client.table("reviews")
-        .select("*")
+        .select(_REVIEW_SELECT_FIELDS)
         .is_("deleted_at", "null")
         .gte("tasted_date", str(date_from))
         .lte("tasted_date", str(date_to))
-        .execute()
-        .data
+    )
+    if normalized_variety_ids:
+        review_query = review_query.in_("variety_id", normalized_variety_ids)
+    reviews = (
+        review_query.execute().data
         or []
     )
     if not reviews:
         return pd.DataFrame()
-    varieties = client.table("varieties").select("id,name,origin_prefecture,tags,brix_min,brix_max").is_("deleted_at", "null").execute().data or []
-    vmap = {v["id"]: v for v in varieties}
+
+    review_variety_ids = list(dict.fromkeys(str(review.get("variety_id")) for review in reviews if review.get("variety_id")))
+    if not review_variety_ids:
+        return pd.DataFrame()
+
+    variety_query = (
+        client.table("varieties")
+        .select(_VARIETY_SELECT_FIELDS)
+        .is_("deleted_at", "null")
+        .in_("id", review_variety_ids)
+    )
+    if prefecture:
+        variety_query = variety_query.eq("origin_prefecture", prefecture)
+    if normalized_tags:
+        variety_query = variety_query.contains("tags", normalized_tags)
+    varieties = variety_query.execute().data or []
+    if not varieties:
+        return pd.DataFrame()
+
+    vmap = {str(variety["id"]): variety for variety in varieties}
+    allowed_variety_ids = set(vmap)
     rows: list[dict] = []
     for review in reviews:
-        variety = vmap.get(review["variety_id"])
+        review_variety_id = str(review.get("variety_id"))
+        if review_variety_id not in allowed_variety_ids:
+            continue
+        variety = vmap.get(review_variety_id)
         if not variety:
             continue
         if prefecture and variety.get("origin_prefecture") != prefecture:
             continue
-        if tags and not set(tags).issubset(set(variety.get("tags") or [])):
+        if required_tag_set and not required_tag_set.issubset(set(variety.get("tags") or [])):
             continue
-        if variety_ids and review["variety_id"] not in variety_ids:
+        if normalized_variety_ids and review_variety_id not in normalized_variety_ids:
             continue
-        rows.append({**review, "variety_name": variety["name"], "origin_prefecture": variety.get("origin_prefecture"), "variety_tags": variety.get("tags") or [], "brix_min": variety.get("brix_min"), "brix_max": variety.get("brix_max")})
+        rows.append(
+            {
+                **review,
+                "variety_name": variety["name"],
+                "origin_prefecture": variety.get("origin_prefecture"),
+                "variety_tags": variety.get("tags") or [],
+                "brix_min": variety.get("brix_min"),
+                "brix_max": variety.get("brix_max"),
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -129,9 +170,10 @@ def prefecture_counts(prefecture: str | None = None, tags: list[str] | None = No
     if prefecture:
         query = query.eq("origin_prefecture", prefecture)
     rows = query.execute().data or []
+    required_tag_set = {str(tag).strip() for tag in (tags or []) if str(tag).strip()}
     counter: defaultdict[str, int] = defaultdict(int)
     for row in rows:
-        if tags and not set(tags).issubset(set(row.get("tags") or [])):
+        if required_tag_set and not required_tag_set.issubset(set(row.get("tags") or [])):
             continue
         if row.get("origin_prefecture"):
             counter[row["origin_prefecture"]] += 1
