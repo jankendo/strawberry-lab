@@ -406,6 +406,8 @@ def inject_app_style() -> None:
         align-items: center;
         justify-content: center;
         gap: 0.16rem;
+        width: 100%;
+        min-width: 0;
         min-height: 56px;
         border-radius: 12px;
         border: 1px solid var(--sl-primary);
@@ -415,14 +417,22 @@ def inject_app_style() -> None:
         text-align: center;
         line-height: 1.12;
         padding: 0.2rem 0.15rem;
+        box-sizing: border-box;
+        overflow: hidden;
     }
     .sl-bottom-nav-tab-active .sl-bottom-nav-icon {
         font-size: 1rem;
         line-height: 1;
+        flex-shrink: 0;
     }
     .sl-bottom-nav-tab-active .sl-bottom-nav-label {
+        display: block;
+        width: 100%;
+        max-width: 100%;
         font-size: 0.72rem;
-        white-space: nowrap;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: keep-all;
     }
 
     .sl-workspace-meta-row {
@@ -536,11 +546,11 @@ def inject_app_style() -> None:
             width: 1.68rem !important;
             height: 1.68rem !important;
         }
-        [data-testid="stHorizontalBlock"] {
+        [data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] > div[data-testid="stHorizontalBlock"] {
             flex-direction: column !important;
             gap: var(--sl-mobile-gap) !important;
         }
-        [data-testid="stHorizontalBlock"] > div {
+        [data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] > div[data-testid="stHorizontalBlock"] > div {
             min-width: 100% !important;
             max-width: 100% !important;
             width: 100% !important;
@@ -575,6 +585,9 @@ def inject_app_style() -> None:
             flex: 1 1 0 !important;
         }
         .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
             min-height: 56px !important;
             border-radius: 12px;
             margin-bottom: 0 !important;
@@ -583,6 +596,18 @@ def inject_app_style() -> None:
             font-size: 0.72rem;
             white-space: pre-line;
             overflow-wrap: anywhere;
+            word-break: keep-all;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button p {
+            width: 100%;
+            margin: 0;
+            line-height: 1.12;
+            white-space: pre-line;
+            overflow-wrap: anywhere;
+            word-break: keep-all;
+            text-align: center;
         }
         [data-testid="stSidebar"] {
             display: none !important;

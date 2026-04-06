@@ -28,7 +28,11 @@ _MORE_PAGE_KEYS = {"pedigree", "notes", "settings"}
 
 
 def _resolve_mobile_active_tab(active_page: str) -> str:
-    return active_page if active_page in _CORE_TAB_KEYS else "more"
+    if active_page in _CORE_TAB_KEYS:
+        return active_page
+    if active_page in _MORE_PAGE_KEYS:
+        return "more"
+    return "more"
 
 
 def _render_mobile_tab(
@@ -40,7 +44,8 @@ def _render_mobile_tab(
     active_tab: str,
     active_page: str,
 ) -> None:
-    if tab_key == active_tab and not (tab_key == "more" and active_page in _MORE_PAGE_KEYS and active_page != "settings"):
+    is_active = tab_key == active_tab
+    if is_active:
         st.markdown(
             (
                 '<div class="sl-bottom-nav-tab-active">'
@@ -52,12 +57,11 @@ def _render_mobile_tab(
         )
         return
 
-    button_kind = "primary" if tab_key == "more" and active_page in _MORE_PAGE_KEYS and active_page != "settings" else "secondary"
     if st.button(
         f"{tab_icon}\n{tab_label}",
         key=f"mobile_bottom_nav_{active_page}_{tab_key}",
         use_container_width=True,
-        type=button_kind,
+        type="secondary",
     ):
         st.switch_page(tab_path)
 

@@ -12,73 +12,20 @@ from src.components.layout import (
     render_empty_state,
     render_hero_banner,
     render_kpi_cards,
+    render_page_header,
     render_section_title,
     render_sticky_primary_action_anchor,
 )
 from src.components.pagination import render_pagination_controls
 from src.components.sidebar import render_primary_nav, render_sidebar
-from src.components.tables import render_table
+from src.components.tables import is_mobile_client, render_table
 from src.services.auth_service import require_admin_session
 from src.services.note_service import create_note, get_note_detail, list_notes, restore_note, soft_delete_note, update_note
 from src.services.variety_service import list_active_varieties
 from src.utils.text_utils import split_dedup_values
 
-_MOBILE_USER_AGENT_TOKENS = (
-    "android",
-    "iphone",
-    "ipad",
-    "ipod",
-    "mobile",
-    "windows phone",
-)
 _NOTES_SORT_OPTIONS = ["更新が新しい順", "更新が古い順", "タイトル順"]
 _NOTES_SECTION_ORDER = ["ノート管理", "削除済み"]
-
-
-def _coerce_bool(value: object | None) -> bool | None:
-    if value is None:
-        return None
-    normalized = str(value).strip().lower()
-    if normalized in {"1", "true", "yes", "on", "y"}:
-        return True
-    if normalized in {"0", "false", "no", "off", "n"}:
-        return False
-    return None
-
-
-def _query_param_mobile_override() -> bool | None:
-    try:
-        raw = st.query_params.get("mobile")
-    except Exception:
-        return None
-    if isinstance(raw, list):
-        raw = raw[0] if raw else None
-    return _coerce_bool(raw)
-
-
-def _read_user_agent() -> str:
-    try:
-        context = getattr(st, "context", None)
-        if context is None:
-            return ""
-        headers = getattr(context, "headers", None)
-        if headers is None:
-            return ""
-        if isinstance(headers, dict):
-            return str(headers.get("user-agent") or headers.get("User-Agent") or "")
-        if hasattr(headers, "get"):
-            return str(headers.get("user-agent", "") or headers.get("User-Agent", ""))
-    except Exception:
-        return ""
-    return ""
-
-
-def _is_mobile_client() -> bool:
-    override = _query_param_mobile_override()
-    if override is not None:
-        return override
-    user_agent = _read_user_agent().lower()
-    return any(token in user_agent for token in _MOBILE_USER_AGENT_TOKENS)
 
 
 def _format_updated_at(value: object) -> str:
@@ -158,7 +105,7 @@ def _render_notes_section_switcher(*, is_mobile: bool) -> str:
     if default_section not in _NOTES_SECTION_ORDER:
         default_section = _NOTES_SECTION_ORDER[0]
     with st.container(border=True):
-        render_section_title("表示セクション", "必要なセクションのみ描画して表示速度を保ちます。")
+        render_section_title("表示セクション", None if is_mobile else "必要なセクションのみ描画して表示速度を保ちます。")
         if is_mobile:
             active_section = st.selectbox(
                 "表示セクション",
@@ -331,19 +278,22 @@ require_admin_session()
 inject_app_style()
 render_sidebar(active_page="notes")
 render_primary_nav(active_page="notes")
-render_hero_banner(
-    "研究メモ",
-    "調査メモを一元管理し、検索・編集・復元までを同じワークフローで運用できます。",
-    eyebrow="研究ナレッジ管理",
-    chips=["横断検索", "モバイル編集", "削除復元"],
-)
-render_action_bar(
-    title="運用の流れ",
-    description="一覧カードで検索・絞り込み後にノートを開いて編集します。モバイルでは編集画面を単画面表示します。",
-    actions=["検索", "タグ絞り込み", "カードで選択", "保存", "削除済み復元"],
-)
+mobile_client = is_mobile_client()
+if mobile_client:
+    render_page_header("研究メモ", "一覧から必要なノートを開き、編集や復元を行います。")
+else:
+    render_hero_banner(
+        "研究メモ",
+        "調査メモを一元管理し、検索・編集・復元までを同じワークフローで運用できます。",
+        eyebrow="研究ナレッジ管理",
+        chips=["横断検索", "モバイル編集", "削除復元"],
+    )
+    render_action_bar(
+        title="運用の流れ",
+        description="一覧カードで検索・絞り込み後にノートを開いて編集します。モバイルでは編集画面を単画面表示します。",
+        actions=["検索", "タグ絞り込み", "カードで選択", "保存", "削除済み復元"],
+    )
 
-is_mobile_client = _is_mobile_client()
 if "notes_selected_id" not in st.session_state:
     st.session_state["notes_selected_id"] = ""
 if "notes_mobile_view" not in st.session_state:
@@ -351,11 +301,11 @@ if "notes_mobile_view" not in st.session_state:
 if "notes_editor_mode" not in st.session_state:
     st.session_state["notes_editor_mode"] = "closed"
 
-active_section = _render_notes_section_switcher(is_mobile=is_mobile_client)
+active_section = _render_notes_section_switcher(is_mobile=mobile_client)
 
 if active_section == "ノート管理":
-    render_section_title("ノート一覧", "検索・タグ絞り込みで探し、カードから開いて編集します。")
-    if is_mobile_client and st.session_state.get("notes_mobile_view") == "editor":
+    render_section_title("ノート一覧", None if mobile_client else "検索・タグ絞り込みで探し、カードから開いて編集します。")
+    if mobile_client and st.session_state.get("notes_mobile_view") == "editor":
         selected_id = st.session_state.get("notes_selected_id") or ""
         selected_note = _resolve_selected_note(selected_id)
         if selected_id and selected_note is None:
@@ -365,7 +315,7 @@ if active_section == "ノート管理":
             st.rerun()
         _render_note_editor(selected_id=selected_id, selected_note=selected_note, is_mobile=True)
     else:
-        search_query, filter_tags, sort_mode, page, page_size = _render_manage_filters(is_mobile=is_mobile_client)
+        search_query, filter_tags, sort_mode, page, page_size = _render_manage_filters(is_mobile=mobile_client)
         rows, total = _load_note_rows(
             search_query=search_query,
             filter_tags=filter_tags,
@@ -381,7 +331,7 @@ if active_section == "ノート管理":
             ]
         )
 
-        if is_mobile_client:
+        if mobile_client:
             _render_create_note_action(is_mobile=True)
             _render_note_cards(rows, is_mobile=True)
         else:

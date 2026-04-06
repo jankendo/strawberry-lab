@@ -200,17 +200,13 @@ def _read_user_agent() -> str:
     return ""
 
 
-def _is_mobile_client() -> bool:
+def is_mobile_client() -> bool:
+    """Return True when current request is likely from a mobile client."""
     override = _query_param_mobile_override()
     if override is not None:
         return override
     user_agent = _read_user_agent().lower()
     return any(token in user_agent for token in _MOBILE_USER_AGENT_TOKENS)
-
-
-def is_mobile_client() -> bool:
-    """Return True when current request is likely from a mobile client."""
-    return _is_mobile_client()
 
 
 def _as_display_key(column: str | None) -> str | None:
@@ -366,7 +362,7 @@ def render_table(
         st.info(EMPTY_STATE_MESSAGE)
         return None
 
-    if _is_mobile_client():
+    if is_mobile_client():
         return render_card_list(
             _format_rows(data),
             title_key=_as_display_key(mobile_title_key),

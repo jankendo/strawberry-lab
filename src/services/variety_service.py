@@ -13,6 +13,8 @@ from src.services.auth_service import get_user_client
 from src.services.export_service import clear_export_cache
 from src.utils.validation import validate_variety_payload
 
+LIST_TAB_FIELDS = "id,name,origin_prefecture,registration_number,application_number,description,characteristics_summary"
+
 
 def _apply_variety_filters(
     query,
@@ -72,6 +74,39 @@ def list_varieties(
     count_result = count_query.execute()
     total = int(count_result.count or 0)
     return result.data or [], total
+
+
+@st.cache_data(ttl=1800)
+def list_varieties_for_list_tab(
+    *,
+    keyword: str | None = None,
+    prefecture: str | None = None,
+    sort_field: str = "updated_at",
+    sort_desc: bool = True,
+) -> tuple[list[dict], int]:
+    """List all active varieties for list tab filtering."""
+    client = get_user_client()
+    allowed_sort = {"name", "updated_at", "registered_year", "created_at", "registration_date"}
+    if sort_field not in allowed_sort:
+        sort_field = "updated_at"
+
+    batch_size = 500
+    rows: list[dict] = []
+    start = 0
+    while True:
+        query = _apply_variety_filters(
+            client.table("varieties").select(LIST_TAB_FIELDS),
+            include_deleted=False,
+            keyword=keyword,
+            prefecture=prefecture,
+            tags=None,
+        )
+        chunk = query.order(sort_field, desc=sort_desc).range(start, start + batch_size - 1).execute().data or []
+        rows.extend(chunk)
+        if len(chunk) < batch_size:
+            break
+        start += batch_size
+    return rows, len(rows)
 
 
 @st.cache_data(ttl=120)
@@ -140,6 +175,7 @@ def get_pokedex_progress() -> dict[str, int]:
 
 def _clear_variety_related_caches() -> None:
     list_varieties.clear()
+    list_varieties_for_list_tab.clear()
     list_active_varieties.clear()
     get_variety_detail.clear()
     get_pokedex_progress.clear()

@@ -214,15 +214,23 @@ with tab_edit:
                 )
                 render_surface(
                     f"同じ品種・試食日のレビューが存在します（{pending_variety} / {pending_payload['tasted_date']}）。\n\n"
-                    "上書き保存する場合は、下のボタンを押してください。",
+                    "上書き保存する場合は、確認チェック後に実行してください。",
                     title="重複レビューを検出しました",
                     tone="accent",
+                )
+                overwrite_confirm_key = (
+                    f"confirm_overwrite_review_{pending_payload['variety_id']}_{pending_payload['tasted_date']}"
+                )
+                overwrite_confirmed = st.checkbox(
+                    "既存記録を上書きすることを確認しました",
+                    key=overwrite_confirm_key,
                 )
                 if st.button(
                     "既存記録を上書き保存する",
                     key="overwrite_review",
                     use_container_width=True,
-                    type="primary",
+                    type="secondary",
+                    disabled=not overwrite_confirmed,
                 ):
                     try:
                         review_id, _ = create_or_update_review(
@@ -238,7 +246,12 @@ with tab_edit:
                         st.rerun()
                     except Exception as exc:
                         st.error(str(exc))
-                if st.button("上書きを取り消す", key="cancel_overwrite_review", use_container_width=True):
+                if st.button(
+                    "上書きを取り消す",
+                    key="cancel_overwrite_review",
+                    use_container_width=True,
+                    type="secondary",
+                ):
                     _clear_pending_duplicate()
                     st.info("上書きをキャンセルしました。")
                     st.rerun()
@@ -300,13 +313,19 @@ with tab_history:
                     ),
                     key="reviews_delete_select",
                 )
+                delete_confirm_key = f"reviews_delete_confirm_{delete_id or 'none'}"
+                delete_confirmed = st.checkbox(
+                    "選択したレビューを削除することを確認しました",
+                    key=delete_confirm_key,
+                    disabled=not delete_id,
+                )
             with delete_action_col:
                 delete_clicked = st.button(
                     "選択したレビューを削除",
                     key="delete_review_action",
                     use_container_width=True,
-                    disabled=not delete_id,
-                    type="primary",
+                    disabled=not (delete_id and delete_confirmed),
+                    type="secondary",
                 )
         if delete_clicked:
             soft_delete_review(delete_id)

@@ -12,7 +12,6 @@ from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.tables import is_mobile_client, render_card_list, render_table
 from src.constants.enums import AcidityLevel
 from src.constants.prefectures import PREFECTURES
-from src.constants.ui import DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS
 from src.services.auth_service import require_admin_session
 from src.services.storage_service import (
     list_images_with_signed_urls,
@@ -26,6 +25,7 @@ from src.services.variety_service import (
     get_variety_detail,
     list_active_varieties,
     list_varieties,
+    list_varieties_for_list_tab,
     restore_variety,
     soft_delete_variety,
     update_variety,
@@ -136,33 +136,6 @@ def _build_variety_summary(row: dict, *, discovered: bool, max_length: int = 96)
     return summary
 
 
-def _normalize_page_number(value: object) -> int:
-    try:
-        return max(1, int(value))
-    except (TypeError, ValueError):
-        return 1
-
-
-def _normalize_page_size(value: object) -> int:
-    try:
-        candidate = int(value)
-    except (TypeError, ValueError):
-        return DEFAULT_PAGE_SIZE
-    return candidate if candidate in PAGE_SIZE_OPTIONS else DEFAULT_PAGE_SIZE
-
-
-def _read_pagination_state(key_prefix: str) -> tuple[int, int]:
-    page = st.session_state.get(
-        f"{key_prefix}_page_input",
-        st.session_state.get(f"{key_prefix}_page", 1),
-    )
-    page_size = st.session_state.get(
-        f"{key_prefix}_size_select",
-        st.session_state.get(f"{key_prefix}_page_size", DEFAULT_PAGE_SIZE),
-    )
-    return _normalize_page_number(page), _normalize_page_size(page_size)
-
-
 def _render_variety_filters(*, mobile_client: bool) -> tuple[str, str, str]:
     with st.container(border=True):
         render_section_title("フィルタ", "条件を指定して表示対象を絞り込みます。")
@@ -264,13 +237,25 @@ def _render_variety_detail_panel(selected_id: str, *, discovered: bool, mobile_c
         render_surface(detail["description"], title="説明", tone="soft")
     images = list_images_with_signed_urls("variety_images", "variety_id", selected_id)
     render_image_gallery(images, "variety")
-    if st.button("この品種を削除", key=f"delete_variety_{selected_id}", use_container_width=True):
-        soft_delete_variety(selected_id)
-        st.session_state["variety_selected_from_list"] = ""
-        if mobile_client:
-            st.session_state["variety_mobile_panel"] = "list"
-        st.success("削除しました。")
-        st.rerun()
+    with st.expander("その他の操作", expanded=False):
+        st.caption("削除後も「削除済み」セクションから復元できます。")
+        delete_confirmed = st.checkbox(
+            "この品種を削除することを確認しました",
+            key=f"confirm_delete_variety_{selected_id}",
+        )
+        if st.button(
+            "この品種を削除",
+            key=f"delete_variety_{selected_id}",
+            use_container_width=True,
+            type="secondary",
+            disabled=not delete_confirmed,
+        ):
+            soft_delete_variety(selected_id)
+            st.session_state["variety_selected_from_list"] = ""
+            if mobile_client:
+                st.session_state["variety_mobile_panel"] = "list"
+            st.success("削除しました。")
+            st.rerun()
 
 
 st.set_page_config(page_title="品種管理", layout="wide")
@@ -278,17 +263,21 @@ require_admin_session()
 inject_app_style()
 render_sidebar(active_page="varieties")
 render_primary_nav(active_page="varieties")
-render_hero_banner(
-    "品種管理",
-    "登録情報の参照・編集・削除復元・画像管理を行います。",
-    eyebrow="品種データベース",
-    chips=["図鑑モード", "レビュー連動開示", "画像管理"],
-)
-render_action_bar(
-    title="画面の使い方",
-    description="一覧で探索、作成・編集で更新、削除済みから復元できます。",
-    actions=["一覧", "作成・編集", "削除済み"],
-)
+mobile_client = is_mobile_client()
+if mobile_client:
+    render_page_header("品種管理", "一覧から品種を開き、必要な更新や復元を行います。")
+else:
+    render_hero_banner(
+        "品種管理",
+        "登録情報の参照・編集・削除復元・画像管理を行います。",
+        eyebrow="品種データベース",
+        chips=["図鑑モード", "レビュー連動開示", "画像管理"],
+    )
+    render_action_bar(
+        title="画面の使い方",
+        description="一覧で探索、作成・編集で更新、削除済みから復元できます。",
+        actions=["一覧", "作成・編集", "削除済み"],
+    )
 
 
 def _render_variety_section_switcher(*, mobile_client: bool) -> str:
@@ -296,7 +285,7 @@ def _render_variety_section_switcher(*, mobile_client: bool) -> str:
     if default_section not in _VARIETY_SECTION_ORDER:
         default_section = _VARIETY_SECTION_ORDER[0]
     with st.container(border=True):
-        render_section_title("表示セクション", "必要なセクションだけ読み込みます。")
+        render_section_title("表示セクション", None if mobile_client else "必要なセクションだけ読み込みます。")
         if mobile_client:
             active_section = st.selectbox(
                 "表示セクション",
@@ -330,24 +319,10 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
         if mobile_client:
             st.session_state["variety_mobile_panel"] = "detail"
 
-    filter_signature = (keyword.strip(), prefecture or "", discovery_filter)
-    if st.session_state.get("variety_list_filter_signature") != filter_signature:
-        st.session_state["variety_list_filter_signature"] = filter_signature
-        st.session_state["variety_list_page"] = 1
-        st.session_state["variety_list_page_input"] = 1
-
-    page, page_size = _read_pagination_state("variety_list")
-    rows, total = list_varieties(
+    rows, total = list_varieties_for_list_tab(
         keyword=keyword or None,
         prefecture=prefecture or None,
-        page=page,
-        page_size=page_size,
-        fields="id,name,origin_prefecture,registration_number,application_number,description,characteristics_summary",
     )
-    if not rows and total > 0 and page > 1:
-        st.session_state["variety_list_page"] = 1
-        st.session_state["variety_list_page_input"] = 1
-        st.rerun()
 
     selected_id = st.session_state.get("variety_selected_from_list", "")
     count_targets = [row["id"] for row in rows]
@@ -394,7 +369,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
             _render_variety_detail_panel(selected_id, discovered=discovered, mobile_client=True)
         else:
             st.session_state["variety_mobile_panel"] = "list"
-            render_section_title("一覧", f"現在ページ: {len(visible_rows)}件 / 全体: {total}件")
+            render_section_title("一覧", f"表示件数: {len(visible_rows)}件 / 全体: {total}件")
             if visible_rows:
                 selected_from_cards = render_card_list(
                     _build_mobile_variety_cards(visible_rows, review_counts),
@@ -414,13 +389,10 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
                     title="表示できる品種がありません",
                     hint="キーワードや都道府県条件を調整してください。",
                 )
-            with st.container(border=True):
-                st.caption("ページ設定")
-                render_pagination_controls("variety_list")
     else:
         list_col, detail_col = st.columns([1.4, 1], gap="large")
         with list_col:
-            render_section_title("一覧", f"現在ページ: {len(visible_rows)}件 / 全体: {total}件")
+            render_section_title("一覧", f"表示件数: {len(visible_rows)}件 / 全体: {total}件")
             if visible_rows:
                 for row in visible_rows:
                     review_count = int(review_counts.get(row["id"], 0))
@@ -433,9 +405,6 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
                     title="表示できる品種がありません",
                     hint="キーワードや都道府県条件を調整してください。",
                 )
-            with st.container(border=True):
-                st.caption("ページ設定")
-                render_pagination_controls("variety_list")
 
         with detail_col:
             if selected_id:
@@ -511,7 +480,7 @@ def _render_variety_edit_section() -> None:
             type=["jpg", "jpeg", "png", "webp"],
             accept_multiple_files=True,
         )
-        save = st.form_submit_button("保存", use_container_width=True)
+        save = st.form_submit_button("保存", use_container_width=True, type="primary")
 
     if save:
         payload = {
@@ -560,7 +529,7 @@ def _render_variety_edit_section() -> None:
             format_func=lambda x: next((img["file_name"] for img in images if img["id"] == x), "未設定"),
             key="primary_image_select",
         )
-        if primary_image_id and st.button("メイン画像を設定", use_container_width=True):
+        if primary_image_id and st.button("メイン画像を設定", use_container_width=True, type="secondary"):
             set_primary_variety_image(edit_id, primary_image_id)
             st.success("メイン画像を更新しました。")
             st.rerun()
@@ -585,7 +554,7 @@ def _render_variety_deleted_section() -> None:
         [""] + [r["id"] for r in deleted_rows],
         format_func=lambda x: next((r["name"] for r in deleted_rows if r["id"] == x), "未選択"),
     )
-    if st.button("選択した品種を復元", use_container_width=True, disabled=not restore_id):
+    if st.button("選択した品種を復元", use_container_width=True, disabled=not restore_id, type="primary"):
         try:
             restore_variety(restore_id)
             st.success("復元しました。")
@@ -594,7 +563,6 @@ def _render_variety_deleted_section() -> None:
             st.error(str(exc))
 
 
-mobile_client = is_mobile_client()
 active_section = _render_variety_section_switcher(mobile_client=mobile_client)
 if active_section == "一覧":
     _render_variety_list_section(mobile_client=mobile_client)

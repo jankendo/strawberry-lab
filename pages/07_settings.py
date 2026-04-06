@@ -14,12 +14,13 @@ from src.components.layout import (
     render_empty_state,
     render_hero_banner,
     render_kpi_cards,
+    render_page_header,
     render_section_title,
     render_status_badge,
     render_surface,
 )
 from src.components.sidebar import render_primary_nav, render_sidebar
-from src.components.tables import render_table
+from src.components.tables import is_mobile_client, render_table
 from src.config import get_config
 from src.services.auth_service import get_auth_persistence_status, require_admin_session
 from src.services.export_service import export_table_csv
@@ -38,14 +39,6 @@ SECTION_HINTS = {
 }
 _DEFAULT_ACTIVE_SECTION = "実行履歴"
 _SETTINGS_ACTIVE_SECTION_KEY = "settings_active_section"
-_MOBILE_USER_AGENT_TOKENS = (
-    "android",
-    "iphone",
-    "ipad",
-    "ipod",
-    "mobile",
-    "windows phone",
-)
 _STATUS_LABELS = {
     "success": "成功",
     "succeeded": "成功",
@@ -64,52 +57,6 @@ _STATUS_LABELS = {
 }
 _SUCCESS_STATUSES = {"success", "succeeded", "completed", "done"}
 _FAILED_STATUSES = {"failed", "error", "cancelled", "canceled"}
-
-
-def _coerce_bool(value: object | None) -> bool | None:
-    if value is None:
-        return None
-    normalized = str(value).strip().lower()
-    if normalized in {"1", "true", "yes", "on", "y"}:
-        return True
-    if normalized in {"0", "false", "no", "off", "n"}:
-        return False
-    return None
-
-
-def _query_param_mobile_override() -> bool | None:
-    try:
-        raw = st.query_params.get("mobile")
-    except Exception:
-        return None
-    if isinstance(raw, list):
-        raw = raw[0] if raw else None
-    return _coerce_bool(raw)
-
-
-def _read_user_agent() -> str:
-    try:
-        context = getattr(st, "context", None)
-        if context is None:
-            return ""
-        headers = getattr(context, "headers", None)
-        if headers is None:
-            return ""
-        if isinstance(headers, dict):
-            return str(headers.get("user-agent") or headers.get("User-Agent") or "")
-        if hasattr(headers, "get"):
-            return str(headers.get("user-agent", "") or headers.get("User-Agent", ""))
-    except Exception:
-        return ""
-    return ""
-
-
-def _is_mobile_client() -> bool:
-    override = _query_param_mobile_override()
-    if override is not None:
-        return override
-    user_agent = _read_user_agent().lower()
-    return any(token in user_agent for token in _MOBILE_USER_AGENT_TOKENS)
 
 
 def _status_badge_theme(status: object | None) -> tuple[str, str]:
@@ -144,13 +91,13 @@ def _safe_text(value: object | None) -> str:
     return text or "-"
 
 
-def _render_section_switcher(*, is_mobile_client: bool) -> str:
+def _render_section_switcher(*, is_mobile: bool) -> str:
     default_section = str(st.session_state.get(_SETTINGS_ACTIVE_SECTION_KEY) or _DEFAULT_ACTIVE_SECTION)
     if default_section not in SECTION_ORDER:
         default_section = _DEFAULT_ACTIVE_SECTION
     with st.container(border=True):
-        render_section_title("設定セクション", "iPhoneでも崩れにくい切替UIで表示内容を変更します。")
-        if is_mobile_client:
+        render_section_title("設定セクション", None if is_mobile else "iPhoneでも崩れにくい切替UIで表示内容を変更します。")
+        if is_mobile:
             active_section = st.selectbox(
                 "表示セクション",
                 SECTION_ORDER,
@@ -175,26 +122,31 @@ inject_app_style()
 render_sidebar(active_page="settings")
 render_primary_nav(active_page="settings")
 cfg = get_config()
-is_mobile_client = _is_mobile_client()
+mobile_client = is_mobile_client()
 
-render_hero_banner(
-    "設定",
-    "データエクスポート、ローカル取込運用、診断確認を一画面で管理します。",
-    eyebrow="運用管理",
-    chips=["CSVエクスポート", "取込履歴確認", "診断チェック"],
-)
-render_action_bar(
-    title="設定メニュー",
-    description="目的ごとにセクションを切り替え、必要な機能だけを安全に操作してください。",
-    actions=SECTION_ORDER,
-)
+if mobile_client:
+    render_page_header("設定", "必要なセクションを選んで操作できます。")
+else:
+    render_hero_banner(
+        "設定",
+        "データエクスポート、ローカル取込運用、診断確認を一画面で管理します。",
+        eyebrow="運用管理",
+        chips=["CSVエクスポート", "取込履歴確認", "診断チェック"],
+    )
+    render_action_bar(
+        title="設定メニュー",
+        description="目的ごとにセクションを切り替え、必要な機能だけを安全に操作してください。",
+        actions=SECTION_ORDER,
+    )
 
 with st.container(border=True):
-    render_section_title("その他ページ", "交配図・研究メモへの移動はこちらから行えます。")
-    if is_mobile_client:
-        st.page_link("pages/04_pedigree.py", label="🧬 交配図を開く", use_container_width=True)
-        st.page_link("pages/06_notes.py", label="📓 研究メモを開く", use_container_width=True)
+    if mobile_client:
+        render_section_title("関連ページ")
+        with st.expander("移動メニューを開く", expanded=False):
+            st.page_link("pages/04_pedigree.py", label="🧬 交配図を開く", use_container_width=True)
+            st.page_link("pages/06_notes.py", label="📓 研究メモを開く", use_container_width=True)
     else:
+        render_section_title("その他ページ", "交配図・研究メモへの移動はこちらから行えます。")
         nav_col_left, nav_col_right = st.columns(2, gap="small")
         with nav_col_left:
             st.page_link("pages/04_pedigree.py", label="🧬 交配図を開く", use_container_width=True)
@@ -230,7 +182,7 @@ scrape_command = "\n".join(
     ]
 )
 
-active_section = _render_section_switcher(is_mobile_client=is_mobile_client)
+active_section = _render_section_switcher(is_mobile=mobile_client)
 runs: list[dict] = []
 if active_section in {"実行履歴", "診断情報"}:
     runs = get_recent_variety_scrape_runs()
@@ -265,7 +217,7 @@ if active_section == "データ出力":
             key="export_all_zip",
         )
 
-        export_column_count = 1 if is_mobile_client else 2
+        export_column_count = 1 if mobile_client else 2
         export_columns = st.columns(export_column_count, gap="small")
         for index, table in enumerate(export_tables):
             with export_columns[index % export_column_count]:
@@ -283,7 +235,7 @@ if active_section == "データ出力":
         render_surface("初期表示ではCSVの生成を行いません。必要なときに読み込んでからダウンロードしてください。", tone="soft")
 
 elif active_section == "実行履歴":
-    if st.button("実行履歴を再読み込み", key="reload_scrape_runs", use_container_width=True):
+    if st.button("実行履歴を再読み込み", key="reload_scrape_runs", use_container_width=True, type="secondary"):
         clear_scrape_cache()
         st.rerun()
 
@@ -297,7 +249,7 @@ elif active_section == "実行履歴":
     )
 
     other_count = max(len(runs) - success_count - failed_count, 0)
-    if is_mobile_client:
+    if mobile_client:
         render_status_badge(f"成功 {success_count}", tone="success", icon="✅")
         render_status_badge(f"失敗 {failed_count}", tone="danger", icon="❗")
         render_status_badge(
