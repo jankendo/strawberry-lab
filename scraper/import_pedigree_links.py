@@ -120,7 +120,7 @@ def _load_rows(csv_path: Path) -> list[dict]:
     return rows
 
 
-def _validate_variety_ids(client, rows: list[dict]) -> None:
+def _resolve_variety_ids(client, rows: list[dict]) -> tuple[set[str], list[str]]:
     variety_ids = sorted(
         {
             str(row["child_variety_id"])
@@ -138,10 +138,7 @@ def _validate_variety_ids(client, rows: list[dict]) -> None:
         data = client.table("varieties").select("id").in_("id", chunk).execute().data or []
         existing_ids.update(str(row.get("id")) for row in data if row.get("id"))
     missing = [variety_id for variety_id in variety_ids if variety_id not in existing_ids]
-    if missing:
-        preview = ", ".join(missing[:10])
-        suffix = " ..." if len(missing) > 10 else ""
-        raise RuntimeError(f"参照先品種IDが存在しません ({len(missing)}件): {preview}{suffix}")
+    return existing_ids, missing
 
 
 def _fetch_existing_links_by_key(client, child_variety_ids: list[str]) -> dict[tuple[str, str, int], str]:
@@ -200,14 +197,30 @@ def main() -> None:
         return
 
     client = get_admin_client()
-    _validate_variety_ids(client, rows)
-    child_variety_ids = sorted({str(row["child_variety_id"]) for row in rows})
+    existing_variety_ids, missing_variety_ids = _resolve_variety_ids(client, rows)
+    if missing_variety_ids:
+        preview = ", ".join(missing_variety_ids[:10])
+        suffix = " ..." if len(missing_variety_ids) > 10 else ""
+        print(f"[WARN] Missing variety IDs detected ({len(missing_variety_ids)}件): {preview}{suffix}")
+
+    valid_rows = [
+        row
+        for row in rows
+        if str(row["child_variety_id"]) in existing_variety_ids and str(row["parent_variety_id"]) in existing_variety_ids
+    ]
+    skipped_rows = len(rows) - len(valid_rows)
+    if skipped_rows:
+        print(f"[WARN] Skipped {skipped_rows} rows because child/parent variety IDs do not exist.")
+    if not valid_rows:
+        raise RuntimeError("インポート可能な行がありません。CSVの品種IDを確認してください。")
+
+    child_variety_ids = sorted({str(row["child_variety_id"]) for row in valid_rows})
     existing_by_key = _fetch_existing_links_by_key(client, child_variety_ids)
-    upsert_rows, inserted_count, updated_count = _prepare_upsert_rows(rows, existing_by_key)
+    upsert_rows, inserted_count, updated_count = _prepare_upsert_rows(valid_rows, existing_by_key)
     _upsert_rows(client, upsert_rows)
     print(
         "[INFO] Import completed: "
-        f"total={len(upsert_rows)}, inserted={inserted_count}, updated={updated_count}."
+        f"total={len(upsert_rows)}, inserted={inserted_count}, updated={updated_count}, skipped={skipped_rows}."
     )
 
 
