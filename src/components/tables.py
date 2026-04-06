@@ -103,8 +103,33 @@ _VERBOSE_METADATA_KEYS = {
 _DEFAULT_METADATA_LIMIT = 4
 
 
+def _is_empty_value(value: object) -> bool:
+    return value is None or (isinstance(value, str) and value == "")
+
+
+def _stringify_nested_value(value: object) -> str:
+    if isinstance(value, dict):
+        preferred_name = value.get("name")
+        if not _is_empty_value(preferred_name):
+            return str(preferred_name)
+        parts = [
+            _stringify_nested_value(item) if isinstance(item, (dict, list)) else str(item)
+            for item in value.values()
+            if not _is_empty_value(item)
+        ]
+        return " | ".join(part for part in parts if part != "")
+    if isinstance(value, list):
+        parts = [
+            _stringify_nested_value(item) if isinstance(item, (dict, list)) else str(item)
+            for item in value
+            if not _is_empty_value(item)
+        ]
+        return " | ".join(part for part in parts if part != "")
+    return str(value)
+
+
 def _format_datetime(value: object) -> object:
-    if value in {None, ""}:
+    if _is_empty_value(value):
         return "-"
     text = str(value)
     try:
@@ -116,14 +141,14 @@ def _format_datetime(value: object) -> object:
 
 
 def _format_date(value: object) -> object:
-    if value in {None, ""}:
+    if _is_empty_value(value):
         return "-"
     text = str(value)
     return text[:10]
 
 
 def _format_status(value: object) -> object:
-    if value in {None, ""}:
+    if _is_empty_value(value):
         return "-"
     normalized = str(value).strip().lower()
     icon = _STATUS_ICON.get(normalized, "ℹ️")
@@ -131,8 +156,8 @@ def _format_status(value: object) -> object:
 
 
 def _format_cell_value(column: str, value: object) -> object:
-    if isinstance(value, list):
-        value = " | ".join(str(item) for item in value)
+    if isinstance(value, (dict, list)):
+        value = _stringify_nested_value(value)
     if column in _DATETIME_COLUMNS:
         return _format_datetime(value)
     if column in _DATE_COLUMNS:
@@ -141,7 +166,7 @@ def _format_cell_value(column: str, value: object) -> object:
         return _format_status(value)
     if column.endswith("_url"):
         return "🔗 リンク" if value else "-"
-    if value in {None, ""}:
+    if _is_empty_value(value):
         return "-"
     return value
 

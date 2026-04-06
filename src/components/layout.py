@@ -49,6 +49,7 @@ _HTML_STRONG_OPEN_RE = re.compile(r"(?i)<(?:strong|b)>")
 _HTML_STRONG_CLOSE_RE = re.compile(r"(?i)</(?:strong|b)>")
 _HTML_TAG_RE = re.compile(r"(?is)<[^>]+>")
 _NON_WORD_RE = re.compile(r"[^A-Za-z0-9_]+")
+_PLACEHOLDER_VALUES = {"unknown", "none", "null", "-"}
 
 
 def _as_bool(value: object | None, default: bool = False) -> bool:
@@ -710,7 +711,10 @@ def _render_workspace_meta_controls(context: str) -> None:
     if not st.session_state.get("is_authenticated"):
         return
 
-    user_email = _sanitize_text((st.session_state.get("current_user") or {}).get("email") or "unknown")
+    user_email = _sanitize_text((st.session_state.get("current_user") or {}).get("email"))
+    if user_email.strip().lower() in _PLACEHOLDER_VALUES:
+        user_email = ""
+    user_label = user_email or "アカウント"
     notification_count = int(st.session_state.get("ui_notification_count", 0) or 0)
     control_key = _keyify(context)
 
@@ -732,7 +736,7 @@ def _render_workspace_meta_controls(context: str) -> None:
                 st.switch_page("pages/07_settings.py")
         with c4:
             st.markdown(
-                f'<span class="sl-user-chip">👤 {user_email}</span>',
+                f'<span class="sl-user-chip">👤 {user_label}</span>',
                 unsafe_allow_html=True,
             )
 

@@ -9,17 +9,19 @@ from src.components.image_gallery import render_image_gallery
 from src.components.layout import inject_app_style, render_page_header, render_section_title
 from src.components.pagination import render_pagination_controls
 from src.components.sidebar import render_primary_nav, render_sidebar
-from src.components.tables import is_mobile_client, render_card_list, render_table
+from src.components.tables import is_mobile_client, render_table
 from src.constants.enums import AcidityLevel
 from src.constants.prefectures import PREFECTURES
 from src.services.auth_service import require_admin_session
 from src.services.storage_service import (
+    list_primary_variety_images_with_signed_urls,
     list_images_with_signed_urls,
     set_primary_variety_image,
     upload_variety_image,
 )
 from src.services.variety_service import (
     create_variety,
+    get_latest_review_summary_for_varieties,
     get_pokedex_progress,
     get_review_counts_for_varieties,
     get_variety_detail,
@@ -123,6 +125,17 @@ except ImportError:
 
 
 _VARIETY_SECTION_ORDER = ["一覧", "作成・編集", "削除済み"]
+_DISCOVERY_FILTER_OPTIONS = ["すべて", "発見済み", "未発見"]
+_DISCOVERY_FILTER_DEFAULT = "発見済み"
+_ACIDITY_LABELS = {"low": "低め", "medium": "ほどよい", "high": "しっかり"}
+_LATEST_REVIEW_METRICS: list[tuple[str, str, int]] = [
+    ("総合", "overall", 10),
+    ("甘味", "sweetness", 5),
+    ("酸味", "sourness", 5),
+    ("香り", "aroma", 5),
+    ("食感", "texture", 5),
+    ("見た目", "appearance", 5),
+]
 
 
 def _build_variety_summary(row: dict, *, discovered: bool, max_length: int = 96) -> str:
@@ -136,7 +149,125 @@ def _build_variety_summary(row: dict, *, discovered: bool, max_length: int = 96)
     return summary
 
 
+def _clean_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.lower() in {"unknown", "null", "none", "-", "--"}:
+        return None
+    return text
+
+
+def _format_numeric(value: object) -> str | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f"{number:.1f}".rstrip("0").rstrip(".")
+
+
+def _format_score(value: object, *, scale: int) -> str | None:
+    try:
+        score = int(value)
+    except (TypeError, ValueError):
+        return None
+    if score <= 0:
+        return None
+    return f"{score}/{scale}"
+
+
+def _format_month(value: object) -> int | None:
+    try:
+        month = int(value)
+    except (TypeError, ValueError):
+        return None
+    return month if 1 <= month <= 12 else None
+
+
+def _format_harvest_window(start_month: object, end_month: object) -> str | None:
+    start = _format_month(start_month)
+    end = _format_month(end_month)
+    if start and end:
+        return f"{start}〜{end}月"
+    if start:
+        return f"{start}月〜"
+    if end:
+        return f"〜{end}月"
+    return None
+
+
+def _format_brix_range(detail: dict) -> str | None:
+    brix_min = _format_numeric(detail.get("brix_min"))
+    brix_max = _format_numeric(detail.get("brix_max"))
+    if brix_min and brix_max:
+        return f"{brix_min}〜{brix_max}"
+    if brix_min:
+        return f"{brix_min}以上"
+    if brix_max:
+        return f"{brix_max}以下"
+    return None
+
+
+def _format_acidity_label(value: object) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    return _ACIDITY_LABELS.get(text.lower(), text)
+
+
+def _pick_primary_image(images: list[dict]) -> dict | None:
+    if not images:
+        return None
+    for image in images:
+        if image.get("is_primary"):
+            return image
+    return images[0]
+
+
+def _render_variety_thumbnail(image: dict | None, *, discovered: bool, show_caption: bool = True) -> None:
+    signed_url = _clean_text((image or {}).get("signed_url")) if image else None
+    if discovered and signed_url:
+        st.image(signed_url, caption=_clean_text(image.get("file_name")) if show_caption else None, use_container_width=True)
+        return
+    st.markdown("#### 🔒" if not discovered else "#### 🖼️")
+    if show_caption:
+        st.caption("発見後に画像が開示されます。" if not discovered else "画像未登録")
+
+
+def _latest_review_line(review_summary: dict | None) -> str | None:
+    if not review_summary:
+        return None
+    overall = _format_score(review_summary.get("overall"), scale=10)
+    tasted_date = _clean_text(review_summary.get("tasted_date"))
+    if overall and tasted_date:
+        return f"最新評価: {overall}（{tasted_date}）"
+    if overall:
+        return f"最新評価: {overall}"
+    return None
+
+
+def _render_detail_attribute_grid(title: str, items: list[tuple[str, str]], *, mobile_client: bool) -> None:
+    if not items:
+        return
+    render_section_title(title)
+    per_row = 1 if mobile_client else 2
+    for start in range(0, len(items), per_row):
+        chunk = items[start : start + per_row]
+        columns = st.columns(len(chunk), gap="small")
+        for column, (label, value) in zip(columns, chunk, strict=True):
+            with column:
+                with st.container(border=True):
+                    st.caption(label)
+                    st.markdown(f"**{value}**")
+
+
 def _render_variety_filters(*, mobile_client: bool) -> tuple[str, str, str]:
+    if st.session_state.get("variety_discovery_filter") not in _DISCOVERY_FILTER_OPTIONS:
+        st.session_state["variety_discovery_filter"] = _DISCOVERY_FILTER_DEFAULT
     with st.container(border=True):
         render_section_title("フィルタ", "条件を指定して表示対象を絞り込みます。")
         if mobile_client:
@@ -144,7 +275,7 @@ def _render_variety_filters(*, mobile_client: bool) -> tuple[str, str, str]:
             prefecture = st.selectbox("都道府県", [""] + PREFECTURES, key="variety_pref_filter")
             discovery_filter = st.radio(
                 "開示モード",
-                ["すべて", "発見済み", "未発見"],
+                _DISCOVERY_FILTER_OPTIONS,
                 key="variety_discovery_filter",
             )
         else:
@@ -156,7 +287,7 @@ def _render_variety_filters(*, mobile_client: bool) -> tuple[str, str, str]:
             with f3:
                 discovery_filter = st.radio(
                     "開示モード",
-                    ["すべて", "発見済み", "未発見"],
+                    _DISCOVERY_FILTER_OPTIONS,
                     horizontal=True,
                     key="variety_discovery_filter",
                 )
@@ -165,42 +296,77 @@ def _render_variety_filters(*, mobile_client: bool) -> tuple[str, str, str]:
 
 def _display_variety_name(row: dict, *, discovered: bool) -> str:
     if discovered:
-        return row.get("name") or "名称未設定"
+        return _clean_text(row.get("name")) or "名称未設定"
     token = row.get("registration_number") or row.get("application_number") or "----"
     return f"No.{token} ？？？？？"
 
 
-def _render_variety_list_item(row: dict, review_count: int, *, key_prefix: str) -> bool:
+def _render_variety_list_item(
+    row: dict,
+    review_count: int,
+    *,
+    key_prefix: str,
+    primary_image: dict | None = None,
+    latest_review: dict | None = None,
+) -> bool:
     discovered = review_count > 0
     with st.container(border=True):
-        st.markdown(f"**{_display_variety_name(row, discovered=discovered)}**")
-        render_status_badge("発見済み" if discovered else "未発見", tone="success" if discovered else "neutral")
-        st.caption(f"都道府県: {row.get('origin_prefecture') or '-'}")
-        st.caption(f"レビュー件数: {int(review_count)}件")
-        st.caption(_build_variety_summary(row, discovered=discovered, max_length=120))
+        image_col, info_col = st.columns([1, 2], gap="medium")
+        with image_col:
+            _render_variety_thumbnail(primary_image, discovered=discovered, show_caption=False)
+        with info_col:
+            st.markdown(f"**{_display_variety_name(row, discovered=discovered)}**")
+            render_status_badge("発見済み" if discovered else "未発見", tone="success" if discovered else "neutral")
+            prefecture_text = _clean_text(row.get("origin_prefecture")) or "未登録"
+            st.caption(f"都道府県: {prefecture_text}")
+            st.caption(f"レビュー件数: {int(review_count)}件")
+            latest_line = _latest_review_line(latest_review)
+            if latest_line:
+                st.caption(latest_line)
+            st.caption(_build_variety_summary(row, discovered=discovered, max_length=120))
         return st.button("この品種を開く", key=f"{key_prefix}_{row['id']}", use_container_width=True)
 
 
-def _build_mobile_variety_cards(rows: list[dict], review_counts: dict[str, int]) -> list[dict]:
-    cards: list[dict] = []
+def _render_mobile_variety_cards(
+    rows: list[dict],
+    review_counts: dict[str, int],
+    primary_images: dict[str, dict],
+    latest_reviews: dict[str, dict],
+) -> str | None:
+    selected_id: str | None = None
     for row in rows:
-        variety_id = row["id"]
+        variety_id = str(row["id"])
         review_count = int(review_counts.get(variety_id, 0))
         discovered = review_count > 0
-        cards.append(
-            {
-                "id": variety_id,
-                "品種": _display_variety_name(row, discovered=discovered),
-                "状態": "発見済み" if discovered else "未発見",
-                "都道府県": row.get("origin_prefecture") or "-",
-                "レビュー": f"{review_count}件",
-                "概要": _build_variety_summary(row, discovered=discovered, max_length=120),
-            }
-        )
-    return cards
+        with st.container(border=True):
+            image_col, info_col = st.columns([1, 1.6], gap="small")
+            with image_col:
+                _render_variety_thumbnail(primary_images.get(variety_id), discovered=discovered, show_caption=False)
+            with info_col:
+                st.markdown(f"**{_display_variety_name(row, discovered=discovered)}**")
+                render_status_badge("発見済み" if discovered else "未発見", tone="success" if discovered else "neutral")
+                prefecture_text = _clean_text(row.get("origin_prefecture"))
+                if prefecture_text:
+                    st.caption(f"都道府県: {prefecture_text}")
+                st.caption(f"レビュー件数: {review_count}件")
+                latest_line = _latest_review_line(latest_reviews.get(variety_id))
+                if latest_line:
+                    st.caption(latest_line)
+            st.caption(_build_variety_summary(row, discovered=discovered, max_length=88))
+            if st.button("この品種を開く", key=f"variety_mobile_open_{variety_id}", use_container_width=True):
+                selected_id = variety_id
+    return selected_id
 
 
-def _render_variety_detail_panel(selected_id: str, *, discovered: bool, mobile_client: bool) -> None:
+def _render_variety_detail_panel(
+    selected_id: str,
+    *,
+    discovered: bool,
+    review_count: int,
+    latest_review: dict | None,
+    primary_image: dict | None,
+    mobile_client: bool,
+) -> None:
     detail = get_variety_detail(selected_id)
     if not detail:
         render_empty_state("品種詳細を取得できませんでした。", title="品種詳細を表示できません")
@@ -216,27 +382,102 @@ def _render_variety_detail_panel(selected_id: str, *, discovered: bool, mobile_c
         st.page_link("pages/02_reviews.py", label="📝 試食評価を開く", use_container_width=True)
         return
 
-    render_info_card(
-        f"**{detail.get('name', '-')}**\n\n"
-        f"登録番号: {detail.get('registration_number') or '-'} / "
-        f"出願番号: {detail.get('application_number') or '-'}"
-    )
-    st.write(
-        {
-            "都道府県": detail.get("origin_prefecture") or "-",
-            "開発者": detail.get("developer") or "-",
-            "糖度(下限)": detail.get("brix_min"),
-            "糖度(上限)": detail.get("brix_max"),
-            "酸味レベル": detail.get("acidity_level") or "-",
-            "収穫期": f"{detail.get('harvest_start_month') or '-'}〜{detail.get('harvest_end_month') or '-'}月",
-        }
-    )
-    if detail.get("characteristics_summary"):
-        render_surface(detail["characteristics_summary"], title="特性の概要", tone="accent")
-    elif detail.get("description"):
-        render_surface(detail["description"], title="説明", tone="soft")
     images = list_images_with_signed_urls("variety_images", "variety_id", selected_id)
-    render_image_gallery(images, "variety")
+    hero_image = _pick_primary_image(images) or primary_image
+    name_text = _clean_text(detail.get("name")) or "名称未設定"
+    registration_number = _clean_text(detail.get("registration_number"))
+    application_number = _clean_text(detail.get("application_number"))
+    hero_lines: list[str] = []
+    if registration_number:
+        hero_lines.append(f"登録番号: **{registration_number}**")
+    if application_number:
+        hero_lines.append(f"出願番号: **{application_number}**")
+    hero_content = "\n\n".join(hero_lines) if hero_lines else "公開可能な基本情報を表示しています。"
+
+    if mobile_client:
+        _render_variety_thumbnail(hero_image, discovered=True)
+        render_surface(
+            hero_content,
+            title=name_text,
+            subtitle=f"レビュー件数: {review_count}件",
+            tone="soft",
+        )
+    else:
+        hero_image_col, hero_meta_col = st.columns([1, 1.1], gap="medium")
+        with hero_image_col:
+            _render_variety_thumbnail(hero_image, discovered=True)
+        with hero_meta_col:
+            render_surface(
+                hero_content,
+                title=name_text,
+                subtitle=f"レビュー件数: {review_count}件",
+                tone="soft",
+            )
+
+    if latest_review:
+        latest_date = _clean_text(latest_review.get("tasted_date"))
+        render_surface(
+            "最新のレビュー評価を表示しています。",
+            title="評価結果",
+            subtitle=f"最新試食日: {latest_date}" if latest_date else None,
+            tone="accent",
+        )
+        review_metrics: list[tuple[str, str, str | None]] = []
+        for label, key, scale in _LATEST_REVIEW_METRICS:
+            score_text = _format_score(latest_review.get(key), scale=scale)
+            if score_text:
+                review_metrics.append((label, score_text, None))
+        if review_metrics:
+            render_kpi_cards(review_metrics)
+
+    profile_items: list[tuple[str, str]] = []
+    origin_prefecture = _clean_text(detail.get("origin_prefecture"))
+    developer = _clean_text(detail.get("developer"))
+    registered_year = detail.get("registered_year")
+    if origin_prefecture:
+        profile_items.append(("都道府県", origin_prefecture))
+    if developer:
+        profile_items.append(("開発者", developer))
+    if registered_year not in {None, ""}:
+        profile_items.append(("登録年", str(registered_year)))
+
+    trait_items: list[tuple[str, str]] = []
+    brix_range = _format_brix_range(detail)
+    if brix_range:
+        trait_items.append(("糖度", brix_range))
+    acidity_label = _format_acidity_label(detail.get("acidity_level"))
+    if acidity_label:
+        trait_items.append(("酸味レベル", acidity_label))
+    harvest_window = _format_harvest_window(detail.get("harvest_start_month"), detail.get("harvest_end_month"))
+    if harvest_window:
+        trait_items.append(("収穫期", harvest_window))
+    skin_color = _clean_text(detail.get("skin_color"))
+    flesh_color = _clean_text(detail.get("flesh_color"))
+    if skin_color:
+        trait_items.append(("果皮色", skin_color))
+    if flesh_color:
+        trait_items.append(("果肉色", flesh_color))
+
+    _render_detail_attribute_grid("基本情報", profile_items, mobile_client=mobile_client)
+    _render_detail_attribute_grid("味・栽培の目安", trait_items, mobile_client=mobile_client)
+
+    characteristics_summary = _clean_text(detail.get("characteristics_summary"))
+    description = _clean_text(detail.get("description"))
+    if characteristics_summary:
+        render_surface(characteristics_summary, title="特性の概要", tone="accent")
+    if description and description != characteristics_summary:
+        render_surface(description, title="補足説明", tone="soft")
+
+    if images:
+        ordered_images = sorted(
+            images,
+            key=lambda image: (0 if image.get("is_primary") else 1, str(image.get("created_at") or "")),
+        )
+        render_section_title("品種画像", f"{len(ordered_images)}枚登録")
+        render_image_gallery(ordered_images, "variety")
+    else:
+        render_surface("画像はまだ登録されていません。", title="品種画像", tone="soft")
+
     with st.expander("その他の操作", expanded=False):
         st.caption("削除後も「削除済み」セクションから復元できます。")
         delete_confirmed = st.checkbox(
@@ -358,6 +599,12 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
         if mobile_client and not selected_id:
             st.session_state["variety_mobile_panel"] = "list"
 
+    display_targets = [row["id"] for row in visible_rows]
+    if selected_id and selected_id not in display_targets:
+        display_targets.append(selected_id)
+    primary_images = list_primary_variety_images_with_signed_urls(display_targets)
+    latest_reviews = get_latest_review_summary_for_varieties(display_targets)
+
     if mobile_client:
         mobile_panel = st.session_state.get("variety_mobile_panel", "list")
         if mobile_panel == "detail" and selected_id:
@@ -366,18 +613,23 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
                 st.session_state["variety_mobile_panel"] = "list"
                 st.rerun()
             discovered = review_counts.get(selected_id, 0) > 0
-            _render_variety_detail_panel(selected_id, discovered=discovered, mobile_client=True)
+            _render_variety_detail_panel(
+                selected_id,
+                discovered=discovered,
+                review_count=int(review_counts.get(selected_id, 0)),
+                latest_review=latest_reviews.get(selected_id),
+                primary_image=primary_images.get(selected_id),
+                mobile_client=True,
+            )
         else:
             st.session_state["variety_mobile_panel"] = "list"
             render_section_title("一覧", f"表示件数: {len(visible_rows)}件 / 全体: {total}件")
             if visible_rows:
-                selected_from_cards = render_card_list(
-                    _build_mobile_variety_cards(visible_rows, review_counts),
-                    title_key="品種",
-                    subtitle_key="状態",
-                    metadata_keys=["都道府県", "レビュー", "概要"],
-                    tap_action_label="この品種を開く",
-                    tap_action_value_key="id",
+                selected_from_cards = _render_mobile_variety_cards(
+                    visible_rows,
+                    review_counts,
+                    primary_images,
+                    latest_reviews,
                 )
                 if selected_from_cards:
                     st.session_state["variety_selected_from_list"] = str(selected_from_cards)
@@ -396,7 +648,13 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
             if visible_rows:
                 for row in visible_rows:
                     review_count = int(review_counts.get(row["id"], 0))
-                    if _render_variety_list_item(row, review_count, key_prefix="variety_open"):
+                    if _render_variety_list_item(
+                        row,
+                        review_count,
+                        key_prefix="variety_open",
+                        primary_image=primary_images.get(row["id"]),
+                        latest_review=latest_reviews.get(row["id"]),
+                    ):
                         selected_id = row["id"]
                         st.session_state["variety_selected_from_list"] = selected_id
             else:
@@ -409,7 +667,14 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
         with detail_col:
             if selected_id:
                 discovered = review_counts.get(selected_id, 0) > 0
-                _render_variety_detail_panel(selected_id, discovered=discovered, mobile_client=False)
+                _render_variety_detail_panel(
+                    selected_id,
+                    discovered=discovered,
+                    review_count=int(review_counts.get(selected_id, 0)),
+                    latest_review=latest_reviews.get(selected_id),
+                    primary_image=primary_images.get(selected_id),
+                    mobile_client=False,
+                )
             else:
                 render_empty_state("一覧から品種を選択すると詳細が表示されます。", title="品種未選択")
 

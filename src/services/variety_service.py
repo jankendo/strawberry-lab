@@ -150,6 +150,33 @@ def get_review_counts_for_varieties(variety_ids: Sequence[str]) -> dict[str, int
 
 
 @st.cache_data(ttl=180)
+def get_latest_review_summary_for_varieties(variety_ids: Sequence[str]) -> dict[str, dict]:
+    """Return latest review metrics keyed by variety ID."""
+    ids = [str(variety_id) for variety_id in dict.fromkeys(variety_ids) if variety_id]
+    if not ids:
+        return {}
+    client = get_user_client()
+    rows = (
+        client.table("reviews")
+        .select("variety_id,tasted_date,overall,sweetness,sourness,aroma,texture,appearance,updated_at,created_at")
+        .in_("variety_id", ids)
+        .is_("deleted_at", "null")
+        .order("tasted_date", desc=True)
+        .order("updated_at", desc=True)
+        .order("created_at", desc=True)
+        .execute()
+        .data
+        or []
+    )
+    latest_by_variety: dict[str, dict] = {}
+    for row in rows:
+        variety_id = str(row.get("variety_id") or "")
+        if variety_id and variety_id not in latest_by_variety:
+            latest_by_variety[variety_id] = row
+    return latest_by_variety
+
+
+@st.cache_data(ttl=180)
 def get_pokedex_progress() -> dict[str, int]:
     """Return encyclopedia progress counts based on review registration."""
     client = get_user_client()
@@ -180,6 +207,7 @@ def _clear_variety_related_caches() -> None:
     get_variety_detail.clear()
     get_pokedex_progress.clear()
     get_review_counts_for_varieties.clear()
+    get_latest_review_summary_for_varieties.clear()
     clear_export_cache()
 
 
