@@ -28,8 +28,9 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 - `streamlit run Home.py`
 
 ## Run scraper locally
-- `python scraper/main.py --source all`
-- `python scraper/main.py --source maff`
+- `python -m scraper.main --source all`
+- `python -m scraper.main --source maff`
+- `python -m scraper.heartbeat`
 
 ## Run tests
 - `pytest -q`

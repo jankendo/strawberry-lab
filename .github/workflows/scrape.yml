@@ -34,7 +34,7 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python scraper/main.py --source "${{ inputs.source || 'all' }}"
+        run: python -m scraper.main --source "${{ inputs.source || 'all' }}"
 
   heartbeat:
     if: always()
@@ -52,4 +52,4 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           APP_TIMEZONE: ${{ secrets.APP_TIMEZONE }}
-        run: python scraper/heartbeat.py
+        run: python -m scraper.heartbeat
