@@ -6,7 +6,7 @@ import streamlit as st
 
 from src.components.forms import comma_values_input
 from src.components.image_gallery import render_image_gallery
-from src.components.layout import inject_app_style, render_info_card, render_page_header, render_section_title
+from src.components.layout import inject_app_style, render_page_header, render_section_title
 from src.components.pagination import render_pagination_controls
 from src.components.sidebar import render_sidebar
 from src.components.tables import render_table
@@ -27,6 +27,15 @@ from src.services.variety_service import (
     soft_delete_variety,
     update_variety,
 )
+
+try:
+    from src.components.layout import render_info_card
+except ImportError:
+    def render_info_card(text: str) -> None:
+        """Fallback info card renderer for partially refreshed runtimes."""
+        plain = text.replace("<strong>", "").replace("</strong>", "").replace("<br>", " ")
+        st.info(plain)
+
 
 st.set_page_config(page_title="品種管理", layout="wide")
 require_admin_session()

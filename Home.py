@@ -4,16 +4,29 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src.components.layout import (
-    inject_app_style,
-    render_info_card,
-    render_kpi_cards,
-    render_lead,
-    render_page_header,
-    render_section_title,
-)
+from src.components.layout import inject_app_style, render_page_header, render_section_title
 from src.components.sidebar import render_sidebar
 from src.services.auth_service import initialize_auth_state, login_user
+
+try:
+    from src.components.layout import render_info_card, render_kpi_cards, render_lead
+except ImportError:
+    def render_lead(text: str) -> None:
+        """Fallback lead renderer for partially refreshed runtimes."""
+        st.caption(text)
+
+
+    def render_info_card(text: str) -> None:
+        """Fallback info card renderer for partially refreshed runtimes."""
+        plain = text.replace("<strong>", "").replace("</strong>", "").replace("<br>", " ")
+        st.info(plain)
+
+
+    def render_kpi_cards(items: list[tuple[str, str, str | None]]) -> None:
+        """Fallback KPI renderer for partially refreshed runtimes."""
+        columns = st.columns(len(items))
+        for column, (label, value, sub_text) in zip(columns, items, strict=True):
+            column.metric(label, value, help=sub_text)
 
 st.set_page_config(page_title="StrawberryLab", layout="wide")
 initialize_auth_state()
