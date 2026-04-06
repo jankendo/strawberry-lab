@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 import requests
 
@@ -40,15 +41,32 @@ class GitHubClient:
             and self._config.github_workflow_file
         )
 
+    def is_ref_pinned_to_commit(self) -> bool:
+        """Return true when configured ref is a 40-char commit SHA."""
+        ref = (self._config.github_ref or "").strip()
+        return bool(re.fullmatch(r"[0-9a-fA-F]{40}", ref))
+
+    def get_dispatch_ref(self) -> str:
+        """Return a safe dispatch ref, defaulting to main for pinned SHAs."""
+        ref = (self._config.github_ref or "").strip()
+        if not ref:
+            return "main"
+        if ref.startswith("refs/heads/"):
+            return ref.removeprefix("refs/heads/")
+        if self.is_ref_pinned_to_commit():
+            return "main"
+        return ref
+
     def dispatch_scrape(self, source: str) -> None:
         """Dispatch the configured workflow with a source input."""
         if not self.is_available():
             raise RuntimeError("GitHub workflow settings are incomplete.")
         url = f"{self._base}/actions/workflows/{self._config.github_workflow_file}/dispatches"
+        dispatch_ref = self.get_dispatch_ref()
         response = requests.post(
             url,
             headers=self._headers,
-            json={"ref": self._config.github_ref, "inputs": {"source": source}},
+            json={"ref": dispatch_ref, "inputs": {"source": source}},
             timeout=20,
         )
         if response.status_code >= 300:
