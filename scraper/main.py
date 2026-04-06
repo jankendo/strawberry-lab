@@ -284,7 +284,20 @@ def run_scraper() -> int:
                     status="failed",
                     message=str(exc)[:1500],
                 )
-        if failed_count == 0:
+        error_message = None
+        if listed_count == 0:
+            status = "error"
+            error_message = "MAFF一覧の取得件数が0件でした。検索条件またはアクセス制御を確認してください。"
+            _safe_insert_log(
+                client,
+                run_id=run_id,
+                registration_number=None,
+                variety_name=None,
+                detail_url=source_cfg.search_url,
+                status="failed",
+                message=error_message,
+            )
+        elif failed_count == 0:
             status = "success"
         elif upserted_count == 0:
             status = "error"
@@ -299,6 +312,7 @@ def run_scraper() -> int:
                 processed_count=processed_count,
                 upserted_count=upserted_count,
                 failed_count=failed_count,
+                error_message=error_message,
             )
         print(
             f"[INFO] Finished: status={status} listed={listed_count} processed={processed_count} "
