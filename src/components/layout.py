@@ -10,6 +10,8 @@ import re
 import streamlit as st
 import streamlit.components.v1 as components
 
+from src.components.offline_runtime import inject_offline_runtime
+
 _BADGE_TONE_ALIASES = {
     "default": "neutral",
     "muted": "neutral",
@@ -248,7 +250,7 @@ def _inject_native_shell_bootstrap() -> None:
 
           parentWindow
             .fetch(manifestUrl, {
-              method: "HEAD",
+              method: "GET",
               cache: "no-store",
               credentials: "same-origin",
             })
@@ -285,6 +287,36 @@ def _inject_native_shell_bootstrap() -> None:
         const secureContext = parentWindow.isSecureContext || parentWindow.location.protocol === "https:";
         const localhost = isLocalhostHost(parentWindow.location.hostname);
         return secureContext || localhost;
+      }
+
+      function normalizeScopePath(pathname) {
+        const text = String(pathname || "/").trim();
+        if (!text) {
+          return "/";
+        }
+        return text.endsWith("/") ? text : text + "/";
+      }
+
+      function resolveAppScopePath(staticBaseUrl) {
+        try {
+          const staticPath = normalizeScopePath(new URL(staticBaseUrl).pathname || "/");
+          const marker = "/static/";
+          const markerIndex = staticPath.indexOf(marker);
+          if (markerIndex >= 0) {
+            return normalizeScopePath(staticPath.slice(0, markerIndex + 1));
+          }
+          return staticPath;
+        } catch (error) {
+          return "/";
+        }
+      }
+
+      function resolveStaticScopePath(staticBaseUrl) {
+        try {
+          return normalizeScopePath(new URL("./", staticBaseUrl).pathname || "/");
+        } catch (error) {
+          return "/";
+        }
       }
 
       function applyHeadEnhancements(staticBaseUrl) {
@@ -328,20 +360,57 @@ def _inject_native_shell_bootstrap() -> None:
           return;
         }
         const swUrl = new URL("app-sw.js", staticBaseUrl).href;
-        if (state.serviceWorkerRegistered && state.serviceWorkerUrl === swUrl) {
+        const preferredScope = resolveAppScopePath(staticBaseUrl);
+        const fallbackScope = resolveStaticScopePath(staticBaseUrl);
+        const scopeCandidates = [preferredScope];
+        if (fallbackScope !== preferredScope) {
+          scopeCandidates.push(fallbackScope);
+        }
+        const scopeSignature = scopeCandidates.join("|");
+
+        if (
+          state.serviceWorkerRegistered &&
+          state.serviceWorkerUrl === swUrl &&
+          state.serviceWorkerScopeSignature === scopeSignature
+        ) {
+          return;
+        }
+        if (
+          state.serviceWorkerRegistrationInFlight &&
+          state.serviceWorkerUrl === swUrl &&
+          state.serviceWorkerScopeSignature === scopeSignature
+        ) {
           return;
         }
 
-        parentWindow.navigator.serviceWorker
-          .register(swUrl)
+        const registerWithScope = function (index) {
+          const scopeValue = scopeCandidates[index];
+          return parentWindow.navigator.serviceWorker.register(swUrl, { scope: scopeValue }).catch(function (error) {
+            if (index + 1 < scopeCandidates.length) {
+              console.warn(
+                "[native-shell] Service worker registration scope rejected, retrying fallback scope:",
+                scopeValue,
+                error
+              );
+              return registerWithScope(index + 1);
+            }
+            throw error;
+          });
+        };
+
+        state.serviceWorkerRegistrationInFlight = true;
+        state.serviceWorkerUrl = swUrl;
+        state.serviceWorkerScopeSignature = scopeSignature;
+
+        registerWithScope(0)
           .then(function (registration) {
             state.serviceWorkerRegistered = true;
-            state.serviceWorkerUrl = swUrl;
             state.serviceWorkerScope = registration.scope;
+            state.serviceWorkerRegistrationInFlight = false;
           })
           .catch(function (error) {
             state.serviceWorkerRegistered = false;
-            state.serviceWorkerUrl = swUrl;
+            state.serviceWorkerRegistrationInFlight = false;
             console.warn("[native-shell] Service worker registration failed:", error);
           });
       }
@@ -1027,6 +1096,7 @@ def inject_app_style() -> None:
     """
     st.markdown(style.replace("__HOST_CHROME_CSS__", host_chrome_css), unsafe_allow_html=True)
     _inject_native_shell_bootstrap()
+    inject_offline_runtime()
 
 
 def _normalize_badge_tone(tone: str | None) -> str:

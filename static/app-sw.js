@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "ichigodb-native-shell";
-const CACHE_VERSION = "v2";
+const CACHE_VERSION = "v3";
 const CACHE_NAME = `${CACHE_PREFIX}-${CACHE_VERSION}`;
 
 const SHELL_ASSETS = [
@@ -147,7 +147,18 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("message", (event) => {
-  if (!event.data || event.data.type !== "ichigodb:network-status-request") {
+  const data = event.data || {};
+
+  if (data.type === "ichigodb:network-status-report" && typeof data.online === "boolean") {
+    const source = typeof data.source === "string" && data.source ? data.source : "window-event";
+    const broadcast = broadcastNetworkState(data.online, source);
+    if (event.waitUntil && typeof event.waitUntil === "function") {
+      event.waitUntil(broadcast);
+    }
+    return;
+  }
+
+  if (data.type !== "ichigodb:network-status-request") {
     return;
   }
 
@@ -158,7 +169,7 @@ self.addEventListener("message", (event) => {
   event.source.postMessage({
     type: "ichigodb:network-status",
     online: lastKnownOnline !== false,
-    source: "status-request",
+    source: typeof data.source === "string" && data.source ? data.source : "status-request",
     at: Date.now(),
   });
 });

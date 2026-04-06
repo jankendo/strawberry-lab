@@ -15,7 +15,11 @@ from src.components.swipe_actions import (
     render_swipe_action_secondary_marker,
 )
 from src.components.tables import is_mobile_client, render_table
-from src.components.transitions import render_view_transition_layer, render_view_transition_trigger
+from src.components.transitions import (
+    render_view_transition_layer,
+    render_view_transition_shared_element,
+    render_view_transition_trigger,
+)
 from src.constants.enums import AcidityLevel
 from src.constants.prefectures import PREFECTURES
 from src.services.auth_service import require_admin_session
@@ -375,6 +379,7 @@ def _render_mobile_variety_cards(
                 image_col, info_col = None, st.container()
             if image_col is not None:
                 with image_col:
+                    render_view_transition_shared_element("varieties-mobile-list-detail", variety_id, role="source")
                     _render_variety_thumbnail(primary_images.get(variety_id), discovered=True, show_caption=False)
             with info_col:
                 st.markdown(f"**{_display_variety_name(row, discovered=discovered)}**")
@@ -397,7 +402,12 @@ def _render_mobile_variety_cards(
                 reveal_label="操作を表示",
                 hide_label="操作を閉じる",
             )
-            render_view_transition_trigger("varieties-mobile-list-detail", "list-to-detail")
+            render_view_transition_trigger(
+                "varieties-mobile-list-detail",
+                "list-to-detail",
+                shared_key=variety_id,
+                shared_role="source",
+            )
             if st.button("詳細", key=f"variety_mobile_open_{variety_id}", use_container_width=True):
                 selected_id = variety_id
             render_swipe_action_secondary_marker(_VARIETY_MOBILE_SWIPE_SCOPE, variety_id)
@@ -446,6 +456,7 @@ def _render_variety_detail_panel(
     hero_content = "\n\n".join(hero_lines) if hero_lines else "公開可能な基本情報を表示しています。"
 
     if mobile_client:
+        render_view_transition_shared_element("varieties-mobile-list-detail", selected_id, role="target")
         _render_variety_thumbnail(hero_image, discovered=True)
         render_surface(
             hero_content,
@@ -683,7 +694,12 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
     if mobile_client:
         if mobile_panel == "detail" and selected_id:
             render_section_title("品種詳細", "一覧に戻って別の品種を選択できます。")
-            render_view_transition_trigger("varieties-mobile-list-detail", "detail-to-list")
+            render_view_transition_trigger(
+                "varieties-mobile-list-detail",
+                "detail-to-list",
+                shared_key=selected_id,
+                shared_role="target",
+            )
             if st.button("← 一覧に戻る", key="variety_mobile_back", use_container_width=True):
                 st.session_state["variety_mobile_panel"] = "list"
                 st.rerun()
@@ -713,7 +729,12 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
                         ),
                         key="variety_mobile_quick_jump",
                     )
-                    render_view_transition_trigger("varieties-mobile-list-detail", "list-to-detail")
+                    render_view_transition_trigger(
+                        "varieties-mobile-list-detail",
+                        "list-to-detail",
+                        shared_key=quick_jump_id or None,
+                        shared_role="source",
+                    )
                     if quick_jump_id and st.button("選択品種を開く", key="variety_mobile_jump_open", use_container_width=True):
                         st.session_state["variety_selected_from_list"] = str(quick_jump_id)
                         st.session_state["variety_mobile_panel"] = "detail"

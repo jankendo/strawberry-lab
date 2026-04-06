@@ -39,18 +39,27 @@ def _cache_namespace() -> str:
 
 
 @st.cache_resource(show_spinner=False)
+def _build_redis_client(redis_url: str):
+    import redis
+
+    return redis.Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=1, socket_timeout=1)
+
+
 def _get_redis_client(redis_url: str):
     if not redis_url:
         return None
     try:
-        import redis
+        client = _build_redis_client(redis_url)
     except Exception:
         return None
     try:
-        client = redis.Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=1, socket_timeout=1)
         client.ping()
         return client
     except Exception:
+        try:
+            _build_redis_client.clear()
+        except Exception:
+            pass
         return None
 
 

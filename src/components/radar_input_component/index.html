@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Radar Input</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+      font-size: 14px;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+    }
+
+    #radar-root {
+      box-sizing: border-box;
+      width: 100%;
+      display: grid;
+      gap: 0.5rem;
+      align-items: start;
+      justify-items: center;
+      padding: 0.4rem 0.35rem 0.25rem;
+    }
+
+    #radar-root.disabled {
+      opacity: 0.76;
+      filter: grayscale(0.08);
+    }
+
+    #radar-svg {
+      width: min(100%, 420px);
+      max-width: 100%;
+      height: auto;
+      overflow: visible;
+      user-select: none;
+      touch-action: none;
+    }
+
+    .grid-level {
+      fill: rgba(244, 114, 182, 0.05);
+      stroke: rgba(244, 114, 182, 0.22);
+      stroke-width: 1;
+    }
+
+    .axis-line {
+      stroke: rgba(100, 116, 139, 0.45);
+      stroke-width: 1;
+    }
+
+    .axis-label {
+      fill: #334155;
+      font-size: 13px;
+      font-weight: 600;
+      text-anchor: middle;
+      dominant-baseline: middle;
+      pointer-events: none;
+    }
+
+    .value-shape {
+      fill: rgba(236, 72, 153, 0.22);
+      stroke: rgba(219, 39, 119, 0.95);
+      stroke-width: 2.2;
+      transition: points 55ms linear;
+    }
+
+    .value-handle-hit {
+      fill: transparent;
+      cursor: grab;
+      touch-action: none;
+    }
+
+    .value-handle {
+      fill: #ec4899;
+      stroke: #ffffff;
+      stroke-width: 2;
+      filter: drop-shadow(0 1px 1.6px rgba(15, 23, 42, 0.25));
+      pointer-events: none;
+    }
+
+    #radar-root.disabled .value-handle-hit {
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .readout {
+      width: 100%;
+      max-width: 420px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 0.25rem;
+      font-size: 0.74rem;
+      color: #475569;
+      text-align: center;
+    }
+
+    .readout li {
+      border: 1px solid rgba(148, 163, 184, 0.45);
+      border-radius: 999px;
+      padding: 0.18rem 0.32rem;
+      line-height: 1.35;
+      background: rgba(248, 250, 252, 0.9);
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <div id="radar-root" aria-live="polite">
+    <svg id="radar-svg" viewBox="-170 -180 340 350" role="img" aria-label="5軸レーダー入力">
+      <g id="grid-layer"></g>
+      <g id="axis-layer"></g>
+      <polygon id="value-shape" class="value-shape"></polygon>
+      <g id="handle-layer"></g>
+      <g id="label-layer"></g>
+    </svg>
+    <ul id="readout" class="readout"></ul>
+  </div>
+  <script>
+    (function () {
+      const PROTOCOL = {
+        READY: "streamlit:componentReady",
+        RENDER: "streamlit:render",
+        SET_COMPONENT_VALUE: "streamlit:setComponentValue",
+        SET_FRAME_HEIGHT: "streamlit:setFrameHeight",
+      };
+
+      const DEFAULT_AXES = [
+        { key: "sweetness", label: "甘味" },
+        { key: "sourness", label: "酸味" },
+        { key: "aroma", label: "香り" },
+        { key: "texture", label: "食感" },
+        { key: "appearance", label: "見た目" },
+      ];
+      const OUTER_RADIUS = 110;
+      const LABEL_RADIUS = 136;
+      const GRID_LEVELS = 5;
+
+      const root = document.getElementById("radar-root");
+      const svg = document.getElementById("radar-svg");
+      const gridLayer = document.getElementById("grid-layer");
+      const axisLayer = document.getElementById("axis-layer");
+      const valueShape = document.getElementById("value-shape");
+      const handleLayer = document.getElementById("handle-layer");
+      const labelLayer = document.getElementById("label-layer");
+      const readout = document.getElementById("readout");
+
+      let dragState = null;
+      let emitTimer = null;
+      let lastSerialized = "";
+      let state = {
+        axes: DEFAULT_AXES.map((axis) => ({ key: axis.key, label: axis.label })),
+        scores: {
+          sweetness: 3,
+          sourness: 3,
+          aroma: 3,
+          texture: 3,
+          appearance: 3,
+        },
+        minValue: 1,
+        maxValue: 5,
+        step: 1,
+        disabled: false,
+        height: 360,
+      };
+
+      function post(type, payload) {
+        window.parent.postMessage(
+          Object.assign(
+            {
+              isStreamlitMessage: true,
+              type: type,
+            },
+            payload || {}
+          ),
+          "*"
+        );
+      }
+
+      function coerceInt(value, fallback) {
+        if (typeof value === "boolean") {
+          return fallback;
+        }
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          return fallback;
+        }
+        return Math.round(numeric);
+      }
+
+      function clamp(value, minValue, maxValue) {
+        return Math.max(minValue, Math.min(maxValue, value));
+      }
+
+      function snap(value, minValue, maxValue, step) {
+        const safeStep = Math.max(1, coerceInt(step, 1));
+        const clamped = clamp(value, minValue, maxValue);
+        if (safeStep <= 1) {
+          return Math.round(clamped);
+        }
+        const snapped = minValue + Math.round((clamped - minValue) / safeStep) * safeStep;
+        return clamp(snapped, minValue, maxValue);
+      }
+
+      function normalizeAxes(rawAxes) {
+        if (!Array.isArray(rawAxes) || rawAxes.length !== DEFAULT_AXES.length) {
+          return DEFAULT_AXES.map((axis) => ({ key: axis.key, label: axis.label }));
+        }
+        const seen = new Set();
+        const normalized = [];
+        for (let index = 0; index < rawAxes.length; index += 1) {
+          const candidate = rawAxes[index] || {};
+          const key = String(candidate.key || "").trim();
+          if (!key || seen.has(key)) {
+            return DEFAULT_AXES.map((axis) => ({ key: axis.key, label: axis.label }));
+          }
+          seen.add(key);
+          const fallbackLabel = DEFAULT_AXES[index] ? DEFAULT_AXES[index].label : key;
+          const label = String(candidate.label || "").trim() || fallbackLabel;
+          normalized.push({ key, label });
+        }
+        return normalized;
+      }
+
+      function normalizeScale(args) {
+        const first = coerceInt(args.minValue, 1);
+        const second = coerceInt(args.maxValue, 5);
+        const minValue = Math.min(first, second);
+        let maxValue = Math.max(first, second);
+        if (minValue === maxValue) {
+          maxValue = minValue + 1;
+        }
+        let step = Math.max(1, coerceInt(args.step, 1));
+        step = Math.min(step, Math.max(1, maxValue - minValue));
+        return { minValue, maxValue, step };
+      }
+
+      function normalizeScores(rawScores, axes, scale) {
+        const source = rawScores && typeof rawScores === "object" ? rawScores : {};
+        const midpoint = scale.minValue + Math.floor((scale.maxValue - scale.minValue) / 2);
+        const normalized = {};
+        axes.forEach((axis) => {
+          const value = coerceInt(source[axis.key], midpoint);
+          normalized[axis.key] = snap(value, scale.minValue, scale.maxValue, scale.step);
+        });
+        return normalized;
+      }
+
+      function axisPoint(index, radius) {
+        const angle = -Math.PI / 2 + (Math.PI * 2 * index) / state.axes.length;
+        return {
+          x: Math.cos(angle) * radius,
+          y: Math.sin(angle) * radius,
+        };
+      }
+
+      function pointsString(points) {
+        return points.map((point) => `${point.x.toFixed(3)},${point.y.toFixed(3)}`).join(" ");
+      }
+
+      function renderGrid() {
+        gridLayer.innerHTML = "";
+        for (let level = 1; level <= GRID_LEVELS; level += 1) {
+          const radius = (OUTER_RADIUS * level) / GRID_LEVELS;
+          const points = state.axes.map((_axis, index) => axisPoint(index, radius));
+          const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+          polygon.setAttribute("points", pointsString(points));
+          polygon.setAttribute("class", "grid-level");
+          gridLayer.appendChild(polygon);
+        }
+      }
+
+      function renderAxes() {
+        axisLayer.innerHTML = "";
+        state.axes.forEach((_axis, index) => {
+          const point = axisPoint(index, OUTER_RADIUS);
+          const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line.setAttribute("x1", "0");
+          line.setAttribute("y1", "0");
+          line.setAttribute("x2", point.x.toFixed(3));
+          line.setAttribute("y2", point.y.toFixed(3));
+          line.setAttribute("class", "axis-line");
+          axisLayer.appendChild(line);
+        });
+      }
+
+      function scoreToRadius(score) {
+        const span = Math.max(1, state.maxValue - state.minValue);
+        const ratio = (score - state.minValue) / span;
+        return clamp(ratio, 0, 1) * OUTER_RADIUS;
+      }
+
+      function updateValueShape() {
+        const points = state.axes.map((axis, index) =>
+          axisPoint(index, scoreToRadius(state.scores[axis.key]))
+        );
+        valueShape.setAttribute("points", pointsString(points));
+
+        handleLayer.innerHTML = "";
+        points.forEach((point, index) => {
+          const axisKey = state.axes[index].key;
+
+          const hit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          hit.setAttribute("cx", point.x.toFixed(3));
+          hit.setAttribute("cy", point.y.toFixed(3));
+          hit.setAttribute("r", "15");
+          hit.setAttribute("class", "value-handle-hit");
+          hit.setAttribute("data-axis-key", axisKey);
+          hit.addEventListener("pointerdown", beginDrag);
+          handleLayer.appendChild(hit);
+
+          const handle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          handle.setAttribute("cx", point.x.toFixed(3));
+          handle.setAttribute("cy", point.y.toFixed(3));
+          handle.setAttribute("r", "6.4");
+          handle.setAttribute("class", "value-handle");
+          handle.setAttribute("data-axis-key", axisKey);
+          handleLayer.appendChild(handle);
+        });
+      }
+
+      function renderLabels() {
+        labelLayer.innerHTML = "";
+        state.axes.forEach((axis, index) => {
+          const point = axisPoint(index, LABEL_RADIUS);
+          const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          label.setAttribute("x", point.x.toFixed(3));
+          label.setAttribute("y", point.y.toFixed(3));
+          label.setAttribute("class", "axis-label");
+          label.textContent = axis.label;
+          labelLayer.appendChild(label);
+        });
+      }
+
+      function renderReadout() {
+        readout.innerHTML = "";
+        state.axes.forEach((axis) => {
+          const item = document.createElement("li");
+          item.textContent = `${axis.label} ${state.scores[axis.key]}`;
+          readout.appendChild(item);
+        });
+      }
+
+      function emitFrameHeight() {
+        root.style.minHeight = `${state.height}px`;
+        const measured = Math.ceil(root.getBoundingClientRect().height);
+        const target = Math.max(240, state.height, measured + 2);
+        post(PROTOCOL.SET_FRAME_HEIGHT, { height: target });
+      }
+
+      function getEmittedScores() {
+        const payload = {};
+        state.axes.forEach((axis) => {
+          payload[axis.key] = state.scores[axis.key];
+        });
+        return payload;
+      }
+
+      function emitComponentValue(force) {
+        const nextPayload = { scores: getEmittedScores() };
+        const serialized = JSON.stringify(nextPayload.scores);
+        if (!force && serialized === lastSerialized) {
+          return;
+        }
+        lastSerialized = serialized;
+        post(PROTOCOL.SET_COMPONENT_VALUE, { value: nextPayload });
+      }
+
+      function queueEmit() {
+        if (emitTimer !== null) {
+          return;
+        }
+        emitTimer = window.setTimeout(function () {
+          emitTimer = null;
+          emitComponentValue(false);
+        }, 55);
+      }
+
+      function eventToSvgPoint(event) {
+        const ctm = svg.getScreenCTM();
+        if (!ctm) {
+          return { x: 0, y: 0 };
+        }
+        const point = svg.createSVGPoint();
+        point.x = event.clientX;
+        point.y = event.clientY;
+        const transformed = point.matrixTransform(ctm.inverse());
+        return { x: transformed.x, y: transformed.y };
+      }
+
+      function updateAxisFromPointer(axisKey, event) {
+        const axisIndex = state.axes.findIndex((axis) => axis.key === axisKey);
+        if (axisIndex < 0) {
+          return;
+        }
+        const axisUnit = axisPoint(axisIndex, 1);
+        const point = eventToSvgPoint(event);
+        const projected = point.x * axisUnit.x + point.y * axisUnit.y;
+        const ratio = clamp(projected / OUTER_RADIUS, 0, 1);
+        const rawScore = state.minValue + ratio * (state.maxValue - state.minValue);
+        const snapped = snap(rawScore, state.minValue, state.maxValue, state.step);
+        if (state.scores[axisKey] === snapped) {
+          return;
+        }
+        state.scores[axisKey] = snapped;
+        updateValueShape();
+        renderReadout();
+        queueEmit();
+      }
+
+      function beginDrag(event) {
+        if (state.disabled) {
+          return;
+        }
+        const axisKey = event.currentTarget.getAttribute("data-axis-key");
+        if (!axisKey) {
+          return;
+        }
+        dragState = {
+          axisKey: axisKey,
+          pointerId: event.pointerId,
+        };
+        try {
+          svg.setPointerCapture(event.pointerId);
+        } catch (error) {
+          // ignore unsupported capture
+        }
+        event.preventDefault();
+        updateAxisFromPointer(axisKey, event);
+      }
+
+      function continueDrag(event) {
+        if (!dragState || event.pointerId !== dragState.pointerId) {
+          return;
+        }
+        event.preventDefault();
+        updateAxisFromPointer(dragState.axisKey, event);
+      }
+
+      function endDrag(event) {
+        if (!dragState || event.pointerId !== dragState.pointerId) {
+          return;
+        }
+        dragState = null;
+        emitComponentValue(true);
+        try {
+          svg.releasePointerCapture(event.pointerId);
+        } catch (error) {
+          // ignore unsupported release
+        }
+      }
+
+      function renderAll() {
+        root.classList.toggle("disabled", !!state.disabled);
+        renderGrid();
+        renderAxes();
+        updateValueShape();
+        renderLabels();
+        renderReadout();
+        emitFrameHeight();
+      }
+
+      function handleRenderEvent(event) {
+        if (!event || !event.data || event.data.type !== PROTOCOL.RENDER) {
+          return;
+        }
+
+        const args = event.data.args || {};
+        const normalizedAxes = normalizeAxes(args.axes);
+        const scale = normalizeScale(args);
+        const defaultPayload =
+          args.default && typeof args.default === "object" ? args.default.scores : null;
+        const nextScores = normalizeScores(args.scores || defaultPayload, normalizedAxes, scale);
+
+        state = {
+          axes: normalizedAxes,
+          scores: nextScores,
+          minValue: scale.minValue,
+          maxValue: scale.maxValue,
+          step: scale.step,
+          disabled: !!args.disabled,
+          height: clamp(coerceInt(args.height, 360), 240, 920),
+        };
+
+        renderAll();
+      }
+
+      window.addEventListener("message", handleRenderEvent);
+      window.addEventListener("resize", emitFrameHeight);
+      svg.addEventListener("pointermove", continueDrag);
+      svg.addEventListener("pointerup", endDrag);
+      svg.addEventListener("pointercancel", endDrag);
+
+      post(PROTOCOL.READY, { apiVersion: 1 });
+      emitFrameHeight();
+    })();
+  </script>
+</body>
+</html>

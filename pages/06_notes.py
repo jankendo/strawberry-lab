@@ -7,6 +7,12 @@ from datetime import datetime
 import streamlit as st
 
 from src.components.draft_buffer import clear_draft_buffer, render_draft_buffer_bridge
+from src.components.offline_queue import (
+    enqueue_offline_intent,
+    remove_offline_intent,
+    render_offline_intent_queue_bridge,
+    trigger_offline_intent_replay,
+)
 from src.components.layout import (
     inject_app_style,
     render_action_bar,
@@ -21,7 +27,11 @@ from src.components.pagination import render_pagination_controls
 from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.skeletons import render_card_skeleton, render_list_skeleton, render_table_skeleton
 from src.components.tables import is_mobile_client, render_table
-from src.components.transitions import render_view_transition_layer, render_view_transition_trigger
+from src.components.transitions import (
+    render_view_transition_layer,
+    render_view_transition_shared_element,
+    render_view_transition_trigger,
+)
 from src.services.auth_service import require_admin_session
 from src.services.note_service import create_note, get_note_detail, list_notes, restore_note, soft_delete_note, update_note
 from src.services.variety_service import list_active_varieties
@@ -31,6 +41,10 @@ _NOTES_SORT_OPTIONS = ["更新が新しい順", "更新が古い順", "タイト
 _NOTES_SECTION_ORDER = ["ノート管理", "削除済み"]
 _NOTES_PENDING_DRAFT_CLEARS_KEY = "notes_pending_draft_clears"
 _NOTES_DRAFT_DISCARD_NOTICE_KEY = "notes_draft_discard_notice_key"
+_NOTES_PENDING_SAVE_INTENT_KEY = "notes_pending_save_intent"
+_NOTES_PENDING_SAVE_INTENT_REMOVALS_KEY = "notes_pending_save_intent_removals"
+_NOTES_SAVE_INTENT_QUEUE_KEY = "notes-save-intent-queue"
+_NOTES_SAVE_INTENT_REPLAY_EVENT = "ichigodb:notes-save-intent-replay-request"
 _NOTE_EDITOR_DRAFT_FIELDS = [
     {"name": "title", "label": "タイトル*", "kind": "text"},
     {"name": "body", "label": "本文*", "kind": "textarea"},
@@ -38,6 +52,26 @@ _NOTE_EDITOR_DRAFT_FIELDS = [
     {"name": "tags_raw", "label": "タグ（カンマ区切り）", "kind": "text"},
 ]
 _NOTES_CLEARED_DRAFT_KEYS_THIS_RUN: set[str] = set()
+_NOTES_RETRIABLE_SAVE_ERROR_HINTS = (
+    "connection",
+    "connect",
+    "network",
+    "offline",
+    "timeout",
+    "timed out",
+    "transport",
+    "temporarily unavailable",
+    "service unavailable",
+    "gateway timeout",
+    "bad gateway",
+    "failed to fetch",
+    "disconnected",
+    "name or service not known",
+    "dns",
+    "connection reset",
+    "connection aborted",
+)
+_NOTES_RETRIABLE_SAVE_ERROR_TYPES = ("timeout", "connection", "network", "transport")
 
 
 def _format_updated_at(value: object) -> str:
@@ -194,6 +228,7 @@ def _render_note_cards(rows: list[dict], *, is_mobile: bool) -> None:
     for row in rows:
         note_id = str(row.get("id") or "")
         with st.container(border=True):
+            render_view_transition_shared_element("notes-mobile-list-detail", note_id, role="source")
             st.markdown(f"**{row.get('title') or 'タイトル未設定'}**")
             st.caption(f"更新: {_format_updated_at(row.get('updated_at'))}")
             tags = [str(tag).strip() for tag in (row.get("tags") or []) if str(tag).strip()]
@@ -203,7 +238,12 @@ def _render_note_cards(rows: list[dict], *, is_mobile: bool) -> None:
             if selected_id == note_id and not is_mobile:
                 st.caption("現在選択中")
             if is_mobile:
-                render_view_transition_trigger("notes-mobile-list-detail", "list-to-detail")
+                render_view_transition_trigger(
+                    "notes-mobile-list-detail",
+                    "list-to-detail",
+                    shared_key=note_id,
+                    shared_role="source",
+                )
             if st.button("このノートを開く", key=f"open_note_{note_id}", use_container_width=True):
                 st.session_state["notes_selected_id"] = note_id
                 st.session_state["notes_editor_mode"] = "edit"
@@ -223,9 +263,171 @@ def _queue_note_draft_clear(draft_key: str) -> None:
     st.session_state[_NOTES_PENDING_DRAFT_CLEARS_KEY] = pending_keys
 
 
+def _is_retriable_save_error(exc: Exception) -> bool:
+    error_type = exc.__class__.__name__.lower()
+    if any(token in error_type for token in _NOTES_RETRIABLE_SAVE_ERROR_TYPES):
+        return True
+    message = str(exc).strip().lower()
+    if not message:
+        return False
+    return any(hint in message for hint in _NOTES_RETRIABLE_SAVE_ERROR_HINTS)
+
+
+def _queue_pending_save_intent_removal(intent_id: str) -> None:
+    normalized_id = str(intent_id or "").strip()
+    if not normalized_id:
+        return
+    pending_ids = [
+        str(value).strip()
+        for value in st.session_state.get(_NOTES_PENDING_SAVE_INTENT_REMOVALS_KEY, [])
+        if str(value).strip()
+    ]
+    if normalized_id not in pending_ids:
+        pending_ids.append(normalized_id)
+    st.session_state[_NOTES_PENDING_SAVE_INTENT_REMOVALS_KEY] = pending_ids
+
+
+def _resolve_pending_save_intent() -> dict | None:
+    pending = st.session_state.get(_NOTES_PENDING_SAVE_INTENT_KEY)
+    if not isinstance(pending, dict):
+        return None
+    operation = str(pending.get("operation") or "").strip().lower()
+    payload = pending.get("payload")
+    note_id = str(pending.get("note_id") or "").strip()
+    if operation not in {"create", "update"} or not isinstance(payload, dict):
+        return None
+    if operation == "update" and not note_id:
+        return None
+    return {
+        "intent_id": str(pending.get("intent_id") or "").strip(),
+        "operation": operation,
+        "note_id": note_id,
+        "payload": dict(payload),
+        "draft_key": str(pending.get("draft_key") or "").strip(),
+        "queued_at": str(pending.get("queued_at") or "").strip(),
+    }
+
+
+def _set_pending_save_intent(*, operation: str, note_id: str, payload: dict, draft_key: str) -> None:
+    existing_intent = _resolve_pending_save_intent()
+    existing_intent_id = existing_intent["intent_id"] if existing_intent else None
+    queue_payload = {
+        "operation": operation,
+        "note_id": note_id,
+        "payload": dict(payload),
+        "draft_key": draft_key,
+    }
+    intent_id = enqueue_offline_intent(
+        _NOTES_SAVE_INTENT_QUEUE_KEY,
+        intent_id=existing_intent_id,
+        intent_type=f"notes:{operation}",
+        payload=queue_payload,
+        metadata={"page": "06_notes"},
+    )
+    st.session_state[_NOTES_PENDING_SAVE_INTENT_KEY] = {
+        "intent_id": intent_id,
+        "operation": operation,
+        "note_id": note_id,
+        "payload": dict(payload),
+        "draft_key": draft_key,
+        "queued_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def _clear_pending_save_intent(*, only_if_draft_key: str | None = None) -> None:
+    pending = _resolve_pending_save_intent()
+    if pending is None:
+        st.session_state.pop(_NOTES_PENDING_SAVE_INTENT_KEY, None)
+        return
+    if only_if_draft_key and pending.get("draft_key") != only_if_draft_key:
+        return
+    st.session_state.pop(_NOTES_PENDING_SAVE_INTENT_KEY, None)
+    intent_id = str(pending.get("intent_id") or "").strip()
+    if intent_id:
+        _queue_pending_save_intent_removal(intent_id)
+
+
+def _retry_pending_save_intent(*, is_mobile: bool) -> None:
+    pending = _resolve_pending_save_intent()
+    if pending is None:
+        return
+    trigger_offline_intent_replay(
+        _NOTES_SAVE_INTENT_QUEUE_KEY,
+        replay_event_name=_NOTES_SAVE_INTENT_REPLAY_EVENT,
+        reason="notes-manual-retry",
+        queue_label="ノート保存待ち",
+    )
+    operation = pending["operation"]
+    note_id = pending["note_id"]
+    payload = dict(pending["payload"])
+    try:
+        if operation == "update":
+            update_note(note_id, payload)
+            st.session_state["notes_selected_id"] = note_id
+            st.success("保留中の更新を保存しました。")
+        else:
+            created_id = create_note(payload)
+            st.session_state["notes_selected_id"] = created_id
+            st.success("保留中の新規ノートを保存しました。")
+        _clear_pending_save_intent()
+        draft_key = pending.get("draft_key")
+        if draft_key:
+            _queue_note_draft_clear(draft_key)
+        if is_mobile:
+            st.session_state["notes_mobile_view"] = "list"
+            st.session_state["notes_editor_mode"] = "closed"
+        else:
+            st.session_state["notes_editor_mode"] = "edit"
+        st.rerun()
+    except Exception as exc:
+        if _is_retriable_save_error(exc):
+            st.warning("再試行中に通信が不安定です。接続回復後に再度お試しください。")
+        st.error(str(exc))
+
+
+def _render_pending_save_intent_notice(*, is_mobile: bool) -> None:
+    pending = _resolve_pending_save_intent()
+    if pending is None:
+        return
+    operation_label = "更新" if pending["operation"] == "update" else "新規作成"
+    queued_at = pending.get("queued_at")
+    with st.container(border=True):
+        st.warning(f"通信エラーによりノート{operation_label}を一時キューへ退避しました。")
+        st.caption("接続回復後に再試行できます。")
+        if queued_at:
+            st.caption(f"保留時刻: {_format_updated_at(queued_at)}")
+        retry_col, cancel_col = st.columns([1.35, 1], gap="small")
+        with retry_col:
+            retry_requested = st.button(
+                "保留中の保存を再試行",
+                key=f"notes_retry_pending_intent_{pending['intent_id'] or 'latest'}",
+                type="primary",
+                use_container_width=True,
+            )
+        with cancel_col:
+            cancel_requested = st.button(
+                "保留を取り消す",
+                key=f"notes_cancel_pending_intent_{pending['intent_id'] or 'latest'}",
+                type="secondary",
+                use_container_width=True,
+            )
+    if retry_requested:
+        _retry_pending_save_intent(is_mobile=is_mobile)
+    if cancel_requested:
+        _clear_pending_save_intent()
+        st.info("保留中の保存を取り消しました。")
+        st.rerun()
+
+
 def _render_note_editor(*, selected_id: str, selected_note: dict | None, is_mobile: bool) -> None:
+    anchor_key = selected_id or None
     if is_mobile:
-        render_view_transition_trigger("notes-mobile-list-detail", "detail-to-list")
+        render_view_transition_trigger(
+            "notes-mobile-list-detail",
+            "detail-to-list",
+            shared_key=anchor_key,
+            shared_role="target",
+        )
     if is_mobile and st.button("← 一覧に戻る", key="notes_back_to_list", use_container_width=True):
         st.session_state["notes_mobile_view"] = "list"
         st.session_state["notes_editor_mode"] = "closed"
@@ -249,6 +451,7 @@ def _render_note_editor(*, selected_id: str, selected_note: dict | None, is_mobi
     clear_draft_before_restore = draft_key in _NOTES_CLEARED_DRAFT_KEYS_THIS_RUN
 
     with st.container(border=True):
+        render_view_transition_shared_element("notes-mobile-list-detail", anchor_key, role="target")
         st.markdown("**ノート編集**" if is_edit_mode else "**ノート作成**")
         st.caption("入力内容はブラウザに自動保存されます。")
         if st.session_state.get(_NOTES_DRAFT_DISCARD_NOTICE_KEY) == draft_key:
@@ -276,7 +479,12 @@ def _render_note_editor(*, selected_id: str, selected_note: dict | None, is_mobi
             tags_raw = st.text_input("タグ（カンマ区切り）", value=default_tags, key=f"notes_editor_tags_{editor_token}")
             render_sticky_primary_action_anchor("notes-save")
             if is_mobile:
-                render_view_transition_trigger("notes-mobile-list-detail", "detail-to-list")
+                render_view_transition_trigger(
+                    "notes-mobile-list-detail",
+                    "detail-to-list",
+                    shared_key=anchor_key,
+                    shared_role="target",
+                )
             submitted = st.form_submit_button("保存", use_container_width=True, type="primary")
 
         with st.expander("プレビュー", expanded=False):
@@ -313,6 +521,8 @@ def _render_note_editor(*, selected_id: str, selected_note: dict | None, is_mobi
             st.error(str(exc))
         else:
             payload = {"title": title, "body": body, "variety_id": variety_id or None, "tags": tags}
+            operation = "update" if is_edit_mode else "create"
+            note_id_for_intent = selected_id if is_edit_mode else ""
             try:
                 if is_edit_mode:
                     update_note(selected_id, payload)
@@ -322,6 +532,7 @@ def _render_note_editor(*, selected_id: str, selected_note: dict | None, is_mobi
                     st.session_state["notes_selected_id"] = new_note_id
                     st.success("作成しました。")
                 _queue_note_draft_clear(draft_key)
+                _clear_pending_save_intent(only_if_draft_key=draft_key)
                 if is_mobile:
                     st.session_state["notes_mobile_view"] = "list"
                     st.session_state["notes_editor_mode"] = "closed"
@@ -329,13 +540,26 @@ def _render_note_editor(*, selected_id: str, selected_note: dict | None, is_mobi
                     st.session_state["notes_editor_mode"] = "edit"
                 st.rerun()
             except Exception as exc:
+                if _is_retriable_save_error(exc):
+                    _set_pending_save_intent(
+                        operation=operation,
+                        note_id=note_id_for_intent,
+                        payload=payload,
+                        draft_key=draft_key,
+                    )
+                    st.warning("通信エラーのため保存要求をキューに退避しました。接続回復後に再試行してください。")
                 st.error(str(exc))
 
     if is_edit_mode:
         with st.expander("その他の操作", expanded=False):
             st.caption("削除後も「削除済み」タブから復元できます。")
             if is_mobile:
-                render_view_transition_trigger("notes-mobile-list-detail", "detail-to-list")
+                render_view_transition_trigger(
+                    "notes-mobile-list-detail",
+                    "detail-to-list",
+                    shared_key=anchor_key,
+                    shared_role="target",
+                )
             if st.button(
                 "このノートを削除",
                 key=f"notes_delete_selected_{editor_token}",
@@ -382,6 +606,20 @@ pending_note_draft_clears = [str(value) for value in st.session_state.pop(_NOTES
 _NOTES_CLEARED_DRAFT_KEYS_THIS_RUN = set(pending_note_draft_clears)
 for pending_draft_key in pending_note_draft_clears:
     clear_draft_buffer(pending_draft_key)
+pending_save_intent_removals = [
+    str(value).strip()
+    for value in st.session_state.pop(_NOTES_PENDING_SAVE_INTENT_REMOVALS_KEY, [])
+    if str(value).strip()
+]
+for pending_intent_id in pending_save_intent_removals:
+    remove_offline_intent(_NOTES_SAVE_INTENT_QUEUE_KEY, pending_intent_id)
+render_offline_intent_queue_bridge(
+    _NOTES_SAVE_INTENT_QUEUE_KEY,
+    queue_label="ノート保存待ち",
+    replay_event_name=_NOTES_SAVE_INTENT_REPLAY_EVENT,
+    show_replay_button=False,
+    auto_replay_on_online=True,
+)
 if mobile_client:
     render_view_transition_layer(
         "notes-mobile-list-detail",
@@ -394,6 +632,7 @@ active_section = _render_notes_section_switcher(is_mobile=mobile_client)
 
 if active_section == "ノート管理":
     render_section_title("ノート一覧", None if mobile_client else "検索・タグ絞り込みで探し、カードから開いて編集します。")
+    _render_pending_save_intent_notice(is_mobile=mobile_client)
     if mobile_client and st.session_state.get("notes_mobile_view") == "editor":
         selected_id = st.session_state.get("notes_selected_id") or ""
         selected_note_loading_placeholder = st.empty()
