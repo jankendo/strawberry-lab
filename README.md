@@ -6,7 +6,6 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 - Python 3.12
 - Streamlit
 - Supabase (PostgreSQL/Auth/Storage)
-- GitHub Actions (workflow_dispatch for manual MAFF scraping)
 
 ## Local setup
 1. Install dependencies:
@@ -28,17 +27,20 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 ## Run app
 - `streamlit run Home.py`
 
-## Run MAFF variety scraper locally
-- `python -m scraper.main`
-- (optional health check) `python -m scraper.heartbeat`
+## Run MAFF variety scraper locally (fast mode)
+PowerShell:
 
-## Run MAFF variety scraper on GitHub Actions
-- Trigger `.github/workflows/scrape.yml` via **Run workflow** (manual only).
-- Required repository secrets:
-  - `SUPABASE_URL`
-  - `SUPABASE_SERVICE_ROLE_KEY`
-  - `APP_TIMEZONE` (`Asia/Tokyo` recommended)
-- If the run exits with schema-related errors, re-apply `database/supabase_all_in_one.sql` to sync tables/columns.
+```powershell
+$env:SUPABASE_URL = "https://YOUR_PROJECT.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY = "YOUR_SERVICE_ROLE_KEY"
+$env:APP_TIMEZONE = "Asia/Tokyo"
+$env:MAFF_MIN_INTERVAL_SECONDS = "0"
+$env:MAFF_MAX_PAGES_PER_RUN = "200"
+python -m scraper.main
+```
+
+- Optional heartbeat check: `python -m scraper.heartbeat`
+- If schema-related errors occur, re-apply `database/supabase_all_in_one.sql`.
 
 ## Run tests
 - `pytest -q`

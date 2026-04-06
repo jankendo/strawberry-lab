@@ -9,14 +9,12 @@ import streamlit as st
 from src.components.layout import inject_app_style, render_page_header, render_section_title
 from src.components.sidebar import render_sidebar
 from src.config import get_config
-from src.core.github_client import GitHubClient
 from src.services.auth_service import require_admin_session
 from src.services.export_service import export_table_csv
 from src.services.scrape_service import (
-    dispatch_scraper_workflow,
+    clear_scrape_cache,
     get_recent_variety_scrape_runs,
     get_variety_scrape_logs,
-    poll_workflow_status,
 )
 
 st.set_page_config(page_title="設定", layout="wide")
@@ -24,8 +22,7 @@ require_admin_session()
 inject_app_style()
 render_sidebar()
 cfg = get_config()
-gh = GitHubClient(cfg)
-render_page_header("設定", "エクスポート、手動品種取得、運用診断を管理します。")
+render_page_header("設定", "エクスポート、ローカル品種取込、運用診断を管理します。")
 
 render_section_title("データエクスポート")
 export_tables = [
@@ -45,28 +42,24 @@ for table in export_tables:
         use_container_width=True,
     )
 
-render_section_title("手動品種スクレイピング", "MAFFの品種登録データ（Fragaria L.）を取得して反映します。")
-if gh.is_ref_pinned_to_commit():
-    st.warning(
-        "GITHUB_REF がコミットSHAに設定されています。最新コードを使うには "
-        "`main`（または `refs/heads/main`）を指定してください。"
+render_section_title("ローカル高速スクレイピング", "更新機能はローカルCLI実行に統一しました。")
+st.info("この画面からの更新ボタンは廃止しました。以下のコマンドをローカル端末で実行してください。")
+st.code(
+    "\n".join(
+        [
+            "# PowerShell",
+            '$env:SUPABASE_URL = "https://YOUR_PROJECT.supabase.co"',
+            '$env:SUPABASE_SERVICE_ROLE_KEY = "YOUR_SERVICE_ROLE_KEY"',
+            '$env:APP_TIMEZONE = "Asia/Tokyo"',
+            '$env:MAFF_MIN_INTERVAL_SECONDS = "0"',
+            '$env:MAFF_MAX_PAGES_PER_RUN = "200"',
+            "python -m scraper.main",
+        ]
     )
-if st.button("MAFFから品種データを取得", use_container_width=True):
-    try:
-        dispatch_scraper_workflow()
-        st.success("workflow_dispatch を送信しました。")
-        with st.spinner("実行状況を確認中..."):
-            run = poll_workflow_status(timeout_seconds=180, interval_seconds=5)
-        if run:
-            st.info(f"状態: {run.status} / 結果: {run.conclusion}")
-            st.link_button("実行URLを開く", run.html_url)
-    except Exception as exc:
-        message = str(exc)
-        if "Supabaseスキーマが最新版ではありません" in message:
-            st.error("スクレイピング前提のDBスキーマが不足しています。`database/supabase_all_in_one.sql` を再実行してください。")
-            st.code(message)
-        else:
-            st.error(message)
+)
+if st.button("実行履歴を再読み込み", use_container_width=True):
+    clear_scrape_cache()
+    st.rerun()
 
 render_section_title("最近の品種取得実行")
 runs = get_recent_variety_scrape_runs()
@@ -88,10 +81,7 @@ st.write(
         "timezone": cfg.app_timezone,
         "has_supabase_url": bool(cfg.supabase_url),
         "has_supabase_anon_key": bool(cfg.supabase_anon_key),
-        "has_github_token": bool(cfg.github_token),
-        "github_workflow_file": cfg.github_workflow_file,
-        "github_ref_configured": cfg.github_ref,
-        "github_ref_effective": gh.get_dispatch_ref(),
+        "scrape_mode": "local_cli_only",
         "last_successful_variety_scrape": next(
             (r.get("finished_at") for r in runs if r.get("status") == "success"),
             None,

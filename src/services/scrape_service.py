@@ -1,14 +1,9 @@
-"""GitHub workflow orchestration for MAFF variety scraping."""
+"""Read-only services for MAFF scrape runs and logs."""
 
 from __future__ import annotations
 
-import time
-from datetime import datetime, timedelta
-
 import streamlit as st
 
-from src.config import get_config
-from src.core.github_client import GitHubClient, WorkflowRunSummary
 from src.services.auth_service import get_user_client
 
 
@@ -42,25 +37,7 @@ def get_variety_scrape_logs(run_id: str, limit: int = 100) -> list[dict]:
         or []
     )
 
-
-def dispatch_scraper_workflow() -> None:
-    """Dispatch GitHub Actions workflow for MAFF variety scraping."""
-    gh = GitHubClient(get_config())
-    gh.dispatch_scrape()
+def clear_scrape_cache() -> None:
+    """Clear cached scrape run and log queries."""
     get_recent_variety_scrape_runs.clear()
     get_variety_scrape_logs.clear()
-
-
-def poll_workflow_status(timeout_seconds: int = 120, interval_seconds: int = 5) -> WorkflowRunSummary | None:
-    """Poll latest workflow run status until completion or timeout."""
-    gh = GitHubClient(get_config())
-    deadline = datetime.utcnow() + timedelta(seconds=timeout_seconds)
-    latest: WorkflowRunSummary | None = None
-    while datetime.utcnow() < deadline:
-        latest = gh.get_latest_run()
-        if latest and latest.status == "completed":
-            get_recent_variety_scrape_runs.clear()
-            get_variety_scrape_logs.clear()
-            return latest
-        time.sleep(interval_seconds)
-    return latest

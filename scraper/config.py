@@ -33,6 +33,8 @@ class ScraperConfig:
 
 def load_config() -> ScraperConfig:
     """Load scraper config from environment."""
+    min_interval_seconds = int(os.getenv("MAFF_MIN_INTERVAL_SECONDS", "0"))
+    max_pages_per_run = int(os.getenv("MAFF_MAX_PAGES_PER_RUN", "200"))
     return ScraperConfig(
         supabase_url=os.environ["SUPABASE_URL"],
         supabase_service_role_key=os.environ["SUPABASE_SERVICE_ROLE_KEY"],
@@ -46,8 +48,8 @@ def load_config() -> ScraperConfig:
                 source_name="MAFF Variety Registry",
                 enabled=True,
                 search_url="https://www.hinshu2.maff.go.jp/vips/cmm/apCMM110.aspx?MOSS=1",
-                min_interval_seconds=5,
-                max_pages_per_run=200,
+                min_interval_seconds=max(0, min_interval_seconds),
+                max_pages_per_run=max(1, max_pages_per_run),
             )
         },
     )
