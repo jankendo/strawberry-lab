@@ -27,7 +27,13 @@ c1, c2, c3 = st.columns(3)
 with c1:
     include_deleted = st.checkbox("削除済みを含む", value=False)
 with c2:
-    direction = st.selectbox("方向", ["ancestors", "descendants", "both"], index=2)
+    direction_map = {
+        "祖先を表示": "ancestors",
+        "子孫を表示": "descendants",
+        "祖先＋子孫を表示": "both",
+    }
+    direction_label = st.selectbox("表示方向", list(direction_map.keys()), index=2)
+    direction = direction_map[direction_label]
 with c3:
     max_depth = st.slider("最大深さ", 1, 5, 3)
 

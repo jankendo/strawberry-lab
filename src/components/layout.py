@@ -10,23 +10,36 @@ def inject_app_style() -> None:
     st.markdown(
         """
         <style>
+        html, body, [class*="css"], [data-testid="stAppViewContainer"] {
+            font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic UI",
+                         "Meiryo", "Segoe UI", sans-serif;
+        }
+        .block-container {
+            padding-top: 1.2rem;
+            padding-bottom: 2rem;
+        }
         .sl-page-header h1 {
             margin-bottom: 0.2rem;
             font-size: 2rem;
+            letter-spacing: 0.02em;
         }
         .sl-page-header p {
             margin-top: 0;
             color: #555;
+            line-height: 1.6;
         }
         .sl-section-title {
-            margin-top: 0.4rem;
-            margin-bottom: 0.3rem;
+            margin-top: 0.75rem;
+            margin-bottom: 0.35rem;
             font-size: 1.15rem;
             font-weight: 600;
+            border-left: 4px solid #e8334a;
+            padding-left: 0.5rem;
         }
         .sl-muted {
             color: #666;
             font-size: 0.9rem;
+            line-height: 1.5;
         }
         </style>
         """,

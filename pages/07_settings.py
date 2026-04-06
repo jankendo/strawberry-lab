@@ -61,7 +61,12 @@ if st.button("MAFFから品種データを取得", use_container_width=True):
             st.info(f"状態: {run.status} / 結果: {run.conclusion}")
             st.link_button("実行URLを開く", run.html_url)
     except Exception as exc:
-        st.error(str(exc))
+        message = str(exc)
+        if "Supabaseスキーマが最新版ではありません" in message:
+            st.error("スクレイピング前提のDBスキーマが不足しています。`database/supabase_all_in_one.sql` を再実行してください。")
+            st.code(message)
+        else:
+            st.error(message)
 
 render_section_title("最近の品種取得実行")
 runs = get_recent_variety_scrape_runs()

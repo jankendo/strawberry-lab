@@ -123,8 +123,12 @@ class MaffScraper(BaseScraper):
         targets: list[dict] = []
         seen: set[str] = set()
         for page_no in range(1, self.source_config.max_pages_per_run + 1):
-            response = self._get(self.source_config.search_url, params=self._search_params(page_no))
-            rows = self._extract_listing_rows(response.text)
+            try:
+                response = self._get(self.source_config.search_url, params=self._search_params(page_no))
+                rows = self._extract_listing_rows(response.text)
+            except Exception as exc:
+                print(f"[WARN] Failed to fetch listing page {page_no}: {exc}")
+                break
             if not rows:
                 break
             new_rows = 0
@@ -140,27 +144,35 @@ class MaffScraper(BaseScraper):
 
         varieties: list[dict] = []
         for row in targets:
-            detail_response = self._get(row["detail_url"])
-            detail_map = self._extract_detail_map(detail_response.text)
-            registration_number = self._pick(detail_map, "registration_number") or row["registration_number"]
-            variety = {
-                "registration_number": registration_number,
-                "application_number": self._pick(detail_map, "application_number"),
-                "registration_date": _parse_japanese_date(self._pick(detail_map, "registration_date")),
-                "application_date": _parse_japanese_date(self._pick(detail_map, "application_date")),
-                "publication_date": _parse_japanese_date(self._pick(detail_map, "publication_date")),
-                "name": self._pick(detail_map, "name") or row["listed_name"] or f"登録番号 {registration_number}",
-                "scientific_name": self._pick(detail_map, "scientific_name"),
-                "japanese_name": self._pick(detail_map, "japanese_name"),
-                "breeder_right_holder": self._pick(detail_map, "breeder_right_holder"),
-                "applicant": self._pick(detail_map, "applicant"),
-                "breeding_place": self._pick(detail_map, "breeding_place"),
-                "characteristics_summary": self._pick(detail_map, "characteristics_summary"),
-                "right_duration": self._pick(detail_map, "right_duration"),
-                "usage_conditions": self._pick(detail_map, "usage_conditions"),
-                "remarks": self._pick(detail_map, "remarks"),
-                "maff_detail_url": row["detail_url"],
-                "source_system": "maff",
-            }
+            try:
+                detail_response = self._get(row["detail_url"])
+                detail_map = self._extract_detail_map(detail_response.text)
+                registration_number = self._pick(detail_map, "registration_number") or row["registration_number"]
+                variety = {
+                    "registration_number": registration_number,
+                    "application_number": self._pick(detail_map, "application_number"),
+                    "registration_date": _parse_japanese_date(self._pick(detail_map, "registration_date")),
+                    "application_date": _parse_japanese_date(self._pick(detail_map, "application_date")),
+                    "publication_date": _parse_japanese_date(self._pick(detail_map, "publication_date")),
+                    "name": self._pick(detail_map, "name") or row["listed_name"] or f"登録番号 {registration_number}",
+                    "scientific_name": self._pick(detail_map, "scientific_name"),
+                    "japanese_name": self._pick(detail_map, "japanese_name"),
+                    "breeder_right_holder": self._pick(detail_map, "breeder_right_holder"),
+                    "applicant": self._pick(detail_map, "applicant"),
+                    "breeding_place": self._pick(detail_map, "breeding_place"),
+                    "characteristics_summary": self._pick(detail_map, "characteristics_summary"),
+                    "right_duration": self._pick(detail_map, "right_duration"),
+                    "usage_conditions": self._pick(detail_map, "usage_conditions"),
+                    "remarks": self._pick(detail_map, "remarks"),
+                    "maff_detail_url": row["detail_url"],
+                    "source_system": "maff",
+                }
+            except Exception as exc:
+                variety = {
+                    "registration_number": row["registration_number"],
+                    "name": row["listed_name"] or f"登録番号 {row['registration_number']}",
+                    "maff_detail_url": row["detail_url"],
+                    "_fetch_error": str(exc),
+                }
             varieties.append(variety)
         return varieties

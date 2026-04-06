@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import traceback
+from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -105,6 +107,66 @@ def _insert_log(
     ).execute()
 
 
+def _safe_insert_log(
+    client,
+    *,
+    run_id: str,
+    registration_number: str | None,
+    variety_name: str | None,
+    detail_url: str | None,
+    status: str,
+    message: str | None,
+) -> None:
+    try:
+        _insert_log(
+            client,
+            run_id=run_id,
+            registration_number=registration_number,
+            variety_name=variety_name,
+            detail_url=detail_url,
+            status=status,
+            message=message,
+        )
+    except Exception as exc:
+        print(f"[WARN] Failed to insert variety scrape log: {exc}")
+
+
+def _ensure_required_schema(client) -> None:
+    checks: list[tuple[str, Callable[[], object]]] = [
+        (
+            "table public.variety_scrape_runs",
+            lambda: client.table("variety_scrape_runs").select("id").limit(1).execute(),
+        ),
+        (
+            "table public.variety_scrape_logs",
+            lambda: client.table("variety_scrape_logs").select("id").limit(1).execute(),
+        ),
+        (
+            "MAFF columns on public.varieties",
+            lambda: client.table("varieties")
+            .select(
+                "id,registration_number,application_number,registration_date,application_date,publication_date,"
+                "scientific_name,japanese_name,breeder_right_holder,applicant,breeding_place,characteristics_summary,"
+                "right_duration,usage_conditions,remarks,maff_detail_url,last_scraped_at,source_system"
+            )
+            .limit(1)
+            .execute(),
+        ),
+    ]
+    failures: list[str] = []
+    for name, operation in checks:
+        try:
+            operation()
+        except Exception as exc:
+            failures.append(f"- {name}: {exc}")
+    if failures:
+        raise RuntimeError(
+            "Supabaseスキーマが最新版ではありません。"
+            " `database/supabase_all_in_one.sql` を再実行してください。\n"
+            + "\n".join(failures)
+        )
+
+
 def _build_variety_payload(variety: dict) -> dict:
     registration_date = variety.get("registration_date")
     registered_year = int(registration_date[:4]) if registration_date else None
@@ -165,17 +227,35 @@ def run_scraper() -> int:
     cfg = load_config()
     source_cfg = cfg.sources["maff"]
     client = get_admin_client()
-    run_id = _create_run(client)
+    run_id: str | None = None
     listed_count = processed_count = upserted_count = failed_count = 0
     try:
+        print("[INFO] Starting MAFF variety scraper.")
+        _ensure_required_schema(client)
+        print("[INFO] Schema preflight passed.")
+        run_id = _create_run(client)
         scraper = MaffScraper(source_cfg)
         varieties = scraper.fetch_varieties()
         listed_count = len(varieties)
+        print(f"[INFO] Listed records: {listed_count}")
         for variety in varieties:
             processed_count += 1
             registration_number = variety.get("registration_number")
             name = variety.get("name")
             detail_url = variety.get("maff_detail_url")
+            fetch_error = variety.get("_fetch_error")
+            if fetch_error:
+                failed_count += 1
+                _safe_insert_log(
+                    client,
+                    run_id=run_id,
+                    registration_number=registration_number,
+                    variety_name=name,
+                    detail_url=detail_url,
+                    status="failed",
+                    message=f"詳細ページ取得失敗: {fetch_error}"[:1500],
+                )
+                continue
             try:
                 _upsert_variety(client, variety)
                 upserted_count += 1
@@ -184,7 +264,7 @@ def run_scraper() -> int:
                     name or "",
                     detail_url or "",
                 )
-                _insert_log(
+                _safe_insert_log(
                     client,
                     run_id=run_id,
                     registration_number=registration_number,
@@ -195,7 +275,7 @@ def run_scraper() -> int:
                 )
             except Exception as exc:
                 failed_count += 1
-                _insert_log(
+                _safe_insert_log(
                     client,
                     run_id=run_id,
                     registration_number=registration_number,
@@ -210,27 +290,35 @@ def run_scraper() -> int:
             status = "error"
         else:
             status = "partial_success"
-        _finish_run(
-            client,
-            run_id,
-            status=status,
-            listed_count=listed_count,
-            processed_count=processed_count,
-            upserted_count=upserted_count,
-            failed_count=failed_count,
+        if run_id:
+            _finish_run(
+                client,
+                run_id,
+                status=status,
+                listed_count=listed_count,
+                processed_count=processed_count,
+                upserted_count=upserted_count,
+                failed_count=failed_count,
+            )
+        print(
+            f"[INFO] Finished: status={status} listed={listed_count} processed={processed_count} "
+            f"upserted={upserted_count} failed={failed_count}"
         )
         return 0 if status in ("success", "partial_success") else 1
     except Exception as exc:
-        _finish_run(
-            client,
-            run_id,
-            status="error",
-            listed_count=listed_count,
-            processed_count=processed_count,
-            upserted_count=upserted_count,
-            failed_count=max(failed_count, 1),
-            error_message=str(exc)[:1500],
-        )
+        if run_id:
+            _finish_run(
+                client,
+                run_id,
+                status="error",
+                listed_count=listed_count,
+                processed_count=processed_count,
+                upserted_count=upserted_count,
+                failed_count=max(failed_count, 1),
+                error_message=str(exc)[:1500],
+            )
+        print(f"[ERROR] Scraper aborted: {exc}")
+        print(traceback.format_exc(limit=8))
         return 1
 
 

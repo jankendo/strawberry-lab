@@ -38,6 +38,7 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
   - `SUPABASE_URL`
   - `SUPABASE_SERVICE_ROLE_KEY`
   - `APP_TIMEZONE` (`Asia/Tokyo` recommended)
+- If the run exits with schema-related errors, re-apply `database/supabase_all_in_one.sql` to sync tables/columns.
 
 ## Run tests
 - `pytest -q`
