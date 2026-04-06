@@ -6,7 +6,7 @@ import streamlit as st
 
 from src.components.layout import inject_app_style, render_page_header, render_section_title
 from src.components.sidebar import render_sidebar
-from src.services.auth_service import initialize_auth_state, login_user
+from src.services.auth_service import get_user_client, initialize_auth_state, login_user, restore_login_from_cookie
 
 try:
     from src.components.layout import render_info_card, render_kpi_cards, render_lead
@@ -30,7 +30,75 @@ except ImportError:
 
 st.set_page_config(page_title="StrawberryLab", layout="wide")
 initialize_auth_state()
+restore_login_from_cookie()
 inject_app_style()
+
+
+@st.cache_data(ttl=120)
+def _load_dashboard_metrics() -> dict:
+    client = get_user_client()
+    if client is None:
+        return {"active_varieties": 0, "active_reviews": 0, "notes_count": 0, "avg_score": 0.0, "latest_status": "-", "latest_upserted": 0}
+
+    active_varieties = (
+        client.table("varieties").select("id", count="exact", head=True).is_("deleted_at", "null").execute().count or 0
+    )
+    active_reviews = (
+        client.table("reviews").select("id", count="exact", head=True).is_("deleted_at", "null").execute().count or 0
+    )
+    notes_count = client.table("notes").select("id", count="exact", head=True).is_("deleted_at", "null").execute().count or 0
+    overall_rows = client.table("reviews").select("overall").is_("deleted_at", "null").execute().data or []
+    avg_score = round(sum(row["overall"] for row in overall_rows) / len(overall_rows), 2) if overall_rows else 0
+    latest_scrape = (
+        client.table("variety_scrape_runs")
+        .select("status,upserted_count")
+        .order("started_at", desc=True)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return {
+        "active_varieties": int(active_varieties),
+        "active_reviews": int(active_reviews),
+        "notes_count": int(notes_count),
+        "avg_score": float(avg_score),
+        "latest_status": latest_scrape[0]["status"] if latest_scrape else "-",
+        "latest_upserted": int(latest_scrape[0]["upserted_count"]) if latest_scrape else 0,
+    }
+
+
+@st.cache_data(ttl=120)
+def _load_latest_reviews() -> list[dict]:
+    client = get_user_client()
+    if client is None:
+        return []
+    return (
+        client.table("reviews")
+        .select("tasted_date,overall,varieties(name)")
+        .is_("deleted_at", "null")
+        .order("tasted_date", desc=True)
+        .limit(5)
+        .execute()
+        .data
+        or []
+    )
+
+
+@st.cache_data(ttl=120)
+def _load_recent_scrape_runs() -> list[dict]:
+    client = get_user_client()
+    if client is None:
+        return []
+    return (
+        client.table("variety_scrape_runs")
+        .select("started_at,finished_at,status,upserted_count,failed_count")
+        .order("started_at", desc=True)
+        .limit(5)
+        .execute()
+        .data
+        or []
+    )
 
 
 def _render_login() -> None:
@@ -55,54 +123,16 @@ def _render_login() -> None:
 
 def _render_dashboard() -> None:
     render_sidebar()
-    client = st.session_state["supabase_client_user"]
     render_page_header("ダッシュボード", "主要指標と最新データを確認できます。")
-
-    active_varieties = (
-        client.table("varieties")
-        .select("id", count="exact", head=True)
-        .is_("deleted_at", "null")
-        .execute()
-        .count
-        or 0
-    )
-    active_reviews = (
-        client.table("reviews")
-        .select("id", count="exact", head=True)
-        .is_("deleted_at", "null")
-        .execute()
-        .count
-        or 0
-    )
-    notes_count = (
-        client.table("notes")
-        .select("id", count="exact", head=True)
-        .is_("deleted_at", "null")
-        .execute()
-        .count
-        or 0
-    )
-    avg_overall = client.table("reviews").select("overall").is_("deleted_at", "null").execute().data or []
-    avg_score = round(sum(x["overall"] for x in avg_overall) / len(avg_overall), 2) if avg_overall else 0
-    latest_scrape = (
-        client.table("variety_scrape_runs")
-        .select("status,finished_at,upserted_count")
-        .order("started_at", desc=True)
-        .limit(1)
-        .execute()
-        .data
-        or []
-    )
-    latest_status = latest_scrape[0]["status"] if latest_scrape else "-"
-    latest_upserted = latest_scrape[0]["upserted_count"] if latest_scrape else 0
+    metrics = _load_dashboard_metrics()
 
     render_kpi_cards(
         [
-            ("有効品種数", str(active_varieties), None),
-            ("有効レビュー数", str(active_reviews), None),
-            ("研究メモ数", str(notes_count), None),
-            ("直近取得件数", str(latest_upserted), f"状態: {latest_status}"),
-            ("平均総合評価", f"{avg_score:.2f}", "10点満点"),
+            ("有効品種数", str(metrics["active_varieties"]), None),
+            ("有効レビュー数", str(metrics["active_reviews"]), None),
+            ("研究メモ数", str(metrics["notes_count"]), None),
+            ("直近取得件数", str(metrics["latest_upserted"]), f"状態: {metrics['latest_status']}"),
+            ("平均総合評価", f"{metrics['avg_score']:.2f}", "10点満点"),
         ]
     )
     render_info_card(
@@ -111,28 +141,11 @@ def _render_dashboard() -> None:
     )
 
     render_section_title("最新レビュー", "直近5件の試食評価を表示します。")
-    reviews = (
-        client.table("reviews")
-        .select("tasted_date,overall,varieties(name)")
-        .is_("deleted_at", "null")
-        .order("tasted_date", desc=True)
-        .limit(5)
-        .execute()
-        .data
-        or []
-    )
+    reviews = _load_latest_reviews()
     st.dataframe(reviews, use_container_width=True, hide_index=True)
 
     render_section_title("最新品種取得ログ", "直近5件のMAFF品種取得結果を表示します。")
-    recent_runs = (
-        client.table("variety_scrape_runs")
-        .select("started_at,finished_at,status,upserted_count,failed_count")
-        .order("started_at", desc=True)
-        .limit(5)
-        .execute()
-        .data
-        or []
-    )
+    recent_runs = _load_recent_scrape_runs()
     st.dataframe(recent_runs, use_container_width=True, hide_index=True)
 
     render_section_title("主要メニュー")

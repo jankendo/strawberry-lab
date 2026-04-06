@@ -46,11 +46,12 @@ def list_varieties(
     sort_desc: bool = True,
     page: int = 1,
     page_size: int = 20,
+    fields: str = "*",
 ) -> tuple[list[dict], int]:
     """List varieties with filters and pagination."""
     client = get_user_client()
     query = _apply_variety_filters(
-        client.table("varieties").select("*"),
+        client.table("varieties").select(fields),
         include_deleted=include_deleted,
         keyword=keyword,
         prefecture=prefecture,
@@ -72,6 +73,7 @@ def list_varieties(
     return result.data or [], total
 
 
+@st.cache_data(ttl=120)
 def get_variety_detail(variety_id: str) -> dict | None:
     """Fetch single variety detail."""
     client = get_user_client()
@@ -87,6 +89,54 @@ def list_active_varieties() -> list[dict]:
     return result.data or []
 
 
+@st.cache_data(ttl=180)
+def get_review_counts_for_varieties(variety_ids: Sequence[str]) -> dict[str, int]:
+    """Return review counts keyed by variety ID for the given IDs."""
+    ids = [v for v in dict.fromkeys(variety_ids) if v]
+    if not ids:
+        return {}
+    client = get_user_client()
+    rows = (
+        client.table("reviews")
+        .select("variety_id")
+        .in_("variety_id", ids)
+        .is_("deleted_at", "null")
+        .execute()
+        .data
+        or []
+    )
+    counts: dict[str, int] = {variety_id: 0 for variety_id in ids}
+    for row in rows:
+        variety_id = row.get("variety_id")
+        if variety_id in counts:
+            counts[variety_id] += 1
+    return counts
+
+
+@st.cache_data(ttl=180)
+def get_pokedex_progress() -> dict[str, int]:
+    """Return encyclopedia progress counts based on review registration."""
+    client = get_user_client()
+    total_varieties = (
+        client.table("varieties")
+        .select("id", count="exact", head=True)
+        .is_("deleted_at", "null")
+        .execute()
+        .count
+        or 0
+    )
+    reviewed_rows = client.table("reviews").select("variety_id").is_("deleted_at", "null").execute().data or []
+    discovered_ids = {row.get("variety_id") for row in reviewed_rows if row.get("variety_id")}
+    discovered_count = len(discovered_ids)
+    completion_rate = int((discovered_count / total_varieties) * 100) if total_varieties else 0
+    return {
+        "total_varieties": int(total_varieties),
+        "discovered_count": discovered_count,
+        "undiscovered_count": max(0, int(total_varieties) - discovered_count),
+        "completion_rate": completion_rate,
+    }
+
+
 def create_variety(payload: dict, parent_links: list[dict]) -> str:
     """Create a new variety and optional parent links."""
     client = get_user_client()
@@ -97,6 +147,9 @@ def create_variety(payload: dict, parent_links: list[dict]) -> str:
     if parent_links:
         upsert_parent_links(variety_id, parent_links)
     list_varieties.clear()
+    get_variety_detail.clear()
+    get_pokedex_progress.clear()
+    get_review_counts_for_varieties.clear()
     return variety_id
 
 
@@ -109,6 +162,9 @@ def update_variety(variety_id: str, payload: dict, parent_links: list[dict]) -> 
     if parent_links:
         upsert_parent_links(variety_id, parent_links)
     list_varieties.clear()
+    get_variety_detail.clear()
+    get_pokedex_progress.clear()
+    get_review_counts_for_varieties.clear()
 
 
 def soft_delete_variety(variety_id: str) -> None:
@@ -116,6 +172,9 @@ def soft_delete_variety(variety_id: str) -> None:
     client = get_user_client()
     client.table("varieties").update({"deleted_at": datetime.now(tz=UTC).isoformat()}).eq("id", variety_id).execute()
     list_varieties.clear()
+    get_variety_detail.clear()
+    get_pokedex_progress.clear()
+    get_review_counts_for_varieties.clear()
 
 
 def restore_variety(variety_id: str) -> None:
@@ -134,6 +193,9 @@ def restore_variety(variety_id: str) -> None:
         raise ValueError("同名の有効な品種が存在するため復元できません。")
     client.table("varieties").update({"deleted_at": None}).eq("id", variety_id).execute()
     list_varieties.clear()
+    get_variety_detail.clear()
+    get_pokedex_progress.clear()
+    get_review_counts_for_varieties.clear()
 
 
 def upsert_parent_links(child_variety_id: str, parent_links: list[dict]) -> None:

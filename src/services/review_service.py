@@ -8,6 +8,7 @@ from uuid import uuid4
 import streamlit as st
 
 from src.services.auth_service import get_user_client
+from src.services.variety_service import get_pokedex_progress, get_review_counts_for_varieties
 from src.utils.validation import validate_review_payload
 
 
@@ -86,10 +87,14 @@ def create_or_update_review(payload: dict, *, overwrite_duplicate: bool = False)
         review_id = duplicate["id"]
         client.table("reviews").update(payload).eq("id", review_id).execute()
         list_reviews.clear()
+        get_pokedex_progress.clear()
+        get_review_counts_for_varieties.clear()
         return review_id, True
     payload["id"] = str(uuid4())
     review = client.table("reviews").insert(payload).execute().data[0]
     list_reviews.clear()
+    get_pokedex_progress.clear()
+    get_review_counts_for_varieties.clear()
     return review["id"], False
 
 
@@ -99,6 +104,8 @@ def update_review(review_id: str, payload: dict) -> None:
     payload = validate_review_payload(payload)
     client.table("reviews").update(payload).eq("id", review_id).execute()
     list_reviews.clear()
+    get_pokedex_progress.clear()
+    get_review_counts_for_varieties.clear()
 
 
 def soft_delete_review(review_id: str) -> None:
@@ -106,6 +113,8 @@ def soft_delete_review(review_id: str) -> None:
     client = get_user_client()
     client.table("reviews").update({"deleted_at": datetime.now(tz=UTC).isoformat()}).eq("id", review_id).execute()
     list_reviews.clear()
+    get_pokedex_progress.clear()
+    get_review_counts_for_varieties.clear()
 
 
 def restore_review(review_id: str) -> None:
@@ -125,3 +134,5 @@ def restore_review(review_id: str) -> None:
         raise ValueError("同じ品種・日付の有効レビューが存在するため復元できません。")
     client.table("reviews").update({"deleted_at": None}).eq("id", review_id).execute()
     list_reviews.clear()
+    get_pokedex_progress.clear()
+    get_review_counts_for_varieties.clear()

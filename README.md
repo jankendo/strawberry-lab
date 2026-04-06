@@ -13,6 +13,7 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
    - `pip install -r requirements-scraper.txt`
    - `pip install -r requirements-dev.txt`
 2. Copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml` and set real values.
+   - `APP_COOKIE_SECRET` を設定すると、ログイン状態を30日保持できます。
 3. Apply SQL migrations in Supabase SQL Editor in this order:
    1. `database/000_extensions.sql`
    2. `database/001_functions.sql`
@@ -26,6 +27,12 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 
 ## Run app
 - `streamlit run Home.py`
+
+## Login persistence (30 days)
+- This app supports login skip on revisit by storing encrypted auth session cookies.
+- Required secret:
+  - `APP_COOKIE_SECRET` in `.streamlit/secrets.toml` (long random string)
+- Logout always clears the persisted cookie.
 
 ## Run MAFF variety scraper locally (fast mode)
 PowerShell:
@@ -45,6 +52,16 @@ python -m scraper.main
 - Optional heartbeat check: `python -m scraper.heartbeat`
 - MAFF詳細画像は `variety-images` バケットへ同期され、`variety_images` テーブルへメタデータ保存されます。
 - If schema-related errors occur, re-apply `database/supabase_all_in_one.sql`.
+
+## Pedigree configuration guide
+1. Open **品種管理** → **作成・編集** and set one or more **親品種** for each child variety.
+2. Save, then open **交配図**.
+3. Choose:
+   - **起点品種**: node to focus
+   - **表示方向**: ancestors / descendants / both
+   - **最大深さ**: visible generation depth
+4. Click any node on the graph to jump to the selected variety detail.
+5. If you get a cycle error, review parent links and remove loops.
 
 ## Run tests
 - `pytest -q`
