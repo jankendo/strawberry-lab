@@ -320,19 +320,27 @@ def _render_variety_list_item(
 ) -> bool:
     discovered = review_count > 0
     with st.container(border=True):
-        image_col, info_col = st.columns([1, 2], gap="medium")
-        with image_col:
-            _render_variety_thumbnail(primary_image, discovered=discovered, show_caption=False)
+        if discovered:
+            image_col, info_col = st.columns([1, 2], gap="medium")
+        else:
+            image_col, info_col = None, st.container()
+        if image_col is not None:
+            with image_col:
+                _render_variety_thumbnail(primary_image, discovered=True, show_caption=False)
         with info_col:
             st.markdown(f"**{_display_variety_name(row, discovered=discovered)}**")
             render_status_badge("発見済み" if discovered else "未発見", tone="success" if discovered else "neutral")
-            prefecture_text = _clean_text(row.get("origin_prefecture")) or "未登録"
-            st.caption(f"都道府県: {prefecture_text}")
-            st.caption(f"レビュー件数: {int(review_count)}件")
-            latest_line = _latest_review_line(latest_review)
-            if latest_line:
-                st.caption(latest_line)
-            st.caption(_build_variety_summary(row, discovered=discovered, max_length=120))
+            if discovered:
+                prefecture_text = _clean_text(row.get("origin_prefecture")) or "未登録"
+                st.caption(f"都道府県: {prefecture_text}")
+                st.caption(f"レビュー件数: {int(review_count)}件")
+                latest_line = _latest_review_line(latest_review)
+                if latest_line:
+                    st.caption(latest_line)
+                st.caption(_build_variety_summary(row, discovered=True, max_length=120))
+            else:
+                st.caption("レビュー未登録のため詳細は非表示です。")
+                st.caption("試食評価を1件登録すると情報が開示されます。")
         return st.button("この品種を開く", key=f"{key_prefix}_{row['id']}", use_container_width=True)
 
 
@@ -348,20 +356,27 @@ def _render_mobile_variety_cards(
         review_count = int(review_counts.get(variety_id, 0))
         discovered = review_count > 0
         with st.container(border=True):
-            image_col, info_col = st.columns([1, 1.6], gap="small")
-            with image_col:
-                _render_variety_thumbnail(primary_images.get(variety_id), discovered=discovered, show_caption=False)
+            if discovered:
+                image_col, info_col = st.columns([1, 1.6], gap="small")
+            else:
+                image_col, info_col = None, st.container()
+            if image_col is not None:
+                with image_col:
+                    _render_variety_thumbnail(primary_images.get(variety_id), discovered=True, show_caption=False)
             with info_col:
                 st.markdown(f"**{_display_variety_name(row, discovered=discovered)}**")
                 render_status_badge("発見済み" if discovered else "未発見", tone="success" if discovered else "neutral")
-                prefecture_text = _clean_text(row.get("origin_prefecture"))
-                if prefecture_text:
-                    st.caption(f"都道府県: {prefecture_text}")
-                st.caption(f"レビュー件数: {review_count}件")
-                latest_line = _latest_review_line(latest_reviews.get(variety_id))
-                if latest_line:
-                    st.caption(latest_line)
-            st.caption(_build_variety_summary(row, discovered=discovered, max_length=88))
+                if discovered:
+                    prefecture_text = _clean_text(row.get("origin_prefecture"))
+                    if prefecture_text:
+                        st.caption(f"都道府県: {prefecture_text}")
+                    st.caption(f"レビュー件数: {review_count}件")
+                    latest_line = _latest_review_line(latest_reviews.get(variety_id))
+                    if latest_line:
+                        st.caption(latest_line)
+                    st.caption(_build_variety_summary(row, discovered=True, max_length=88))
+                else:
+                    st.caption("レビュー未登録（詳細ロック中）")
             if st.button("この品種を開く", key=f"variety_mobile_open_{variety_id}", use_container_width=True):
                 selected_id = variety_id
     return selected_id
@@ -608,14 +623,25 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
         if mobile_client and not selected_id:
             st.session_state["variety_mobile_panel"] = "list"
 
-    display_targets = [row["id"] for row in visible_rows]
-    if selected_id and selected_id not in display_targets:
-        display_targets.append(selected_id)
-    primary_images = list_primary_variety_images_with_signed_urls(display_targets)
-    latest_reviews = get_latest_review_summary_for_varieties(display_targets)
+    mobile_panel = st.session_state.get("variety_mobile_panel", "list") if mobile_client else "split"
+    if mobile_client and mobile_panel == "detail" and selected_id:
+        discovered_targets = [selected_id] if int(review_counts.get(selected_id, 0)) > 0 else []
+    else:
+        discovered_targets = [row["id"] for row in visible_rows if int(review_counts.get(row["id"], 0)) > 0]
+        if selected_id and int(review_counts.get(selected_id, 0)) > 0 and selected_id not in discovered_targets:
+            discovered_targets.append(selected_id)
+    primary_images = (
+        list_primary_variety_images_with_signed_urls(discovered_targets)
+        if discovered_targets
+        else {}
+    )
+    latest_reviews = (
+        get_latest_review_summary_for_varieties(discovered_targets)
+        if discovered_targets
+        else {}
+    )
 
     if mobile_client:
-        mobile_panel = st.session_state.get("variety_mobile_panel", "list")
         if mobile_panel == "detail" and selected_id:
             render_section_title("品種詳細", "一覧に戻って別の品種を選択できます。")
             if st.button("← 一覧に戻る", key="variety_mobile_back", use_container_width=True):
