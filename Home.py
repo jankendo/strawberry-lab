@@ -234,10 +234,14 @@ def _render_login() -> None:
         description="登録済み管理者アカウントでログインしてください。",
         actions=["メールアドレス", "パスワード", "ログイン"],
     )
-    if persistence["available"]:
+    if persistence["code"] == "ready_ephemeral_secret":
+        st.warning(
+            f"⚠️ {persistence['message']} 恒久運用では `.streamlit/secrets.toml` に APP_COOKIE_SECRET を設定してください。"
+        )
+    elif persistence["available"]:
         st.caption("✅ 30日ログイン保持: 有効")
-    elif persistence["code"] == "missing_secret":
-        st.info(f"ℹ️ {persistence['message']} `.streamlit/secrets.toml` を確認してください。")
+    elif persistence["code"] in {"missing_secret", "cookie_manager_not_ready_ephemeral_secret"}:
+        st.warning(f"⚠️ {persistence['message']} `.streamlit/secrets.toml` を確認してください。")
     else:
         st.caption(f"ℹ️ {persistence['message']}")
 

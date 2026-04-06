@@ -13,7 +13,7 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
    - `pip install -r requirements-scraper.txt`
    - `pip install -r requirements-dev.txt`
 2. Copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml` and set real values.
-   - `APP_COOKIE_SECRET` を設定すると、ログイン状態を30日保持できます。
+   - `APP_COOKIE_SECRET` を設定すると、ログイン状態を30日安定して保持できます（未設定時は一時ランダム秘密鍵へフォールバックし、再起動/再デプロイで保持がリセットされる場合があります）。
 3. Apply SQL migrations in Supabase SQL Editor in this order:
    1. `database/000_extensions.sql`
    2. `database/001_functions.sql`
@@ -35,9 +35,9 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 
 ## Login persistence (30 days)
 - This app supports login skip on revisit by storing encrypted auth session cookies.
-- To enable persistence, set:
+- For stable persistence across restarts, set:
   - `APP_COOKIE_SECRET` in `.streamlit/secrets.toml` (long random string)
-- If `APP_COOKIE_SECRET` is missing, login persistence is disabled and a UI warning/diagnostic is shown.
+- If `APP_COOKIE_SECRET` is missing, the app falls back to a process-local temporary random secret and shows a UI warning/diagnostic. Persistence can reset on app restart/redeploy.
 - Logout always clears the persisted cookie.
 
 ## Run MAFF variety scraper locally (fast mode)

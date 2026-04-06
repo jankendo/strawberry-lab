@@ -111,11 +111,10 @@ if selected_run_id:
 render_section_title("診断情報", "現在の運用設定と接続前提条件を確認します。")
 render_surface("定期的に接続キー状態と最終成功時刻を確認し、運用停止を早期に検知してください。", tone="soft")
 auth_persistence = get_auth_persistence_status()
-if not auth_persistence["available"]:
-    if auth_persistence["code"] == "missing_secret":
-        st.warning(auth_persistence["message"])
-    else:
-        st.info(auth_persistence["message"])
+if auth_persistence["code"] in {"ready_ephemeral_secret", "cookie_manager_not_ready_ephemeral_secret", "missing_secret"}:
+    st.warning(auth_persistence["message"])
+elif not auth_persistence["available"]:
+    st.info(auth_persistence["message"])
 st.write(
     {
         "app_version": "v3.0.0",

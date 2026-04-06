@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import time
 
 import streamlit as st
@@ -16,9 +17,20 @@ AUTH_COOKIE_NAME = "remember_auth_v1"
 AUTH_COOKIE_PREFIX = "strawberrylab_"
 AUTH_COOKIE_TTL_DAYS = 30
 AUTH_PERSISTENCE_READY = "ready"
+AUTH_PERSISTENCE_READY_EPHEMERAL_SECRET = "ready_ephemeral_secret"
 AUTH_PERSISTENCE_MISSING_SECRET = "missing_secret"
 AUTH_PERSISTENCE_MANAGER_UNAVAILABLE = "cookie_manager_unavailable"
 AUTH_PERSISTENCE_MANAGER_NOT_READY = "cookie_manager_not_ready"
+AUTH_PERSISTENCE_MANAGER_NOT_READY_EPHEMERAL_SECRET = "cookie_manager_not_ready_ephemeral_secret"
+
+_EPHEMERAL_COOKIE_SECRET: str | None = None
+_COOKIE_MANAGER_RUN_CACHE: dict[str, object | None] = {
+    "run_token": None,
+    "secret": None,
+    "is_ephemeral": None,
+    "manager": None,
+    "status": None,
+}
 
 
 def initialize_auth_state() -> None:
@@ -28,31 +40,102 @@ def initialize_auth_state() -> None:
             st.session_state[key] = None if key != "is_authenticated" else False
 
 
-def _get_cookie_secret() -> str | None:
+def _get_script_run_token() -> str:
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+        context = get_script_run_ctx()
+        if context is None:
+            return "no-script-context"
+        return f"{context.session_id}:{context.page_script_hash}:{id(context.cursors)}"
+    except Exception:
+        return "no-script-context"
+
+
+def _get_process_ephemeral_cookie_secret() -> str | None:
+    global _EPHEMERAL_COOKIE_SECRET
+    if _EPHEMERAL_COOKIE_SECRET:
+        return _EPHEMERAL_COOKIE_SECRET
+    try:
+        _EPHEMERAL_COOKIE_SECRET = secrets.token_urlsafe(48)
+    except Exception:
+        return None
+    return _EPHEMERAL_COOKIE_SECRET
+
+
+def _get_cookie_secret() -> tuple[str | None, bool]:
     secret = os.getenv("APP_COOKIE_SECRET")
     if secret:
-        return secret
+        return secret, False
     try:
         secret_from_secrets = st.secrets.get("APP_COOKIE_SECRET")
         if secret_from_secrets:
-            return str(secret_from_secrets)
+            return str(secret_from_secrets), False
     except Exception:
-        return None
-    return None
+        pass
+
+    ephemeral_secret = _get_process_ephemeral_cookie_secret()
+    if ephemeral_secret:
+        return ephemeral_secret, True
+    return None, False
 
 
 def _get_cookie_manager_with_status():
-    secret = _get_cookie_secret()
+    secret, is_ephemeral = _get_cookie_secret()
     if not secret:
         return None, AUTH_PERSISTENCE_MISSING_SECRET
+
+    run_token = _get_script_run_token()
+    if (
+        _COOKIE_MANAGER_RUN_CACHE.get("run_token") == run_token
+        and _COOKIE_MANAGER_RUN_CACHE.get("secret") == secret
+        and _COOKIE_MANAGER_RUN_CACHE.get("is_ephemeral") == is_ephemeral
+    ):
+        return _COOKIE_MANAGER_RUN_CACHE.get("manager"), _COOKIE_MANAGER_RUN_CACHE.get("status")
+
     try:
         from streamlit_cookies_manager import EncryptedCookieManager
     except Exception:
+        _COOKIE_MANAGER_RUN_CACHE.update(
+            {
+                "run_token": run_token,
+                "secret": secret,
+                "is_ephemeral": is_ephemeral,
+                "manager": None,
+                "status": AUTH_PERSISTENCE_MANAGER_UNAVAILABLE,
+            }
+        )
         return None, AUTH_PERSISTENCE_MANAGER_UNAVAILABLE
+
     cookies = EncryptedCookieManager(prefix=AUTH_COOKIE_PREFIX, password=secret)
     if not cookies.ready():
-        return None, AUTH_PERSISTENCE_MANAGER_NOT_READY
-    return cookies, AUTH_PERSISTENCE_READY
+        status = (
+            AUTH_PERSISTENCE_MANAGER_NOT_READY_EPHEMERAL_SECRET
+            if is_ephemeral
+            else AUTH_PERSISTENCE_MANAGER_NOT_READY
+        )
+        _COOKIE_MANAGER_RUN_CACHE.update(
+            {
+                "run_token": run_token,
+                "secret": secret,
+                "is_ephemeral": is_ephemeral,
+                "manager": None,
+                "status": status,
+            }
+        )
+        return None, status
+
+    status = AUTH_PERSISTENCE_READY_EPHEMERAL_SECRET if is_ephemeral else AUTH_PERSISTENCE_READY
+    _COOKIE_MANAGER_RUN_CACHE.update(
+        {
+            "run_token": run_token,
+            "secret": secret,
+            "is_ephemeral": is_ephemeral,
+            "manager": cookies,
+            "status": status,
+        }
+    )
+    return cookies, status
 
 
 def _get_cookie_manager():
@@ -120,17 +203,29 @@ def get_auth_persistence_status() -> dict[str, str | bool]:
             "code": AUTH_PERSISTENCE_READY,
             "message": "30日ログイン保持は有効です。",
         }
+    if status == AUTH_PERSISTENCE_READY_EPHEMERAL_SECRET:
+        return {
+            "available": True,
+            "code": AUTH_PERSISTENCE_READY_EPHEMERAL_SECRET,
+            "message": "APP_COOKIE_SECRET が未設定のため、一時ランダム秘密鍵でログイン保持を継続中です。再起動/再デプロイ時に保持がリセットされる場合があります。",
+        }
     if status == AUTH_PERSISTENCE_MISSING_SECRET:
         return {
             "available": False,
             "code": AUTH_PERSISTENCE_MISSING_SECRET,
-            "message": "APP_COOKIE_SECRET が未設定のため、30日ログイン保持は無効です。",
+            "message": "APP_COOKIE_SECRET が未設定で、一時秘密鍵の生成にも失敗したため、30日ログイン保持は無効です。",
         }
     if status == AUTH_PERSISTENCE_MANAGER_UNAVAILABLE:
         return {
             "available": False,
             "code": AUTH_PERSISTENCE_MANAGER_UNAVAILABLE,
             "message": "クッキー暗号化モジュールを読み込めないため、30日ログイン保持は利用できません。",
+        }
+    if status == AUTH_PERSISTENCE_MANAGER_NOT_READY_EPHEMERAL_SECRET:
+        return {
+            "available": False,
+            "code": AUTH_PERSISTENCE_MANAGER_NOT_READY_EPHEMERAL_SECRET,
+            "message": "ログイン保持クッキーを初期化中です。APP_COOKIE_SECRET 未設定時は一時ランダム秘密鍵を使用するため、再起動/再デプロイ時に保持がリセットされる場合があります。",
         }
     return {
         "available": False,
