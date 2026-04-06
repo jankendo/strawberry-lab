@@ -6,7 +6,14 @@ import streamlit as st
 
 from src.components.layout import inject_app_style, render_page_header, render_section_title
 from src.components.sidebar import render_sidebar
-from src.services.auth_service import get_user_client, initialize_auth_state, login_user, restore_login_from_cookie
+from src.services.auth_service import (
+    ensure_auth_cookie_persistence,
+    get_auth_persistence_status,
+    get_user_client,
+    initialize_auth_state,
+    login_user,
+    restore_login_from_cookie,
+)
 
 try:
     from src.components.layout import (
@@ -95,6 +102,7 @@ except ImportError:
 st.set_page_config(page_title="StrawberryLab", layout="wide")
 initialize_auth_state()
 restore_login_from_cookie()
+ensure_auth_cookie_persistence()
 inject_app_style()
 
 
@@ -213,6 +221,7 @@ def _format_recent_scrape_runs(rows: list[dict]) -> list[dict]:
 
 
 def _render_login() -> None:
+    persistence = get_auth_persistence_status()
     render_hero_banner(
         "StrawberryLab",
         "いちご品種の研究・評価を一元管理するための管理アプリです。",
@@ -225,6 +234,12 @@ def _render_login() -> None:
         description="登録済み管理者アカウントでログインしてください。",
         actions=["メールアドレス", "パスワード", "ログイン"],
     )
+    if persistence["available"]:
+        st.caption("✅ 30日ログイン保持: 有効")
+    elif persistence["code"] == "missing_secret":
+        st.info(f"ℹ️ {persistence['message']} `.streamlit/secrets.toml` を確認してください。")
+    else:
+        st.caption(f"ℹ️ {persistence['message']}")
 
     _, center, _ = st.columns([1, 1.4, 1])
     with center:

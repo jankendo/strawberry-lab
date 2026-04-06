@@ -16,7 +16,7 @@ from src.components.layout import (
 )
 from src.components.sidebar import render_sidebar
 from src.config import get_config
-from src.services.auth_service import require_admin_session
+from src.services.auth_service import get_auth_persistence_status, require_admin_session
 from src.services.export_service import export_table_csv
 from src.services.scrape_service import (
     clear_scrape_cache,
@@ -110,12 +110,20 @@ if selected_run_id:
 
 render_section_title("診断情報", "現在の運用設定と接続前提条件を確認します。")
 render_surface("定期的に接続キー状態と最終成功時刻を確認し、運用停止を早期に検知してください。", tone="soft")
+auth_persistence = get_auth_persistence_status()
+if not auth_persistence["available"]:
+    if auth_persistence["code"] == "missing_secret":
+        st.warning(auth_persistence["message"])
+    else:
+        st.info(auth_persistence["message"])
 st.write(
     {
         "app_version": "v3.0.0",
         "timezone": cfg.app_timezone,
         "has_supabase_url": bool(cfg.supabase_url),
         "has_supabase_anon_key": bool(cfg.supabase_anon_key),
+        "auth_persistence_available": auth_persistence["available"],
+        "auth_persistence_code": auth_persistence["code"],
         "scrape_mode": "local_cli_only",
         "last_successful_variety_scrape": latest_success,
         "checked_at": datetime.utcnow().isoformat(),

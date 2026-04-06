@@ -89,7 +89,7 @@ def create_or_update_review(payload: dict, *, overwrite_duplicate: bool = False)
     """Create review; optionally overwrite duplicate by variety/date."""
     client = get_user_client()
     payload = validate_review_payload(payload)
-    duplicate = _find_duplicate(payload["variety_id"], str(payload["tasted_date"]))
+    duplicate = _find_duplicate(payload["variety_id"], payload["tasted_date"])
     if duplicate and not overwrite_duplicate:
         raise ValueError("DUPLICATE_REVIEW")
     if duplicate:

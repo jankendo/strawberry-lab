@@ -22,6 +22,7 @@ from src.services.auth_service import require_admin_session
 from src.services.review_service import create_or_update_review, list_reviews, restore_review, soft_delete_review
 from src.services.storage_service import upload_review_image
 from src.services.variety_service import list_active_varieties
+from src.utils.validation import normalize_review_tasted_date
 
 _PENDING_DUPLICATE_PAYLOAD_KEY = "reviews_pending_duplicate_payload"
 _PENDING_DUPLICATE_FILES_KEY = "reviews_pending_duplicate_files"
@@ -43,6 +44,12 @@ def _upload_review_images(review_id: str, files_to_upload: list[tuple[str, bytes
 def _clear_pending_duplicate() -> None:
     st.session_state.pop(_PENDING_DUPLICATE_PAYLOAD_KEY, None)
     st.session_state.pop(_PENDING_DUPLICATE_FILES_KEY, None)
+
+
+def _normalize_pending_payload(payload: dict) -> dict:
+    normalized_payload = payload.copy()
+    normalized_payload["tasted_date"] = normalize_review_tasted_date(normalized_payload["tasted_date"])
+    return normalized_payload
 
 
 st.set_page_config(page_title="試食評価", layout="wide")
@@ -134,7 +141,7 @@ with tab_edit:
                 st.rerun()
             except ValueError as exc:
                 if str(exc) == "DUPLICATE_REVIEW":
-                    st.session_state[_PENDING_DUPLICATE_PAYLOAD_KEY] = payload
+                    st.session_state[_PENDING_DUPLICATE_PAYLOAD_KEY] = _normalize_pending_payload(payload)
                     st.session_state[_PENDING_DUPLICATE_FILES_KEY] = files_to_upload
                 else:
                     _clear_pending_duplicate()

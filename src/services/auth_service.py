@@ -15,6 +15,10 @@ AUTH_KEYS = ("current_user", "supabase_client_user", "is_authenticated", "access
 AUTH_COOKIE_NAME = "remember_auth_v1"
 AUTH_COOKIE_PREFIX = "strawberrylab_"
 AUTH_COOKIE_TTL_DAYS = 30
+AUTH_PERSISTENCE_READY = "ready"
+AUTH_PERSISTENCE_MISSING_SECRET = "missing_secret"
+AUTH_PERSISTENCE_MANAGER_UNAVAILABLE = "cookie_manager_unavailable"
+AUTH_PERSISTENCE_MANAGER_NOT_READY = "cookie_manager_not_ready"
 
 
 def initialize_auth_state() -> None:
@@ -37,17 +41,22 @@ def _get_cookie_secret() -> str | None:
     return None
 
 
-def _get_cookie_manager():
+def _get_cookie_manager_with_status():
     secret = _get_cookie_secret()
     if not secret:
-        return None
+        return None, AUTH_PERSISTENCE_MISSING_SECRET
     try:
         from streamlit_cookies_manager import EncryptedCookieManager
     except Exception:
-        return None
+        return None, AUTH_PERSISTENCE_MANAGER_UNAVAILABLE
     cookies = EncryptedCookieManager(prefix=AUTH_COOKIE_PREFIX, password=secret)
     if not cookies.ready():
-        return None
+        return None, AUTH_PERSISTENCE_MANAGER_NOT_READY
+    return cookies, AUTH_PERSISTENCE_READY
+
+
+def _get_cookie_manager():
+    cookies, _ = _get_cookie_manager_with_status()
     return cookies
 
 
@@ -60,10 +69,10 @@ def _clear_auth_cookie() -> None:
         cookies.save()
 
 
-def _save_auth_cookie(*, access_token: str, refresh_token: str) -> None:
+def _save_auth_cookie(*, access_token: str, refresh_token: str) -> bool:
     cookies = _get_cookie_manager()
     if cookies is None:
-        return
+        return False
     payload = {
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -71,6 +80,7 @@ def _save_auth_cookie(*, access_token: str, refresh_token: str) -> None:
     }
     cookies[AUTH_COOKIE_NAME] = json.dumps(payload, ensure_ascii=False)
     cookies.save()
+    return True
 
 
 def _read_auth_cookie() -> dict | None:
@@ -99,6 +109,51 @@ def _set_authenticated_state(*, client, user, access_token: str, refresh_token: 
     st.session_state["access_token"] = access_token
     st.session_state["refresh_token"] = refresh_token
     st.session_state["admin_checked_at"] = int(time.time())
+
+
+def get_auth_persistence_status() -> dict[str, str | bool]:
+    """Return availability information for encrypted auth-cookie persistence."""
+    _, status = _get_cookie_manager_with_status()
+    if status == AUTH_PERSISTENCE_READY:
+        return {
+            "available": True,
+            "code": AUTH_PERSISTENCE_READY,
+            "message": "30日ログイン保持は有効です。",
+        }
+    if status == AUTH_PERSISTENCE_MISSING_SECRET:
+        return {
+            "available": False,
+            "code": AUTH_PERSISTENCE_MISSING_SECRET,
+            "message": "APP_COOKIE_SECRET が未設定のため、30日ログイン保持は無効です。",
+        }
+    if status == AUTH_PERSISTENCE_MANAGER_UNAVAILABLE:
+        return {
+            "available": False,
+            "code": AUTH_PERSISTENCE_MANAGER_UNAVAILABLE,
+            "message": "クッキー暗号化モジュールを読み込めないため、30日ログイン保持は利用できません。",
+        }
+    return {
+        "available": False,
+        "code": AUTH_PERSISTENCE_MANAGER_NOT_READY,
+        "message": "ログイン保持クッキーを初期化中です。初回表示後に再試行されます。",
+    }
+
+
+def ensure_auth_cookie_persistence() -> bool:
+    """Retry persisting auth cookie when an authenticated session already exists."""
+    initialize_auth_state()
+    if not st.session_state.get("is_authenticated") or not st.session_state.get("current_user"):
+        return False
+
+    access_token = st.session_state.get("access_token")
+    refresh_token = st.session_state.get("refresh_token")
+    if not access_token or not refresh_token:
+        return False
+
+    payload = _read_auth_cookie()
+    if payload and payload.get("access_token") == access_token and payload.get("refresh_token") == refresh_token:
+        return True
+    return _save_auth_cookie(access_token=access_token, refresh_token=refresh_token)
 
 
 def _is_admin_user(*, client, user_id: str) -> bool:
@@ -136,6 +191,7 @@ def restore_login_from_cookie() -> bool:
     """Restore login state from encrypted cookie when available."""
     initialize_auth_state()
     if st.session_state.get("is_authenticated") and st.session_state.get("current_user"):
+        ensure_auth_cookie_persistence()
         return True
     payload = _read_auth_cookie()
     if not payload:
@@ -206,6 +262,7 @@ def require_admin_session() -> None:
         st.stop()
     checked_at = int(st.session_state.get("admin_checked_at") or 0)
     if checked_at and int(time.time()) - checked_at <= 60:
+        ensure_auth_cookie_persistence()
         return
     client = get_user_client()
     user_id = st.session_state["current_user"]["id"]
@@ -222,3 +279,4 @@ def require_admin_session() -> None:
         st.error("管理者権限がありません。")
         st.stop()
     st.session_state["admin_checked_at"] = int(time.time())
+    ensure_auth_cookie_persistence()

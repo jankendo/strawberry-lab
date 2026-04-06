@@ -133,3 +133,41 @@ def test_create_or_update_review_overwrites_duplicate(monkeypatch) -> None:
     assert update_query.updated_payload is not None
     assert ("id", "dup-id") in update_query.eq_calls
     assert list_cache.called and pokedex_cache.called and count_cache.called
+
+
+def test_create_review_normalizes_tasted_date_before_insert(monkeypatch) -> None:
+    insert_query = _InsertQuery()
+    observed: dict[str, str] = {}
+
+    def _find_duplicate(_variety_id: str, tasted_date: str):
+        observed["tasted_date"] = tasted_date
+        return None
+
+    monkeypatch.setattr(review_service, "get_user_client", lambda: _Client(insert_query))
+    monkeypatch.setattr(review_service, "_find_duplicate", _find_duplicate)
+    _install_cache_spies(monkeypatch)
+    payload = _sample_payload()
+
+    review_service.create_or_update_review(payload)
+
+    assert observed["tasted_date"] == "2025-01-01"
+    assert insert_query.inserted_payload is not None
+    assert insert_query.inserted_payload["tasted_date"] == "2025-01-01"
+
+
+def test_create_review_duplicate_error_still_normalizes_input_payload(monkeypatch) -> None:
+    observed: dict[str, str] = {}
+
+    def _find_duplicate(_variety_id: str, tasted_date: str):
+        observed["tasted_date"] = tasted_date
+        return {"id": "dup-id"}
+
+    monkeypatch.setattr(review_service, "get_user_client", lambda: object())
+    monkeypatch.setattr(review_service, "_find_duplicate", _find_duplicate)
+    payload = _sample_payload()
+
+    with pytest.raises(ValueError, match="DUPLICATE_REVIEW"):
+        review_service.create_or_update_review(payload)
+
+    assert observed["tasted_date"] == "2025-01-01"
+    assert payload["tasted_date"] == "2025-01-01"

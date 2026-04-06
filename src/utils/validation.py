@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from src.constants.prefectures import PREFECTURES
 from src.utils.text_utils import normalize_text
@@ -62,11 +62,31 @@ def validate_variety_payload(payload: dict) -> dict:
     return payload
 
 
+def normalize_review_tasted_date(value: date | str) -> str:
+    """Normalize review tasted_date to ISO date string after validation."""
+    parsed_date: date
+    if isinstance(value, datetime):
+        parsed_date = value.date()
+    elif isinstance(value, date):
+        parsed_date = value
+    elif isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("試食日は必須です。")
+        try:
+            parsed_date = date.fromisoformat(normalized)
+        except ValueError as exc:
+            raise ValueError("試食日の形式が不正です。") from exc
+    else:
+        raise ValueError("試食日の形式が不正です。")
+    if parsed_date > date.today():
+        raise ValueError("試食日は今日以前のみです。")
+    return parsed_date.isoformat()
+
+
 def validate_review_payload(payload: dict) -> dict:
     """Validate review payload."""
-    tasted_date = payload["tasted_date"]
-    if tasted_date > date.today():
-        raise ValueError("試食日は今日以前のみです。")
+    payload["tasted_date"] = normalize_review_tasted_date(payload["tasted_date"])
     for key in ("sweetness", "sourness", "aroma", "texture", "appearance"):
         if int(payload[key]) not in (1, 2, 3, 4, 5):
             raise ValueError(f"{key} は1〜5です。")

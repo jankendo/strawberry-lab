@@ -35,8 +35,9 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 
 ## Login persistence (30 days)
 - This app supports login skip on revisit by storing encrypted auth session cookies.
-- Required secret:
+- To enable persistence, set:
   - `APP_COOKIE_SECRET` in `.streamlit/secrets.toml` (long random string)
+- If `APP_COOKIE_SECRET` is missing, login persistence is disabled and a UI warning/diagnostic is shown.
 - Logout always clears the persisted cookie.
 
 ## Run MAFF variety scraper locally (fast mode)
