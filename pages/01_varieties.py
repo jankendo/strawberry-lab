@@ -184,6 +184,8 @@ _VARIETY_ASSET_CLEAR_TOKEN_KEY = "variety_asset_clear_token"
 _VARIETY_IMAGE_UPLOAD_QUEUE_KEY = "variety-image-upload-queue"
 _VARIETY_IMAGE_UPLOAD_REPLAY_EVENT = "ichigodb:variety-image-upload-replay-request"
 _VARIETY_PENDING_UPLOAD_INTENT_REMOVALS_KEY = "variety_pending_upload_intent_removals"
+_VARIETY_EDIT_TARGET_KEY = "variety_edit_target_id"
+_VARIETY_NEW_TARGET = "新規作成"
 
 
 def _resolve_select_index(options: list[str], value: object, *, fallback: int = 0) -> int:
@@ -193,6 +195,26 @@ def _resolve_select_index(options: list[str], value: object, *, fallback: int = 
     if 0 <= fallback < len(options):
         return fallback
     return 0
+
+
+def _set_variety_edit_target(target_id: object, *, switch_section: bool = True) -> None:
+    normalized = str(target_id or "").strip()
+    st.session_state[_VARIETY_EDIT_TARGET_KEY] = normalized or _VARIETY_NEW_TARGET
+    if normalized:
+        st.session_state["variety_selected_from_list"] = normalized
+    if switch_section:
+        st.session_state["variety_active_section"] = "作成・編集"
+
+
+def _resolve_variety_edit_target(active_varieties: list[dict]) -> str:
+    options = [_VARIETY_NEW_TARGET] + [str(variety["id"]) for variety in active_varieties]
+    requested = str(st.session_state.get(_VARIETY_EDIT_TARGET_KEY) or "").strip()
+    if requested in options:
+        return requested
+    selected_from_list = str(st.session_state.get("variety_selected_from_list") or "").strip()
+    if selected_from_list in options:
+        return selected_from_list
+    return _VARIETY_NEW_TARGET
 
 
 def _resolve_pending_variety_upload_task() -> dict | None:
@@ -249,6 +271,15 @@ def _clear_pending_variety_upload_task() -> None:
 
 def _reset_variety_upload_widget_state() -> None:
     st.session_state[_VARIETY_ASSET_CLEAR_TOKEN_KEY] = str(uuid4())
+
+
+def _collect_variety_component_upload_files(component_state: object) -> list[dict]:
+    if not isinstance(component_state, dict):
+        return []
+    files = component_state.get("files")
+    if not isinstance(files, list):
+        return []
+    return [dict(entry) for entry in files[:5] if isinstance(entry, dict)]
 
 
 def _build_variety_summary(row: dict, *, discovered: bool, max_length: int = 96) -> str:
@@ -535,12 +566,18 @@ def _render_variety_detail_panel(
             title="情報ロック中",
             tone="soft",
         )
-        st.page_link(
-            "pages/02_reviews.py",
-            label="📝 この品種を評価",
-            query_params=_review_entry_query_params(selected_id),
-            use_container_width=True,
-        )
+        review_col, edit_col = st.columns(2, gap="small")
+        with review_col:
+            st.page_link(
+                "pages/02_reviews.py",
+                label="📝 この品種を評価",
+                query_params=_review_entry_query_params(selected_id),
+                use_container_width=True,
+            )
+        with edit_col:
+            if st.button("✏️ この品種を編集", key=f"variety_edit_from_locked_{selected_id}", use_container_width=True):
+                _set_variety_edit_target(selected_id)
+                st.rerun()
         return
 
     images = list_images_with_signed_urls("variety_images", "variety_id", selected_id)
@@ -564,12 +601,18 @@ def _render_variety_detail_panel(
             subtitle=f"レビュー件数: {review_count}件",
             tone="soft",
         )
-        st.page_link(
-            "pages/02_reviews.py",
-            label="📝 この品種を評価",
-            query_params=_review_entry_query_params(selected_id),
-            use_container_width=True,
-        )
+        review_col, edit_col = st.columns(2, gap="small")
+        with review_col:
+            st.page_link(
+                "pages/02_reviews.py",
+                label="📝 この品種を評価",
+                query_params=_review_entry_query_params(selected_id),
+                use_container_width=True,
+            )
+        with edit_col:
+            if st.button("✏️ この品種を編集", key=f"variety_edit_from_detail_mobile_{selected_id}", use_container_width=True):
+                _set_variety_edit_target(selected_id)
+                st.rerun()
     else:
         hero_image_col, hero_meta_col = st.columns([1, 1.1], gap="medium")
         with hero_image_col:
@@ -581,12 +624,18 @@ def _render_variety_detail_panel(
                 subtitle=f"レビュー件数: {review_count}件",
                 tone="soft",
             )
-            st.page_link(
-                "pages/02_reviews.py",
-                label="📝 この品種を評価",
-                query_params=_review_entry_query_params(selected_id),
-                use_container_width=True,
-            )
+            review_col, edit_col = st.columns(2, gap="small")
+            with review_col:
+                st.page_link(
+                    "pages/02_reviews.py",
+                    label="📝 この品種を評価",
+                    query_params=_review_entry_query_params(selected_id),
+                    use_container_width=True,
+                )
+            with edit_col:
+                if st.button("✏️ この品種を編集", key=f"variety_edit_from_detail_desktop_{selected_id}", use_container_width=True):
+                    _set_variety_edit_target(selected_id)
+                    st.rerun()
 
     if latest_review:
         latest_date = _clean_text(latest_review.get("tasted_date"))
@@ -932,19 +981,23 @@ def _render_variety_edit_section() -> None:
     )
 
     active = list_active_varieties()
+    edit_options = [_VARIETY_NEW_TARGET] + [str(v["id"]) for v in active]
+    st.session_state[_VARIETY_EDIT_TARGET_KEY] = _resolve_variety_edit_target(active)
     edit_id = st.selectbox(
         "編集対象",
-        ["新規作成"] + [v["id"] for v in active],
-        format_func=lambda x: "新規作成" if x == "新規作成" else next((v["name"] for v in active if v["id"] == x), x),
+        edit_options,
+        format_func=lambda x: _VARIETY_NEW_TARGET if x == _VARIETY_NEW_TARGET else next((v["name"] for v in active if v["id"] == x), x),
+        key=_VARIETY_EDIT_TARGET_KEY,
     )
-    base = get_variety_detail(edit_id) if edit_id != "新規作成" else {}
-    current_target_label = "新規作成" if edit_id == "新規作成" else str(base.get("name") or edit_id)
+    base = get_variety_detail(edit_id) if edit_id != _VARIETY_NEW_TARGET else {}
+    current_target_label = _VARIETY_NEW_TARGET if edit_id == _VARIETY_NEW_TARGET else str(base.get("name") or edit_id)
     render_surface(
         f"現在の対象: **{current_target_label}**\n\n図鑑に出る情報から親品種リンク、画像まで同じ画面で更新できます。",
         title="編集対象",
         tone="soft",
     )
     pending_upload_task = _resolve_pending_variety_upload_task()
+    uploader_files = []
 
     uploader_state = render_asset_uploader(
         key=_VARIETY_ASSET_UPLOADER_KEY,
@@ -957,9 +1010,15 @@ def _render_variety_edit_section() -> None:
         replay_event_name=_VARIETY_IMAGE_UPLOAD_REPLAY_EVENT,
         replay_queue_key=_VARIETY_IMAGE_UPLOAD_QUEUE_KEY,
     )
-    uploader_files = list(uploader_state.get("files") or [])[:5]
+    uploader_files = _collect_variety_component_upload_files(uploader_state)
     if uploader_state.get("component_available"):
         st.caption("画像はブラウザ側で長辺2048pxへ最適化し、保存時にSupabase Storageへ直接アップロードされます。")
+        if uploader_files and not pending_upload_task:
+            render_status_badge(
+                "画像は保存待ちです。下のボタンで保存するとアップロードが始まります。",
+                tone="info",
+                icon="⬆️",
+            )
     else:
         st.caption("カスタム画像アップローダーを読み込めないため、標準アップロードへフォールバックします。")
 
@@ -990,6 +1049,7 @@ def _render_variety_edit_section() -> None:
                         str(pending_upload_task["target_id"]),
                         matching_uploaded,
                     )
+                    _set_variety_edit_target(pending_upload_task["target_id"])
                     _reset_variety_upload_widget_state()
                     _clear_pending_variety_upload_task()
                     st.success(str(pending_upload_task.get("success_message") or "保存しました。"))
@@ -1072,8 +1132,12 @@ def _render_variety_edit_section() -> None:
                 type=["jpg", "jpeg", "png", "webp"],
                 accept_multiple_files=True,
             )
+        has_selected_images = bool(uploader_files or fallback_uploaded_files)
+        save_label = "作成" if edit_id == _VARIETY_NEW_TARGET else "更新"
+        if has_selected_images:
+            save_label = f"{save_label}して画像をアップロード"
         save = st.form_submit_button(
-            "保存",
+            save_label,
             use_container_width=True,
             type="primary",
             disabled=bool(pending_upload_task),
@@ -1099,13 +1163,14 @@ def _render_variety_edit_section() -> None:
         parent_links = [{"parent_variety_id": pid, "parent_order": idx + 1} for idx, pid in enumerate(parent_ids)]
         fallback_files_to_upload = list(fallback_uploaded_files or []) if not uploader_state.get("component_available") else []
         try:
-            if edit_id == "新規作成":
+            if edit_id == _VARIETY_NEW_TARGET:
                 target_id = create_variety(payload, parent_links)
                 success_message = "作成しました。"
             else:
                 update_variety(edit_id, payload, parent_links)
                 target_id = edit_id
                 success_message = "更新しました。"
+            _set_variety_edit_target(target_id, switch_section=False)
             if uploader_state.get("component_available"):
                 targets = prepare_variety_image_direct_upload_targets(target_id, uploader_files)
                 if targets:
@@ -1126,7 +1191,7 @@ def _render_variety_edit_section() -> None:
                         "target_id": target_id,
                         "targets": targets,
                         "expected_count": len(targets),
-                        "success_message": success_message,
+                        "success_message": f"{success_message} 画像も登録しました。",
                     }
                     st.rerun()
             else:
@@ -1144,7 +1209,7 @@ def _render_variety_edit_section() -> None:
         except Exception as exc:
             st.error(str(exc))
 
-    if edit_id != "新規作成":
+    if edit_id != _VARIETY_NEW_TARGET:
         render_section_title("画像管理")
         render_surface(
             "画像は最大5枚まで登録できます。メイン画像を設定すると一覧や関連画面での表示基準になります。",
