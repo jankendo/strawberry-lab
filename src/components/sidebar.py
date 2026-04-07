@@ -55,9 +55,9 @@ def _render_desktop_nav_reopen_button(*, active_page: str) -> None:
         st.rerun()
 
 
-def _render_native_mobile_nav(*, active_tab: str) -> None:
+def _render_native_mobile_nav(*, active_tab: str, visible: bool) -> None:
     nav_config = {
-        "visible": True,
+        "visible": visible,
         "activeKey": active_tab,
         "items": [
             {
@@ -101,11 +101,9 @@ def _render_native_mobile_nav(*, active_tab: str) -> None:
 
 def render_primary_nav(*, active_page: str) -> None:
     """Render mobile navigation using a native-shell bottom bar."""
-    if not st.session_state.get("is_authenticated") or not is_mobile_client():
-        return
-
-    active_tab = _resolve_mobile_active_tab(active_page)
-    _render_native_mobile_nav(active_tab=active_tab)
+    visible = bool(st.session_state.get("is_authenticated") and is_mobile_client())
+    active_tab = _resolve_mobile_active_tab(active_page) if visible else ""
+    _render_native_mobile_nav(active_tab=active_tab, visible=visible)
 
 
 def render_sidebar(*, active_page: str) -> None:

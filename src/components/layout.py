@@ -613,7 +613,7 @@ def _inject_native_shell_bootstrap() -> None:
 
       state.renderBottomNav = renderBottomNav;
       installIOSScrollGuard();
-      renderBottomNav(null);
+      renderBottomNav(state.bottomNavConfig || null);
       chooseStaticBase(function (staticBaseUrl) {
         applyHeadEnhancements(staticBaseUrl);
         registerServiceWorker(staticBaseUrl);

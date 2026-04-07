@@ -148,6 +148,7 @@ initialize_auth_state()
 restore_login_from_cookie()
 ensure_auth_cookie_persistence()
 inject_app_style()
+render_primary_nav(active_page="dashboard")
 
 
 @scoped_cache_data(ttl=120, scopes=("varieties", "reviews", "scrape"))
@@ -394,7 +395,6 @@ def _render_login() -> None:
 
 def _render_dashboard() -> None:
     render_sidebar(active_page="dashboard")
-    render_primary_nav(active_page="dashboard")
     mobile_client = is_mobile_client()
 
     render_hero_banner(

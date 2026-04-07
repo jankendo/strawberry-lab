@@ -33,28 +33,24 @@ def test_render_primary_nav_renders_for_mobile_authenticated_users(monkeypatch) 
     sidebar.render_primary_nav(active_page="dashboard")
 
     assert len(component_calls) == 1
+    assert '"visible": true' in component_calls[0]
     assert '"activeKey": "dashboard"' in component_calls[0]
     assert '"pathname": "/varieties"' in component_calls[0]
     assert '"ariaLabel": "設定に移動"' in component_calls[0]
 
 
-def test_render_primary_nav_skips_for_desktop_authenticated_users(monkeypatch) -> None:
-    markdown_calls: list[str] = []
-    page_links: list[tuple[str, str]] = []
+def test_render_primary_nav_clears_nav_for_desktop_authenticated_users(monkeypatch) -> None:
+    component_calls: list[str] = []
 
     monkeypatch.setattr(sidebar.st, "session_state", {"is_authenticated": True})
     monkeypatch.setattr(sidebar, "is_mobile_client", lambda: False)
-    monkeypatch.setattr(sidebar.st, "markdown", lambda html, **_kwargs: markdown_calls.append(html))
-    monkeypatch.setattr(
-        sidebar.st,
-        "page_link",
-        lambda path, label, **_kwargs: page_links.append((path, label)),
-    )
+    monkeypatch.setattr(sidebar.components, "html", lambda html, **_kwargs: component_calls.append(html))
 
     sidebar.render_primary_nav(active_page="dashboard")
 
-    assert not markdown_calls
-    assert not page_links
+    assert len(component_calls) == 1
+    assert '"visible": false' in component_calls[0]
+    assert '"activeKey": ""' in component_calls[0]
 
 
 def test_render_sidebar_renders_for_desktop_authenticated_users(monkeypatch) -> None:
