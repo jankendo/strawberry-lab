@@ -109,6 +109,7 @@ def test_render_sidebar_skips_for_mobile_authenticated_users(monkeypatch) -> Non
 def test_render_sidebar_renders_reopen_button_when_desktop_nav_is_collapsed(monkeypatch) -> None:
     markdown_calls: list[str] = []
     button_calls: list[str] = []
+    captions: list[str] = []
 
     monkeypatch.setattr(
         sidebar.st,
@@ -117,10 +118,12 @@ def test_render_sidebar_renders_reopen_button_when_desktop_nav_is_collapsed(monk
             "is_authenticated": True,
             "current_user": {"email": "user@example.com"},
             sidebar._DESKTOP_NAV_COLLAPSED_KEY: True,
+            sidebar._DESKTOP_NAV_COLLAPSED_PAGE_KEY: "dashboard",
         },
     )
     monkeypatch.setattr(sidebar, "is_mobile_client", lambda: False)
     monkeypatch.setattr(sidebar.st, "markdown", lambda html, **_kwargs: markdown_calls.append(html))
+    monkeypatch.setattr(sidebar.st, "caption", lambda text, **_kwargs: captions.append(text))
     monkeypatch.setattr(
         sidebar.st,
         "button",
@@ -130,8 +133,42 @@ def test_render_sidebar_renders_reopen_button_when_desktop_nav_is_collapsed(monk
     sidebar.render_sidebar(active_page="dashboard")
 
     assert any('display: none !important' in html for html in markdown_calls)
-    assert any("sl-desktop-nav-toggle-anchor" in html for html in markdown_calls)
-    assert button_calls == ["☰ メニュー"]
+    assert captions == ["メニューは閉じています。"]
+    assert button_calls == ["☰ メニューを開く"]
+
+
+def test_render_sidebar_defaults_open_on_other_pages(monkeypatch) -> None:
+    markdown_calls: list[str] = []
+    page_links: list[tuple[str, str]] = []
+    captions: list[str] = []
+
+    monkeypatch.setattr(
+        sidebar.st,
+        "session_state",
+        {
+            "is_authenticated": True,
+            "current_user": {"email": "user@example.com"},
+            sidebar._DESKTOP_NAV_COLLAPSED_KEY: True,
+            sidebar._DESKTOP_NAV_COLLAPSED_PAGE_KEY: "dashboard",
+        },
+    )
+    monkeypatch.setattr(sidebar, "is_mobile_client", lambda: False)
+    monkeypatch.setattr(sidebar.st, "sidebar", nullcontext())
+    monkeypatch.setattr(sidebar.st, "container", lambda **_kwargs: nullcontext())
+    monkeypatch.setattr(sidebar.st, "markdown", lambda html, **_kwargs: markdown_calls.append(html))
+    monkeypatch.setattr(sidebar.st, "caption", lambda text, **_kwargs: captions.append(text))
+    monkeypatch.setattr(
+        sidebar.st,
+        "page_link",
+        lambda path, label, **_kwargs: page_links.append((path, label)),
+    )
+    monkeypatch.setattr(sidebar.st, "button", lambda *_args, **_kwargs: False)
+
+    sidebar.render_sidebar(active_page="reviews")
+
+    assert any("sl-sidebar-brand" in html for html in markdown_calls)
+    assert "ナビゲーション" in captions
+    assert len(page_links) == len(sidebar._SIDEBAR_NAV_ITEMS) - 1
 
 
 def test_render_sidebar_uses_unique_close_button_keys_for_all_pages(monkeypatch) -> None:
@@ -163,18 +200,19 @@ def test_render_sidebar_uses_unique_close_button_keys_for_all_pages(monkeypatch)
 
 def test_render_sidebar_uses_unique_reopen_button_keys_for_all_pages(monkeypatch) -> None:
     button_keys: list[str] = []
+    session_state = {
+        "is_authenticated": True,
+        "current_user": {"email": "user@example.com"},
+    }
 
     monkeypatch.setattr(
         sidebar.st,
         "session_state",
-        {
-            "is_authenticated": True,
-            "current_user": {"email": "user@example.com"},
-            sidebar._DESKTOP_NAV_COLLAPSED_KEY: True,
-        },
+        session_state,
     )
     monkeypatch.setattr(sidebar, "is_mobile_client", lambda: False)
     monkeypatch.setattr(sidebar.st, "markdown", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sidebar.st, "caption", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         sidebar.st,
         "button",
@@ -182,6 +220,8 @@ def test_render_sidebar_uses_unique_reopen_button_keys_for_all_pages(monkeypatch
     )
 
     for page_key, *_rest in sidebar._SIDEBAR_NAV_ITEMS:
+        session_state[sidebar._DESKTOP_NAV_COLLAPSED_KEY] = True
+        session_state[sidebar._DESKTOP_NAV_COLLAPSED_PAGE_KEY] = page_key
         sidebar.render_sidebar(active_page=page_key)
 
     reopen_keys = [key for key in button_keys if key.startswith("desktop_nav_reopen_")]

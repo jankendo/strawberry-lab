@@ -28,7 +28,7 @@ def test_inject_app_style_does_not_hide_sidebar_controls_for_desktop(monkeypatch
     assert '[data-testid="stSidebarCollapseButton"]' not in captured["html"]
     assert '[data-testid="stSidebar"] {\n            display: none !important;\n        }' not in captured["html"]
     assert 'header[data-testid="stHeader"]' in captured["html"]
-    assert '.sl-desktop-nav-toggle-anchor' in captured["html"]
+    assert '.sl-native-bottom-nav' in captured["html"]
 
 
 def test_inject_app_style_hides_sidebar_only_for_mobile(monkeypatch) -> None:

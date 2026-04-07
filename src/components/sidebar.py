@@ -12,6 +12,7 @@ from src.constants.ui import APP_NAME
 from src.services.auth_service import logout_user
 
 _DESKTOP_NAV_COLLAPSED_KEY = "_desktop_nav_collapsed"
+_DESKTOP_NAV_COLLAPSED_PAGE_KEY = "_desktop_nav_collapsed_page"
 _SIDEBAR_NAV_ITEMS: list[tuple[str, str, str, str]] = [
     ("dashboard", "Home.py", "ダッシュボード", "🏠"),
     ("varieties", "pages/01_varieties.py", "品種管理", "🍓"),
@@ -40,17 +41,24 @@ def _resolve_mobile_active_tab(active_page: str) -> str:
     return "settings"
 
 
-def _is_desktop_nav_collapsed() -> bool:
-    return bool(st.session_state.get(_DESKTOP_NAV_COLLAPSED_KEY, False))
+def _is_desktop_nav_collapsed(*, active_page: str) -> bool:
+    return bool(
+        st.session_state.get(_DESKTOP_NAV_COLLAPSED_KEY, False)
+        and st.session_state.get(_DESKTOP_NAV_COLLAPSED_PAGE_KEY) == active_page
+    )
 
 
-def _set_desktop_nav_collapsed(collapsed: bool) -> None:
+def _set_desktop_nav_collapsed(collapsed: bool, *, active_page: str | None = None) -> None:
     st.session_state[_DESKTOP_NAV_COLLAPSED_KEY] = collapsed
+    if collapsed and active_page:
+        st.session_state[_DESKTOP_NAV_COLLAPSED_PAGE_KEY] = active_page
+    else:
+        st.session_state.pop(_DESKTOP_NAV_COLLAPSED_PAGE_KEY, None)
 
 
 def _render_desktop_nav_reopen_button(*, active_page: str) -> None:
-    st.markdown('<div class="sl-desktop-nav-toggle-anchor" aria-hidden="true"></div>', unsafe_allow_html=True)
-    if st.button("☰ メニュー", key=f"desktop_nav_reopen_{active_page}", type="secondary"):
+    st.caption("メニューは閉じています。")
+    if st.button("☰ メニューを開く", key=f"desktop_nav_reopen_{active_page}", type="secondary"):
         _set_desktop_nav_collapsed(False)
         st.rerun()
 
@@ -111,7 +119,7 @@ def render_sidebar(*, active_page: str) -> None:
     if not st.session_state.get("is_authenticated") or is_mobile_client():
         return
 
-    if _is_desktop_nav_collapsed():
+    if _is_desktop_nav_collapsed(active_page=active_page):
         st.markdown(
             """
             <style>
@@ -152,5 +160,5 @@ def render_sidebar(*, active_page: str) -> None:
             if st.button("ログアウト", use_container_width=True, type="secondary", key="sidebar_logout"):
                 logout_user()
         if st.button("← メニューを閉じる", use_container_width=True, type="secondary", key=f"desktop_nav_close_{active_page}"):
-            _set_desktop_nav_collapsed(True)
+            _set_desktop_nav_collapsed(True, active_page=active_page)
             st.rerun()

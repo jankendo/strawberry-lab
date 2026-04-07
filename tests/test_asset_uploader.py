@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from src.components import asset_uploader
 from src.components.asset_uploader import _normalize_component_payload, _normalize_upload_targets
 
@@ -143,3 +145,11 @@ def test_render_asset_uploader_normalizes_replay_event_and_queue_key(monkeypatch
     assert captured_kwargs["replayEventName"] == "ichigodb:reviews-image-replay"
     assert captured_kwargs["replayQueueKey"] == "reviews-image-upload-queue"
     assert payload["component_available"] is True
+
+
+def test_asset_uploader_component_snapshots_selected_files_before_reset() -> None:
+    source = (Path(asset_uploader._COMPONENT_DIR) / "index.html").read_text(encoding="utf-8")
+
+    assert "const files = event && event.target ? Array.from(event.target.files || []) : [];" in source
+    assert 'instance.status = "error";' in source
+    assert "処理失敗: 画像の最適化に失敗しました。別の画像で再試行してください。" in source

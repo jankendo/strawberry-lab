@@ -651,10 +651,10 @@
         instance.failed = [];
         instance.pending = [];
         instance.uploaded = [];
-        emitValue(true);
         render();
 
         let acceptedCount = instance.order.length;
+        let failedProcessingCount = 0;
         for (let index = 0; index < selected.length; index += 1) {
           if (acceptedCount >= argsState.maxFiles) {
             appendDebug(`max_files_reached:${argsState.maxFiles}`);
@@ -677,11 +677,18 @@
             instance.order.push(processed.client_file_id);
             acceptedCount += 1;
           } catch (error) {
+            failedProcessingCount += 1;
             appendDebug(`compress_error:${sanitizeText(error && error.message, "unknown")}`);
           }
         }
 
-        instance.status = instance.order.length ? "ready" : "idle";
+        if (instance.order.length) {
+          instance.status = "ready";
+        } else if (failedProcessingCount) {
+          instance.status = "error";
+        } else {
+          instance.status = "idle";
+        }
         emitValue(true);
         render();
       }
@@ -1037,11 +1044,19 @@
           `選択: ${selectedCount}/${argsState.maxFiles} 枚`,
           `状態: ${instance.status}`,
         ];
+        if (instance.status === "error" && !selectedCount) {
+          lines.push("処理失敗: 画像の最適化に失敗しました。別の画像で再試行してください。");
+        }
         if (instance.lastUploadToken) {
           lines.push(`アップロード: 成功 ${uploadedCount} / 失敗 ${failedCount} / 保留 ${pendingCount}`);
         }
         summaryNode.textContent = lines.join(" / ");
-        summaryNode.className = failedCount || pendingCount ? "meta bad" : uploadedCount ? "meta good" : "meta";
+        summaryNode.className =
+          failedCount || pendingCount || instance.status === "error"
+            ? "meta bad"
+            : uploadedCount
+              ? "meta good"
+              : "meta";
       }
 
       function render() {
@@ -1121,7 +1136,7 @@
       });
 
       fileInput.addEventListener("change", async function (event) {
-        const files = event && event.target ? event.target.files : null;
+        const files = event && event.target ? Array.from(event.target.files || []) : [];
         event.target.value = "";
         await handleFileSelection(files);
       });

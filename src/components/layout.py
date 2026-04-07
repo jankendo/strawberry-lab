@@ -986,12 +986,6 @@ def inject_app_style() -> None:
         padding: var(--sl-space-2);
         margin-top: var(--sl-space-2);
     }
-    .sl-desktop-nav-toggle-anchor {
-        display: none;
-    }
-    .sl-desktop-nav-toggle-anchor + div[data-testid="stButton"] {
-        display: none;
-    }
     .sl-native-bottom-nav {
         position: fixed;
         left: 0.72rem;
@@ -1150,32 +1144,6 @@ def inject_app_style() -> None:
         padding: 0.2rem 0.58rem;
         font-size: 0.82rem;
         font-weight: 700;
-    }
-
-    @media (min-width: 821px) {
-        .sl-desktop-nav-toggle-anchor {
-            display: block;
-            height: 0;
-            margin: 0;
-            padding: 0;
-        }
-        .sl-desktop-nav-toggle-anchor + div[data-testid="stButton"] {
-            display: block !important;
-            position: fixed;
-            top: 1rem;
-            left: 1rem;
-            z-index: 49;
-            margin: 0;
-        }
-        .sl-desktop-nav-toggle-anchor + div[data-testid="stButton"] > button {
-            min-height: 2.5rem;
-            padding: 0 0.95rem;
-            border-radius: 999px;
-            border: 1px solid rgba(215, 221, 231, 0.95);
-            background: rgba(255, 255, 255, 0.96);
-            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
-            backdrop-filter: blur(10px);
-        }
     }
 
     @media (max-width: 820px) {
