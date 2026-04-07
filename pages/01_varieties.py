@@ -190,6 +190,7 @@ _VARIETY_EDIT_TARGET_KEY = "variety_edit_target_id"
 _VARIETY_EDIT_TARGET_REQUEST_KEY = "variety_edit_target_requested_id"
 _VARIETY_NEW_TARGET = "新規作成"
 _VARIETY_LIST_DEFAULT_PAGE_SIZE = 50
+_VARIETY_LIST_LOADING_STEPS = 3
 
 
 def _resolve_select_index(options: list[str], value: object, *, fallback: int = 0) -> int:
@@ -199,6 +200,35 @@ def _resolve_select_index(options: list[str], value: object, *, fallback: int = 
     if 0 <= fallback < len(options):
         return fallback
     return 0
+
+
+class _VarietyListLoadingStatus:
+    """Render a temporary loading block while the variety list is being assembled."""
+
+    def __init__(self) -> None:
+        self._placeholder = st.empty()
+
+    def update(
+        self,
+        *,
+        step: int,
+        label: str,
+        loaded_count: int,
+        total_count: int | None,
+    ) -> None:
+        normalized_step = min(max(step, 1), _VARIETY_LIST_LOADING_STEPS)
+        ratio = normalized_step / _VARIETY_LIST_LOADING_STEPS
+        current_count = max(0, loaded_count)
+        if total_count is None:
+            count_text = f"{current_count} / ?件"
+        else:
+            count_text = f"{min(current_count, max(total_count, 0))} / {max(total_count, 0)}件"
+        with self._placeholder.container():
+            st.caption(f"品種一覧を読み込み中 {normalized_step} / {_VARIETY_LIST_LOADING_STEPS}")
+            st.progress(ratio, text=f"{label} ({count_text})")
+
+    def clear(self) -> None:
+        self._placeholder.empty()
 
 
 def _set_variety_edit_target(target_id: object, *, switch_section: bool = True) -> None:
@@ -829,6 +859,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
     _ensure_variety_list_pagination_defaults()
     keyword, prefecture, discovery_filter = _render_variety_filters(mobile_client=mobile_client)
     page, page_size = render_pagination_controls("variety_list")
+    loading_status = _VarietyListLoadingStatus()
 
     if "variety_selected_from_list" not in st.session_state:
         st.session_state["variety_selected_from_list"] = ""
@@ -849,6 +880,12 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
             mobile_only=True,
         )
 
+    loading_status.update(
+        step=1,
+        label="条件に一致する品種を取得しています",
+        loaded_count=0,
+        total_count=None,
+    )
     rows, total, matched_ids = list_varieties_for_list_tab(
         keyword=keyword or None,
         prefecture=prefecture or None,
@@ -868,6 +905,12 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
         if mobile_client and not selected_id:
             st.session_state["variety_mobile_panel"] = "list"
 
+    loading_status.update(
+        step=2,
+        label="レビュー件数と図鑑進捗を取得しています",
+        loaded_count=len(rows),
+        total_count=total,
+    )
     count_targets = [row["id"] for row in rows]
     if selected_id and selected_id not in count_targets:
         count_targets.append(selected_id)
@@ -893,6 +936,12 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
         discovered_targets = [row["id"] for row in visible_rows if int(review_counts.get(row["id"], 0)) > 0]
         if selected_id and int(review_counts.get(selected_id, 0)) > 0 and selected_id not in discovered_targets:
             discovered_targets.append(selected_id)
+    loading_status.update(
+        step=3,
+        label="画像と最新レビューを取得しています",
+        loaded_count=len(visible_rows),
+        total_count=total,
+    )
     primary_images = (
         list_primary_variety_images_with_signed_urls(discovered_targets)
         if discovered_targets
@@ -903,6 +952,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
         if discovered_targets
         else {}
     )
+    loading_status.clear()
 
     if mobile_client:
         if mobile_panel == "detail" and selected_id:
