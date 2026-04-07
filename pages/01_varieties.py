@@ -270,6 +270,41 @@ def _variety_list_loading_step_one_label(*, keyword: str, discovery_filter: str)
     return "品種一覧の並び順を準備しています"
 
 
+def _load_safe_pokedex_progress() -> dict[str, int]:
+    def _normalize(raw: object) -> dict[str, int] | None:
+        if not isinstance(raw, dict):
+            return None
+        required_keys = {"total_varieties", "discovered_count", "undiscovered_count", "completion_rate"}
+        if not required_keys.issubset(raw):
+            return None
+        try:
+            return {
+                "total_varieties": int(raw.get("total_varieties") or 0),
+                "discovered_count": int(raw.get("discovered_count") or 0),
+                "undiscovered_count": int(raw.get("undiscovered_count") or 0),
+                "completion_rate": int(raw.get("completion_rate") or 0),
+            }
+        except (TypeError, ValueError):
+            return None
+
+    normalized = _normalize(get_pokedex_progress())
+    if normalized is not None:
+        return normalized
+    try:
+        get_pokedex_progress.clear()
+    except Exception:
+        pass
+    normalized = _normalize(get_pokedex_progress())
+    if normalized is not None:
+        return normalized
+    return {
+        "total_varieties": 0,
+        "discovered_count": 0,
+        "undiscovered_count": 0,
+        "completion_rate": 0,
+    }
+
+
 def _set_variety_edit_target(target_id: object, *, switch_section: bool = True) -> None:
     normalized = str(target_id or "").strip()
     st.session_state[_VARIETY_EDIT_TARGET_REQUEST_KEY] = normalized or _VARIETY_NEW_TARGET
@@ -956,7 +991,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
     if selected_id and selected_id not in count_targets:
         count_targets.append(selected_id)
     review_counts = get_review_counts_for_varieties(count_targets)
-    progress = get_pokedex_progress()
+    progress = _load_safe_pokedex_progress()
     completion_ratio = (float(progress["completion_rate"]) / 100) if progress["total_varieties"] else 0.0
 
     lightweight_page_ids = [variety_id for variety_id in page_ids if int(review_counts.get(variety_id, 0)) <= 0]
