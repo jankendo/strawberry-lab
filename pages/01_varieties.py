@@ -54,7 +54,8 @@ from src.services.variety_service import (
     update_variety,
 )
 from src.utils.navigation import build_review_variety_query_params, resolve_selected_variety_query_param
-from src.utils.text_utils import build_search_key, normalize_search_text
+from src.utils.text_utils import normalize_search_text
+from src.utils.variety_options import filter_variety_selection_options
 
 try:
     from src.components.layout import (
@@ -356,30 +357,6 @@ def _ensure_variety_list_pagination_defaults() -> None:
         st.session_state["variety_list_page_size"] = _VARIETY_LIST_DEFAULT_PAGE_SIZE
     if "variety_list_page" not in st.session_state:
         st.session_state["variety_list_page"] = 1
-
-
-def _build_variety_option_search_key(variety: dict) -> str:
-    return build_search_key([variety.get("name"), variety.get("alias_names") or []])
-
-
-def _filter_variety_selection_options(
-    varieties: Sequence[dict],
-    keyword: str,
-    *,
-    include_ids: Sequence[str] = (),
-) -> list[dict]:
-    normalized_keyword = normalize_search_text(keyword or "")
-    forced_ids = {str(value) for value in include_ids if str(value).strip()}
-    filtered: list[dict] = []
-    seen_ids: set[str] = set()
-    for variety in varieties:
-        variety_id = str(variety.get("id") or "").strip()
-        if not variety_id or variety_id in seen_ids:
-            continue
-        if variety_id in forced_ids or not normalized_keyword or normalized_keyword in _build_variety_option_search_key(variety):
-            filtered.append(variety)
-            seen_ids.add(variety_id)
-    return filtered
 
 
 def _resolve_pending_variety_upload_task() -> dict | None:
@@ -1119,7 +1096,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
                     key="variety_mobile_quick_jump_keyword",
                     placeholder="ひらがな・カタカナで検索",
                 )
-                jump_varieties = _filter_variety_selection_options(
+                jump_varieties = filter_variety_selection_options(
                     list_active_varieties(),
                     quick_jump_search,
                     include_ids=(str(st.session_state.get("variety_mobile_quick_jump") or ""),),
@@ -1204,7 +1181,7 @@ def _render_variety_edit_section() -> None:
         key="variety_edit_target_keyword",
         placeholder="ひらがな・カタカナで検索",
     )
-    filtered_active = _filter_variety_selection_options(
+    filtered_active = filter_variety_selection_options(
         active,
         edit_search,
         include_ids=(requested_edit_target, current_edit_target),

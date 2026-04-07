@@ -43,6 +43,7 @@ from src.services.storage_service import (
 from src.services.variety_service import list_active_varieties
 from src.utils.navigation import resolve_review_variety_query_param
 from src.utils.validation import normalize_review_tasted_date
+from src.utils.variety_options import filter_variety_selection_options
 
 _PENDING_DUPLICATE_PAYLOAD_KEY = "reviews_pending_duplicate_payload"
 _PENDING_DUPLICATE_FILES_KEY = "reviews_pending_duplicate_files"
@@ -591,6 +592,21 @@ with tab_edit:
                 st.session_state["review_variety_id"] = query_variety_id
             if st.session_state.get("review_variety_id") not in variety_options:
                 st.session_state["review_variety_id"] = variety_options[0]
+            review_variety_keyword = st.text_input(
+                "品種候補を絞り込む",
+                key="review_variety_keyword",
+                placeholder="ひらがな・カタカナで検索",
+            )
+            filtered_review_varieties = filter_variety_selection_options(
+                varieties,
+                review_variety_keyword,
+                include_ids=(query_variety_id, str(st.session_state.get("review_variety_id") or "")),
+            )
+            filtered_review_options = [str(row["id"]) for row in filtered_review_varieties]
+            if not filtered_review_options:
+                st.caption("条件に一致する品種候補がありません。検索語を調整してください。")
+                filtered_review_options = [str(st.session_state.get("review_variety_id") or "")] if st.session_state.get("review_variety_id") else variety_options[:1]
+            st.caption(f"候補 {len(filtered_review_options)}件 / 全{len(variety_options)}件")
             pending_image_upload = _resolve_pending_image_upload()
             uploader_state = render_asset_uploader(
                 key=_REVIEW_ASSET_UPLOADER_KEY,
@@ -665,7 +681,7 @@ with tab_edit:
                 st.markdown("##### 1) 試食情報")
                 variety_id = st.selectbox(
                     "品種 *",
-                    variety_options,
+                    filtered_review_options,
                     format_func=lambda x: variety_names.get(str(x), str(x)),
                     key="review_variety_id",
                 )
@@ -1009,10 +1025,21 @@ def _render_reviews_history_fragment() -> None:
         variety_names = _variety_name_map(varieties)
         f1, f2, f3 = st.columns(3, gap="large")
         with f1:
+            history_variety_keyword = st.text_input(
+                "品種候補を絞り込む",
+                key="reviews_history_variety_keyword",
+                placeholder="ひらがな・カタカナで検索",
+            )
+            filtered_history_varieties = filter_variety_selection_options(
+                varieties,
+                history_variety_keyword,
+                include_ids=(str(st.session_state.get("reviews_history_variety_filter") or ""),),
+            )
             variety_filter = st.selectbox(
                 "品種フィルタ",
-                [""] + [v["id"] for v in varieties],
+                [""] + [v["id"] for v in filtered_history_varieties],
                 format_func=lambda x: "すべて" if not x else variety_names.get(str(x), str(x)),
+                key="reviews_history_variety_filter",
             )
         with f2:
             date_from = st.date_input("開始日", value=date.today().replace(day=1), key="reviews_from")

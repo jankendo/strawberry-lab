@@ -39,6 +39,7 @@ from src.services.analytics_service import (
 from src.services.auth_service import require_admin_session
 from src.services.export_service import export_table_csv
 from src.services.variety_service import list_active_varieties
+from src.utils.variety_options import filter_variety_selection_options
 
 _RADAR_AXIS_LABELS = {
     "sweetness": "甘味",
@@ -239,11 +240,23 @@ with st.container(border=True):
     prefecture = st.selectbox("都道府県", prefecture_options, index=prefecture_index)
     min_count = st.number_input("最小レビュー件数", min_value=1, value=default_min_count)
     tags_raw = st.text_input("タグ (カンマ区切り)", value=default_tags_raw)
+    selected_variety_keyword = st.text_input(
+        "対象品種を絞り込む",
+        key="analytics_variety_keyword",
+        placeholder="ひらがな・カタカナで検索",
+    )
+    filtered_varieties = filter_variety_selection_options(
+        varieties,
+        selected_variety_keyword,
+        include_ids=default_varieties + [str(variety_id) for variety_id in st.session_state.get("analytics_selected_varieties", [])],
+    )
+    filtered_variety_ids = [str(variety["id"]) for variety in filtered_varieties]
     selected_varieties = st.multiselect(
         "対象品種",
-        variety_ids,
+        filtered_variety_ids,
         default=default_varieties,
         format_func=lambda variety_id: variety_name_map.get(str(variety_id), str(variety_id)),
+        key="analytics_selected_varieties",
     )
 
 current_filters = _build_filter_state(

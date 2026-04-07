@@ -27,6 +27,7 @@ from src.services.pedigree_service import (
     subgraph_by_root,
 )
 from src.utils.navigation import build_selected_variety_query_params
+from src.utils.variety_options import filter_variety_selection_options
 
 st.set_page_config(page_title="交配図", layout="wide")
 require_admin_session()
@@ -88,10 +89,21 @@ if not links:
 
 name_by_id = {str(v["id"]): str(v["name"]) for v in varieties}
 root_options = sorted(name_by_id.keys(), key=lambda variety_id: name_by_id.get(variety_id, variety_id))
+root_keyword = st.text_input(
+    "起点品種を絞り込む",
+    key="pedigree_root_keyword",
+    placeholder="ひらがな・カタカナで検索",
+)
+filtered_root_rows = filter_variety_selection_options(
+    [{"id": variety_id, "name": name_by_id.get(variety_id, variety_id)} for variety_id in root_options],
+    root_keyword,
+    include_ids=(str(st.session_state.get("pedigree_root_id") or ""),),
+)
 root_id = st.selectbox(
     "起点品種",
-    [""] + root_options,
+    [""] + [str(row["id"]) for row in filtered_root_rows],
     format_func=lambda x: "全体" if not x else name_by_id.get(x, x),
+    key="pedigree_root_id",
 )
 st.caption(
     " / ".join(
