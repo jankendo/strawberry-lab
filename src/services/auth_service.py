@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import os
 import secrets
 import time
+from uuid import uuid4
 
 import streamlit as st
 
@@ -14,29 +18,19 @@ from src.core.supabase_client import get_anon_supabase_client
 
 AUTH_KEYS = ("current_user", "supabase_client_user", "is_authenticated", "access_token", "refresh_token", "admin_checked_at")
 AUTH_COOKIE_NAME = "remember_auth_v1"
-AUTH_COOKIE_PREFIX = "strawberrylab_"
 AUTH_COOKIE_TTL_DAYS = 30
+AUTH_COOKIE_VERSION = 1
 AUTH_COOKIE_SYNC_PENDING_KEY = "_auth_cookie_sync_pending"
+AUTH_COOKIE_ACTION_KEY = "_auth_cookie_action"
+AUTH_COOKIE_SYNC_ERROR_KEY = "_auth_cookie_sync_error"
 AUTH_PERSISTENCE_READY = "ready"
 AUTH_PERSISTENCE_READY_EPHEMERAL_SECRET = "ready_ephemeral_secret"
 AUTH_PERSISTENCE_MISSING_SECRET = "missing_secret"
 AUTH_PERSISTENCE_MANAGER_UNAVAILABLE = "cookie_manager_unavailable"
 AUTH_PERSISTENCE_MANAGER_NOT_READY = "cookie_manager_not_ready"
 AUTH_PERSISTENCE_MANAGER_NOT_READY_EPHEMERAL_SECRET = "cookie_manager_not_ready_ephemeral_secret"
-_AUTH_PERSISTENCE_PENDING_STATUSES = {
-    AUTH_PERSISTENCE_MANAGER_NOT_READY,
-    AUTH_PERSISTENCE_MANAGER_NOT_READY_EPHEMERAL_SECRET,
-}
 
 _EPHEMERAL_COOKIE_SECRET: str | None = None
-_COOKIE_MANAGER_RUN_CACHE: dict[str, object | None] = {
-    "session_id": None,
-    "run_context": None,
-    "secret": None,
-    "is_ephemeral": None,
-    "manager": None,
-    "status": None,
-}
 
 
 def initialize_auth_state() -> None:
@@ -46,21 +40,10 @@ def initialize_auth_state() -> None:
             st.session_state[key] = None if key != "is_authenticated" else False
     if AUTH_COOKIE_SYNC_PENDING_KEY not in st.session_state:
         st.session_state[AUTH_COOKIE_SYNC_PENDING_KEY] = False
-
-
-def _get_script_run_cache_identity() -> tuple[str | None, object | None]:
-    try:
-        from streamlit.runtime.scriptrunner import get_script_run_ctx
-
-        context = get_script_run_ctx()
-        if context is None:
-            return None, None
-        page_hash = getattr(context, "page_script_hash", "") or getattr(context, "active_script_hash", "") or "no-page"
-        # Streamlit fragments can replace ctx.cursors mid-run, so cache against
-        # collections that are recreated only when a new script run starts.
-        return f"{context.session_id}:{page_hash}", getattr(context, "widget_ids_this_run", None)
-    except Exception:
-        return None, None
+    if AUTH_COOKIE_ACTION_KEY not in st.session_state:
+        st.session_state[AUTH_COOKIE_ACTION_KEY] = None
+    if AUTH_COOKIE_SYNC_ERROR_KEY not in st.session_state:
+        st.session_state[AUTH_COOKIE_SYNC_ERROR_KEY] = None
 
 
 def _get_process_ephemeral_cookie_secret() -> str | None:
@@ -91,128 +74,198 @@ def _get_cookie_secret() -> tuple[str | None, bool]:
     return None, False
 
 
-def _get_cookie_manager_with_status():
-    secret, is_ephemeral = _get_cookie_secret()
-    if not secret:
-        return None, AUTH_PERSISTENCE_MISSING_SECRET
-
-    session_id, run_context = _get_script_run_cache_identity()
-    if (
-        _COOKIE_MANAGER_RUN_CACHE.get("session_id") == session_id
-        and _COOKIE_MANAGER_RUN_CACHE.get("run_context") is run_context
-        and _COOKIE_MANAGER_RUN_CACHE.get("secret") == secret
-        and _COOKIE_MANAGER_RUN_CACHE.get("is_ephemeral") == is_ephemeral
-    ):
-        return _COOKIE_MANAGER_RUN_CACHE.get("manager"), _COOKIE_MANAGER_RUN_CACHE.get("status")
-
-    try:
-        from streamlit_cookies_manager import EncryptedCookieManager
-    except Exception:
-        _COOKIE_MANAGER_RUN_CACHE.update(
-            {
-                "session_id": session_id,
-                "run_context": run_context,
-                "secret": secret,
-                "is_ephemeral": is_ephemeral,
-                "manager": None,
-                "status": AUTH_PERSISTENCE_MANAGER_UNAVAILABLE,
-            }
-        )
-        return None, AUTH_PERSISTENCE_MANAGER_UNAVAILABLE
-
-    cookies = EncryptedCookieManager(prefix=AUTH_COOKIE_PREFIX, password=secret)
-    if not cookies.ready():
-        status = (
-            AUTH_PERSISTENCE_MANAGER_NOT_READY_EPHEMERAL_SECRET
-            if is_ephemeral
-            else AUTH_PERSISTENCE_MANAGER_NOT_READY
-        )
-        _COOKIE_MANAGER_RUN_CACHE.update(
-            {
-                "session_id": session_id,
-                "run_context": run_context,
-                "secret": secret,
-                "is_ephemeral": is_ephemeral,
-                "manager": None,
-                "status": status,
-            }
-        )
-        return None, status
-
-    status = AUTH_PERSISTENCE_READY_EPHEMERAL_SECRET if is_ephemeral else AUTH_PERSISTENCE_READY
-    _COOKIE_MANAGER_RUN_CACHE.update(
-        {
-            "session_id": session_id,
-            "run_context": run_context,
-            "secret": secret,
-            "is_ephemeral": is_ephemeral,
-            "manager": cookies,
-            "status": status,
-        }
-    )
-    return cookies, status
-
-
-def _get_cookie_manager():
-    cookies, _ = _get_cookie_manager_with_status()
-    return cookies
-
-
-def _is_auth_persistence_pending(status: str | None) -> bool:
-    return str(status or "") in _AUTH_PERSISTENCE_PENDING_STATUSES
-
-
 def _set_auth_cookie_sync_pending(pending: bool) -> None:
     initialize_auth_state()
     st.session_state[AUTH_COOKIE_SYNC_PENDING_KEY] = bool(pending)
 
 
-def _clear_auth_cookie(cookies=None) -> None:
-    if cookies is None:
-        cookies = _get_cookie_manager()
-    if cookies is None:
-        return
-    if AUTH_COOKIE_NAME in cookies:
-        del cookies[AUTH_COOKIE_NAME]
-        cookies.save()
+def _set_auth_cookie_sync_error(message: str | None) -> None:
+    initialize_auth_state()
+    st.session_state[AUTH_COOKIE_SYNC_ERROR_KEY] = str(message).strip() if message else None
 
 
-def _save_auth_cookie(*, access_token: str, refresh_token: str) -> bool:
-    cookies = _get_cookie_manager()
-    if cookies is None:
-        return False
+def get_auth_cookie_sync_error() -> str | None:
+    initialize_auth_state()
+    value = st.session_state.get(AUTH_COOKIE_SYNC_ERROR_KEY)
+    return str(value).strip() if value else None
+
+
+def _clear_auth_cookie_action() -> None:
+    initialize_auth_state()
+    st.session_state[AUTH_COOKIE_ACTION_KEY] = None
+
+
+def _base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _base64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode((value or "") + padding)
+
+
+def _get_request_cookie_value(cookie_name: str) -> str | None:
+    try:
+        cookies = st.context.cookies
+    except Exception:
+        return None
+    try:
+        raw = cookies.get(cookie_name)
+    except Exception:
+        raw = None
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    return value or None
+
+
+def _sign_auth_cookie_body(body: str) -> str | None:
+    secret, _is_ephemeral = _get_cookie_secret()
+    if not secret:
+        return None
+    digest = hmac.new(secret.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
+    return _base64url_encode(digest)
+
+
+def _serialize_auth_cookie(*, access_token: str, refresh_token: str, expires_at: int | None = None) -> str | None:
+    signature = _sign_auth_cookie_body("")
+    if signature is None:
+        return None
+    normalized_expires_at = int(expires_at or (int(time.time()) + AUTH_COOKIE_TTL_DAYS * 24 * 60 * 60))
     payload = {
+        "v": AUTH_COOKIE_VERSION,
+        "access_token": str(access_token or ""),
+        "refresh_token": str(refresh_token or ""),
+        "expires_at": normalized_expires_at,
+    }
+    body = _base64url_encode(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    signed_body = _sign_auth_cookie_body(body)
+    if not signed_body:
+        return None
+    return f"{body}.{signed_body}"
+
+
+def _deserialize_auth_cookie(raw_value: str | None) -> dict | None:
+    raw = str(raw_value or "").strip()
+    if not raw or "." not in raw:
+        return None
+    body, provided_signature = raw.split(".", 1)
+    expected_signature = _sign_auth_cookie_body(body)
+    if not expected_signature or not hmac.compare_digest(provided_signature, expected_signature):
+        return None
+    try:
+        payload = json.loads(_base64url_decode(body).decode("utf-8"))
+    except Exception:
+        return None
+    try:
+        expires_at = int(payload.get("expires_at") or 0)
+    except Exception:
+        return None
+    if payload.get("v") != AUTH_COOKIE_VERSION or not expires_at or expires_at <= int(time.time()):
+        return None
+    access_token = str(payload.get("access_token") or "").strip()
+    refresh_token = str(payload.get("refresh_token") or "").strip()
+    if not access_token or not refresh_token:
+        return None
+    return {
         "access_token": access_token,
         "refresh_token": refresh_token,
-        "expires_at": int(time.time()) + AUTH_COOKIE_TTL_DAYS * 24 * 60 * 60,
+        "expires_at": expires_at,
     }
-    cookies[AUTH_COOKIE_NAME] = json.dumps(payload, ensure_ascii=False)
-    cookies.save()
-    return True
 
 
-def _read_auth_cookie_with_status() -> tuple[dict | None, str]:
-    cookies, status = _get_cookie_manager_with_status()
-    if cookies is None:
-        return None, str(status or "")
-    raw = cookies.get(AUTH_COOKIE_NAME)
-    if not raw:
-        return None, str(status or "")
-    try:
-        payload = json.loads(raw)
-    except Exception:
-        _clear_auth_cookie(cookies)
-        return None, str(status or "")
-    expires_at = int(payload.get("expires_at", 0))
-    if not expires_at or expires_at <= int(time.time()):
-        _clear_auth_cookie(cookies)
-        return None, str(status or "")
-    return payload, str(status or "")
+def _queue_auth_cookie_set(*, access_token: str, refresh_token: str) -> bool:
+    initialize_auth_state()
+    cookie_value = _serialize_auth_cookie(access_token=access_token, refresh_token=refresh_token)
+    if not cookie_value:
+        _clear_auth_cookie_action()
+        _set_auth_cookie_sync_pending(False)
+        _set_auth_cookie_sync_error("ログイン保持用の署名鍵を初期化できませんでした。")
+        return False
+    current_cookie = _get_request_cookie_value(AUTH_COOKIE_NAME)
+    if current_cookie == cookie_value:
+        _clear_auth_cookie_action()
+        _set_auth_cookie_sync_pending(False)
+        _set_auth_cookie_sync_error(None)
+        return True
+    existing_action = st.session_state.get(AUTH_COOKIE_ACTION_KEY)
+    if (
+        isinstance(existing_action, dict)
+        and str(existing_action.get("type") or "") == "set"
+        and str(existing_action.get("cookie_value") or "") == cookie_value
+    ):
+        _set_auth_cookie_sync_pending(True)
+        _set_auth_cookie_sync_error(None)
+        return False
+    st.session_state[AUTH_COOKIE_ACTION_KEY] = {
+        "id": str(uuid4()),
+        "type": "set",
+        "cookie_name": AUTH_COOKIE_NAME,
+        "cookie_value": cookie_value,
+        "expires_at": int(time.time()) + AUTH_COOKIE_TTL_DAYS * 24 * 60 * 60,
+        "attempts": 0,
+    }
+    _set_auth_cookie_sync_pending(True)
+    _set_auth_cookie_sync_error(None)
+    return False
 
 
-def _read_auth_cookie() -> dict | None:
-    payload, _status = _read_auth_cookie_with_status()
-    return payload
+def _queue_auth_cookie_clear() -> None:
+    initialize_auth_state()
+    current_cookie = _get_request_cookie_value(AUTH_COOKIE_NAME)
+    if not current_cookie:
+        _clear_auth_cookie_action()
+        _set_auth_cookie_sync_error(None)
+        return
+    existing_action = st.session_state.get(AUTH_COOKIE_ACTION_KEY)
+    if isinstance(existing_action, dict) and str(existing_action.get("type") or "") == "clear":
+        return
+    st.session_state[AUTH_COOKIE_ACTION_KEY] = {
+        "id": str(uuid4()),
+        "type": "clear",
+        "cookie_name": AUTH_COOKIE_NAME,
+        "attempts": 0,
+    }
+    _set_auth_cookie_sync_error(None)
+
+
+def get_pending_auth_cookie_action() -> dict | None:
+    """Return a pending cookie bridge action when browser state needs syncing."""
+    initialize_auth_state()
+    action = st.session_state.get(AUTH_COOKIE_ACTION_KEY)
+    if not isinstance(action, dict):
+        return None
+
+    current_cookie = _get_request_cookie_value(AUTH_COOKIE_NAME)
+    action_type = str(action.get("type") or "")
+    if action_type == "set":
+        expected_cookie = str(action.get("cookie_value") or "")
+        if expected_cookie and current_cookie == expected_cookie:
+            _clear_auth_cookie_action()
+            _set_auth_cookie_sync_pending(False)
+            _set_auth_cookie_sync_error(None)
+            return None
+    elif action_type == "clear":
+        if not current_cookie:
+            _clear_auth_cookie_action()
+            _set_auth_cookie_sync_error(None)
+            return None
+    else:
+        _clear_auth_cookie_action()
+        return None
+
+    attempts = int(action.get("attempts") or 0) + 1
+    if attempts > 2:
+        if action_type == "set":
+            _set_auth_cookie_sync_error("ログイン保持 cookie の同期に失敗しました。iPhone のプライベートブラウズや cookie 制限を確認してください。")
+            _set_auth_cookie_sync_pending(False)
+        _clear_auth_cookie_action()
+        return None
+
+    next_action = dict(action)
+    next_action["attempts"] = attempts
+    st.session_state[AUTH_COOKIE_ACTION_KEY] = next_action
+    return dict(next_action)
 
 
 def _set_authenticated_state(*, client, user, access_token: str, refresh_token: str) -> None:
@@ -222,72 +275,43 @@ def _set_authenticated_state(*, client, user, access_token: str, refresh_token: 
     st.session_state["access_token"] = access_token
     st.session_state["refresh_token"] = refresh_token
     st.session_state["admin_checked_at"] = int(time.time())
-    st.session_state[AUTH_COOKIE_SYNC_PENDING_KEY] = False
 
 
 def get_auth_persistence_status() -> dict[str, str | bool]:
-    """Return availability information for encrypted auth-cookie persistence."""
-    _, status = _get_cookie_manager_with_status()
-    if status == AUTH_PERSISTENCE_READY:
+    """Return availability information for first-party auth-cookie persistence."""
+    secret, is_ephemeral = _get_cookie_secret()
+    if secret and not is_ephemeral:
         return {
             "available": True,
             "code": AUTH_PERSISTENCE_READY,
             "message": "30日ログイン保持は有効です。",
         }
-    if status == AUTH_PERSISTENCE_READY_EPHEMERAL_SECRET:
+    if secret and is_ephemeral:
         return {
             "available": True,
             "code": AUTH_PERSISTENCE_READY_EPHEMERAL_SECRET,
             "message": "APP_COOKIE_SECRET が未設定のため、一時ランダム秘密鍵でログイン保持を継続中です。再起動/再デプロイ時に保持がリセットされる場合があります。",
         }
-    if status == AUTH_PERSISTENCE_MISSING_SECRET:
-        return {
-            "available": False,
-            "code": AUTH_PERSISTENCE_MISSING_SECRET,
-            "message": "APP_COOKIE_SECRET が未設定で、一時秘密鍵の生成にも失敗したため、30日ログイン保持は無効です。",
-        }
-    if status == AUTH_PERSISTENCE_MANAGER_UNAVAILABLE:
-        return {
-            "available": False,
-            "code": AUTH_PERSISTENCE_MANAGER_UNAVAILABLE,
-            "message": "クッキー暗号化モジュールを読み込めないため、30日ログイン保持は利用できません。",
-        }
-    if status == AUTH_PERSISTENCE_MANAGER_NOT_READY_EPHEMERAL_SECRET:
-        return {
-            "available": False,
-            "code": AUTH_PERSISTENCE_MANAGER_NOT_READY_EPHEMERAL_SECRET,
-            "message": "ログイン保持クッキーを初期化中です。APP_COOKIE_SECRET 未設定時は一時ランダム秘密鍵を使用するため、再起動/再デプロイ時に保持がリセットされる場合があります。",
-        }
     return {
         "available": False,
-        "code": AUTH_PERSISTENCE_MANAGER_NOT_READY,
-        "message": "ログイン保持クッキーを初期化中です。初回表示後に再試行されます。",
+        "code": AUTH_PERSISTENCE_MISSING_SECRET,
+        "message": "APP_COOKIE_SECRET が未設定で、一時秘密鍵の生成にも失敗したため、30日ログイン保持は無効です。",
     }
 
 
 def ensure_auth_cookie_persistence() -> bool:
-    """Retry persisting auth cookie when an authenticated session already exists."""
+    """Queue browser sync until the current authenticated session is in a first-party cookie."""
     initialize_auth_state()
     if not st.session_state.get("is_authenticated") or not st.session_state.get("current_user"):
         _set_auth_cookie_sync_pending(False)
         return False
 
-    access_token = st.session_state.get("access_token")
-    refresh_token = st.session_state.get("refresh_token")
+    access_token = str(st.session_state.get("access_token") or "").strip()
+    refresh_token = str(st.session_state.get("refresh_token") or "").strip()
     if not access_token or not refresh_token:
         _set_auth_cookie_sync_pending(False)
         return False
-
-    payload, status = _read_auth_cookie_with_status()
-    if payload and payload.get("access_token") == access_token and payload.get("refresh_token") == refresh_token:
-        _set_auth_cookie_sync_pending(False)
-        return True
-    if _is_auth_persistence_pending(status):
-        _set_auth_cookie_sync_pending(True)
-        return False
-    saved = _save_auth_cookie(access_token=access_token, refresh_token=refresh_token)
-    _set_auth_cookie_sync_pending(False)
-    return saved
+    return _queue_auth_cookie_set(access_token=access_token, refresh_token=refresh_token)
 
 
 def _is_admin_user(*, client, user_id: str) -> bool:
@@ -318,7 +342,7 @@ def login_user(email: str, password: str) -> None:
         access_token=result.session.access_token,
         refresh_token=result.session.refresh_token,
     )
-    _save_auth_cookie(access_token=result.session.access_token, refresh_token=result.session.refresh_token)
+    ensure_auth_cookie_persistence()
 
 
 def is_auth_cookie_sync_pending() -> bool:
@@ -327,22 +351,24 @@ def is_auth_cookie_sync_pending() -> bool:
 
 
 def restore_login_from_cookie() -> bool | None:
-    """Restore login state from encrypted cookie when available."""
+    """Restore login state from the first-party signed auth cookie when available."""
     initialize_auth_state()
     if st.session_state.get("is_authenticated") and st.session_state.get("current_user"):
         ensure_auth_cookie_persistence()
         return True
-    payload, status = _read_auth_cookie_with_status()
+
+    raw_cookie = _get_request_cookie_value(AUTH_COOKIE_NAME)
+    payload = _deserialize_auth_cookie(raw_cookie)
     if not payload:
-        pending = _is_auth_persistence_pending(status)
-        _set_auth_cookie_sync_pending(pending)
-        return None if pending else False
+        _set_auth_cookie_sync_pending(False)
+        if raw_cookie:
+            _queue_auth_cookie_clear()
+        return False
 
     access_token = payload.get("access_token")
     refresh_token = payload.get("refresh_token")
     if not refresh_token:
-        _clear_auth_cookie()
-        _set_auth_cookie_sync_pending(False)
+        _queue_auth_cookie_clear()
         return False
 
     client = get_anon_supabase_client()
@@ -364,14 +390,10 @@ def restore_login_from_cookie() -> bool | None:
             access_token=auth_result.session.access_token,
             refresh_token=auth_result.session.refresh_token,
         )
-        _save_auth_cookie(
-            access_token=auth_result.session.access_token,
-            refresh_token=auth_result.session.refresh_token,
-        )
-        _set_auth_cookie_sync_pending(False)
+        ensure_auth_cookie_persistence()
         return True
     except Exception:
-        _clear_auth_cookie()
+        _queue_auth_cookie_clear()
         for key in AUTH_KEYS:
             st.session_state[key] = None if key != "is_authenticated" else False
         _set_auth_cookie_sync_pending(False)
@@ -383,10 +405,10 @@ def logout_user() -> None:
     client = st.session_state.get("supabase_client_user")
     if client:
         client.auth.sign_out()
-    _clear_auth_cookie()
+    _queue_auth_cookie_clear()
     for key in AUTH_KEYS:
         st.session_state.pop(key, None)
-    st.session_state.pop(AUTH_COOKIE_SYNC_PENDING_KEY, None)
+    st.session_state[AUTH_COOKIE_SYNC_PENDING_KEY] = False
     st.switch_page("Home.py")
 
 

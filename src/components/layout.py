@@ -10,6 +10,7 @@ import re
 import streamlit as st
 import streamlit.components.v1 as components
 
+from src.components.auth_cookie_bridge import render_auth_cookie_bridge_if_needed
 from src.components.offline_runtime import inject_offline_runtime
 from src.components.tables import is_mobile_client
 
@@ -823,6 +824,7 @@ def _inject_native_shell_bootstrap() -> None:
 
 def inject_app_style() -> None:
     """Inject product-oriented, neutral-first design tokens and component styles."""
+    render_auth_cookie_bridge_if_needed()
     host_chrome_css = ""
     if _should_hide_host_chrome():
         host_chrome_scope = "body.sl-has-native-bottom-nav " if is_mobile_client() else ""

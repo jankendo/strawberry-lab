@@ -8,9 +8,11 @@ from src.components import layout
 
 def test_inject_app_style_does_not_hide_sidebar_controls_for_desktop(monkeypatch) -> None:
     captured: dict[str, str | None] = {"html": None}
+    bridge_calls: list[str] = []
 
     monkeypatch.setattr(layout, "_should_hide_host_chrome", lambda: True)
     monkeypatch.setattr(layout, "is_mobile_client", lambda: False)
+    monkeypatch.setattr(layout, "render_auth_cookie_bridge_if_needed", lambda: bridge_calls.append("bridge"))
     monkeypatch.setattr(layout, "_inject_native_shell_bootstrap", lambda: None)
     monkeypatch.setattr(layout, "inject_offline_runtime", lambda: None)
     monkeypatch.setattr(
@@ -29,13 +31,16 @@ def test_inject_app_style_does_not_hide_sidebar_controls_for_desktop(monkeypatch
     assert '[data-testid="stSidebar"] {\n            display: none !important;\n        }' not in captured["html"]
     assert 'header[data-testid="stHeader"]' in captured["html"]
     assert '.sl-native-bottom-nav' in captured["html"]
+    assert bridge_calls == ["bridge"]
 
 
 def test_inject_app_style_hides_sidebar_only_for_mobile(monkeypatch) -> None:
     captured: dict[str, str | None] = {"html": None}
+    bridge_calls: list[str] = []
 
     monkeypatch.setattr(layout, "_should_hide_host_chrome", lambda: True)
     monkeypatch.setattr(layout, "is_mobile_client", lambda: True)
+    monkeypatch.setattr(layout, "render_auth_cookie_bridge_if_needed", lambda: bridge_calls.append("bridge"))
     monkeypatch.setattr(layout, "_inject_native_shell_bootstrap", lambda: None)
     monkeypatch.setattr(layout, "inject_offline_runtime", lambda: None)
     monkeypatch.setattr(
@@ -56,6 +61,7 @@ def test_inject_app_style_hides_sidebar_only_for_mobile(monkeypatch) -> None:
     assert '.sl-native-mobile-topbar' in captured["html"]
     assert '.sl-native-mobile-drawer__panel' in captured["html"]
     assert 'body.sl-has-native-mobile-topbar .block-container' in captured["html"]
+    assert bridge_calls == ["bridge"]
 
 
 def test_native_shell_bootstrap_registers_service_worker_with_static_scope_only(monkeypatch) -> None:

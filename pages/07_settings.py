@@ -351,7 +351,7 @@ elif active_section == "診断情報":
     render_section_title("診断情報")
     auth_persistence = get_auth_persistence_status()
     cache_runtime = get_cache_runtime_status()
-    if auth_persistence["code"] in {"ready_ephemeral_secret", "cookie_manager_not_ready_ephemeral_secret", "missing_secret"}:
+    if auth_persistence["code"] in {"ready_ephemeral_secret", "missing_secret"}:
         st.warning(auth_persistence["message"])
     elif not auth_persistence["available"]:
         st.info(auth_persistence["message"])

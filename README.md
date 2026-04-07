@@ -13,7 +13,7 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
    - `pip install -r requirements-scraper.txt`
    - `pip install -r requirements-dev.txt`
 2. Copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml` and set real values.
-    - `APP_COOKIE_SECRET` を設定すると、ログイン状態を30日安定して保持できます（未設定時は一時ランダム秘密鍵へフォールバックし、再起動/再デプロイで保持がリセットされる場合があります）。
+    - `APP_COOKIE_SECRET` を設定すると、first-party の署名付き auth cookie でログイン状態を30日安定して保持できます（未設定時は一時ランダム秘密鍵へフォールバックし、再起動/再デプロイで保持がリセットされる場合があります）。
     - `APP_HIDE_HOST_CHROME` を `true` にすると、Streamlitホスト由来の上部ツールUIを非表示にします（既定値は `true`）。
    - マルチインスタンス運用でキャッシュ無効化を共有したい場合は `CACHE_REDIS_URL`（任意で `CACHE_NAMESPACE`）を設定してください。
    - Redis未設定時はプロセスローカル無効化で動作します。必要に応じて `APP_EXPECT_STICKY_SESSIONS=true` の前提で同一ユーザーを同一インスタンスへ固定してください。
@@ -57,7 +57,7 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 - **Retry-aware UX**: upload results are tracked in component state, with replay-event retry hooks for transient network failures.
 
 ## Login persistence (30 days)
-- This app supports login skip on revisit by storing encrypted auth session cookies.
+- This app supports login skip on revisit by storing signed first-party auth session cookies that are read server-side through `st.context.cookies`.
 - For stable persistence across restarts, set:
   - `APP_COOKIE_SECRET` in `.streamlit/secrets.toml` (long random string)
 - If `APP_COOKIE_SECRET` is missing, the app falls back to a process-local temporary random secret and shows a UI warning/diagnostic. Persistence can reset on app restart/redeploy.

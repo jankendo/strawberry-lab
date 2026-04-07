@@ -10,9 +10,11 @@ from src.components.skeletons import render_card_skeleton, render_table_skeleton
 from src.components.tables import is_mobile_client, render_table
 from src.services.auth_service import (
     ensure_auth_cookie_persistence,
+    get_auth_cookie_sync_error,
     get_auth_persistence_status,
     get_user_client,
     initialize_auth_state,
+    is_auth_cookie_sync_pending,
     login_user,
     restore_login_from_cookie,
 )
@@ -320,6 +322,7 @@ def _render_dashboard_loading_skeleton(*, is_mobile: bool, include_feed: bool) -
 
 def _render_login() -> None:
     persistence = get_auth_persistence_status()
+    sync_error = get_auth_cookie_sync_error()
     mobile_client = is_mobile_client()
     render_hero_banner(
         "StrawberryLab",
@@ -336,13 +339,15 @@ def _render_login() -> None:
             render_status_badge("30日ログイン保持: 有効", tone="success", icon="✅")
         else:
             st.caption("✅ 30日ログイン保持: 有効")
-    elif persistence["code"] in {"missing_secret", "cookie_manager_not_ready_ephemeral_secret"}:
+    elif persistence["code"] == "missing_secret":
         st.warning(f"⚠️ {persistence['message']} `.streamlit/secrets.toml` を確認してください。")
     else:
         if mobile_client:
             render_status_badge(persistence["message"], tone="info", icon="ℹ️")
         else:
             st.caption(f"ℹ️ {persistence['message']}")
+    if sync_error:
+        st.warning(f"⚠️ {sync_error}")
 
     if mobile_client:
         form_container = st.container()
@@ -372,14 +377,30 @@ def _render_auth_restore_pending() -> None:
     mobile_client = is_mobile_client()
     render_hero_banner(
         "StrawberryLab",
-        "ログイン状態を復元しています。"
+        "保存済みのログイン状態を確認しています。"
         if mobile_client
         else "保存済みのログイン情報を確認しています。少しお待ちください。",
     )
     render_surface(
-        "iPhone を含む一部ブラウザでは、ログイン保持クッキーの初期化に数秒かかることがあります。"
+        "保存済みの first-party ログイン cookie を検証しています。"
         " 準備ができ次第、自動でワークスペースへ戻ります。",
         title="ログイン状態を確認中",
+        tone="info",
+    )
+
+
+def _render_auth_cookie_sync_pending() -> None:
+    mobile_client = is_mobile_client()
+    render_hero_banner(
+        "StrawberryLab",
+        "ログイン状態をブラウザへ保存しています。"
+        if mobile_client
+        else "ログイン状態をブラウザへ同期しています。少しお待ちください。",
+    )
+    render_surface(
+        "iPhone でもページ移動時にログインが途切れないよう、first-party cookie を同期しています。"
+        " 同期完了後に自動でワークスペースへ戻ります。",
+        title="ログイン状態を保存中",
         tone="info",
     )
 
@@ -508,7 +529,9 @@ def _render_dashboard() -> None:
             )
 
 
-if st.session_state.get("is_authenticated"):
+if st.session_state.get("is_authenticated") and is_auth_cookie_sync_pending():
+    _render_auth_cookie_sync_pending()
+elif st.session_state.get("is_authenticated"):
     _render_dashboard()
 elif _AUTH_RESTORE_RESULT is None:
     _render_auth_restore_pending()
