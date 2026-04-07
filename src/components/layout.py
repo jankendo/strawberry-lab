@@ -107,6 +107,7 @@ def _inject_native_shell_bootstrap() -> None:
       }
       const config = __CONFIG_JSON__;
       const stateKey = "__slNativeShellState";
+      const staticBaseCacheStorageKey = "__slNativeShellStaticBase";
       const state = parentWindow[stateKey] || {};
       parentWindow[stateKey] = state;
 
@@ -228,21 +229,121 @@ def _inject_native_shell_bootstrap() -> None:
         return uniqueCandidates;
       }
 
+      function getSessionStorage() {
+        try {
+          return parentWindow.sessionStorage || null;
+        } catch (error) {
+          console.warn("[native-shell] Unable to access sessionStorage:", error);
+          return null;
+        }
+      }
+
+      function readCachedStaticBase(candidateSignature) {
+        if (!candidateSignature) {
+          return null;
+        }
+        const storage = getSessionStorage();
+        if (!storage) {
+          return null;
+        }
+        try {
+          const rawValue = storage.getItem(staticBaseCacheStorageKey);
+          if (!rawValue) {
+            return null;
+          }
+          const parsedValue = JSON.parse(rawValue);
+          if (
+            !parsedValue ||
+            parsedValue.signature !== candidateSignature ||
+            typeof parsedValue.url !== "string"
+          ) {
+            return null;
+          }
+          return parsedValue.url;
+        } catch (error) {
+          console.warn("[native-shell] Failed to read cached static base:", error);
+          return null;
+        }
+      }
+
+      function writeCachedStaticBase(candidateSignature, resolvedUrl) {
+        if (!candidateSignature) {
+          return;
+        }
+        const storage = getSessionStorage();
+        if (!storage) {
+          return;
+        }
+        try {
+          storage.setItem(
+            staticBaseCacheStorageKey,
+            JSON.stringify({
+              signature: candidateSignature,
+              url: resolvedUrl || "",
+            })
+          );
+        } catch (error) {
+          console.warn("[native-shell] Failed to persist static base cache:", error);
+        }
+      }
+
       function chooseStaticBase(callback) {
         const candidates = buildStaticBaseCandidates();
         if (!candidates.length) {
           callback("");
           return;
         }
+        const candidateSignature = candidates.join("|");
+        if (
+          state.staticBaseCandidatesSignature === candidateSignature &&
+          typeof state.staticBaseUrl === "string"
+        ) {
+          callback(state.staticBaseUrl);
+          return;
+        }
+        const cachedStaticBaseUrl = readCachedStaticBase(candidateSignature);
+        if (cachedStaticBaseUrl !== null) {
+          state.staticBaseUrl = cachedStaticBaseUrl;
+          state.staticBaseCandidatesSignature = candidateSignature;
+          state.staticBaseResolutionInFlight = false;
+          callback(cachedStaticBaseUrl);
+          return;
+        }
+        if (
+          state.staticBaseResolutionInFlight &&
+          state.staticBaseCandidatesSignature === candidateSignature
+        ) {
+          state.staticBaseCallbacks = state.staticBaseCallbacks || [];
+          state.staticBaseCallbacks.push(callback);
+          return;
+        }
+        const finalizeStaticBase = function (resolvedUrl) {
+          state.staticBaseUrl = resolvedUrl || "";
+          state.staticBaseCandidatesSignature = candidateSignature;
+          state.staticBaseResolutionInFlight = false;
+          writeCachedStaticBase(candidateSignature, state.staticBaseUrl);
+          const pendingCallbacks = state.staticBaseCallbacks || [];
+          state.staticBaseCallbacks = [];
+          pendingCallbacks.forEach(function (pendingCallback) {
+            try {
+              pendingCallback(state.staticBaseUrl);
+            } catch (error) {
+              console.warn("[native-shell] Static base callback failed:", error);
+            }
+          });
+        };
+        state.staticBaseCandidatesSignature = candidateSignature;
+        state.staticBaseResolutionInFlight = true;
+        state.staticBaseCallbacks = [callback];
         if (!parentWindow.fetch) {
-          callback(candidates[0]);
+          finalizeStaticBase(candidates[0]);
           return;
         }
 
         let index = 0;
         const probeNext = function () {
           if (index >= candidates.length) {
-            callback(candidates[0]);
+            finalizeStaticBase(candidates[0]);
             return;
           }
           const candidate = candidates[index];
@@ -257,7 +358,7 @@ def _inject_native_shell_bootstrap() -> None:
             })
             .then(function (response) {
               if (response && response.ok) {
-                callback(candidate);
+                finalizeStaticBase(candidate);
                 return;
               }
               probeNext();
@@ -269,6 +370,75 @@ def _inject_native_shell_bootstrap() -> None:
         };
 
         probeNext();
+      }
+
+      function ensureBottomNavRoot() {
+        let root = doc.getElementById("sl-native-bottom-nav");
+        if (!root) {
+          root = doc.createElement("nav");
+          root.id = "sl-native-bottom-nav";
+          root.className = "sl-native-bottom-nav";
+          root.setAttribute("aria-label", "主要ナビゲーション");
+          root.hidden = true;
+          doc.body.appendChild(root);
+        }
+        return root;
+      }
+
+      function resolveNavigationHref(pathname) {
+        const normalizedPath = String(pathname || "/").trim();
+        const relativePath = normalizedPath === "/" ? "" : normalizedPath.replace(/^\\/+/, "");
+        try {
+          const prefix = detectBasePrefix();
+          return new URL(relativePath, parentWindow.location.origin + prefix).href;
+        } catch (error) {
+          console.warn("[native-shell] Failed to resolve navigation href:", pathname, error);
+          return "";
+        }
+      }
+
+      function renderBottomNav(config) {
+        const root = ensureBottomNavRoot();
+        const items = config && Array.isArray(config.items) ? config.items : [];
+        if (!config || !config.visible || !items.length) {
+          root.hidden = true;
+          root.replaceChildren();
+          doc.body.classList.remove("sl-has-native-bottom-nav");
+          return;
+        }
+
+        root.hidden = false;
+        root.replaceChildren();
+
+        const list = doc.createElement("div");
+        list.className = "sl-native-bottom-nav__list";
+
+        items.forEach(function (item) {
+          const isActive = item && item.key === config.activeKey;
+          const control = doc.createElement("a");
+          control.className = "sl-native-bottom-nav__item" + (isActive ? " is-active" : "");
+          control.setAttribute("aria-label", (item && item.ariaLabel) || (item && item.label) || "");
+          control.setAttribute("href", resolveNavigationHref(item && item.pathname));
+          if (isActive) {
+            control.setAttribute("aria-current", "page");
+          }
+
+          const icon = doc.createElement("span");
+          icon.className = "sl-native-bottom-nav__icon";
+          icon.textContent = item.icon || "";
+          icon.setAttribute("aria-hidden", "true");
+
+          const label = doc.createElement("span");
+          label.className = "sl-native-bottom-nav__label";
+          label.textContent = item.label || "";
+
+          control.appendChild(icon);
+          control.appendChild(label);
+          list.appendChild(control);
+        });
+
+        root.appendChild(list);
+        doc.body.classList.add("sl-has-native-bottom-nav");
       }
 
       function isLocalhostHost(hostname) {
@@ -441,7 +611,9 @@ def _inject_native_shell_bootstrap() -> None:
         state.iosScrollGuardInstalled = true;
       }
 
+      state.renderBottomNav = renderBottomNav;
       installIOSScrollGuard();
+      renderBottomNav(null);
       chooseStaticBase(function (staticBaseUrl) {
         applyHeadEnhancements(staticBaseUrl);
         registerServiceWorker(staticBaseUrl);
@@ -459,105 +631,24 @@ def inject_app_style() -> None:
     """Inject product-oriented, neutral-first design tokens and component styles."""
     host_chrome_css = ""
     if _should_hide_host_chrome():
-        host_chrome_css = """
-        header[data-testid="stHeader"],
-        [data-testid="stToolbar"],
-        [data-testid="stDecoration"],
-        [data-testid="stStatusWidget"],
-        #MainMenu,
-        button[kind="header"],
-        button[kind="headerNoPadding"] {
+        host_chrome_scope = "body.sl-has-native-bottom-nav " if is_mobile_client() else ""
+        host_chrome_css = f"""
+        {host_chrome_scope}header[data-testid="stHeader"],
+        {host_chrome_scope}[data-testid="stToolbar"],
+        {host_chrome_scope}[data-testid="stDecoration"],
+        {host_chrome_scope}[data-testid="stStatusWidget"],
+        {host_chrome_scope}#MainMenu,
+        {host_chrome_scope}button[kind="header"],
+        {host_chrome_scope}button[kind="headerNoPadding"] {{
             display: none !important;
             visibility: hidden !important;
             height: 0 !important;
-        }
+        }}
         """
     mobile_nav_css = ""
     if is_mobile_client():
         mobile_nav_css = """
-        .sl-bottom-nav-anchor {
-            display: block;
-            height: 0;
-            margin: 0;
-            padding: 0;
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] {
-            display: flex !important;
-            flex-direction: row !important;
-            gap: 0.22rem !important;
-            position: fixed;
-            left: 0.72rem;
-            right: 0.72rem;
-            bottom: calc(var(--sl-safe-bottom) + 0.38rem);
-            z-index: 48;
-            padding: 0.32rem;
-            border: 1px solid rgba(255, 255, 255, 0.55);
-            border-radius: 22px;
-            background: rgba(248, 250, 252, 0.74);
-            box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.7);
-            backdrop-filter: saturate(1.8) blur(20px);
-            -webkit-backdrop-filter: saturate(1.8) blur(20px);
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] > div {
-            min-width: 0 !important;
-            max-width: none !important;
-            width: 0 !important;
-            flex: 1 1 0 !important;
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"] {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 60px !important;
-            border-radius: 18px;
-            border: 1px solid transparent;
-            background: transparent;
-            color: var(--sl-muted);
-            margin-bottom: 0 !important;
-            padding: 0.28rem 0.15rem;
-            line-height: 1.08;
-            text-decoration: none;
-            box-shadow: none;
-            transition:
-                border-color 0.2s ease,
-                background-color 0.2s ease,
-                color 0.2s ease,
-                transform 0.08s ease-out;
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"]:hover {
-            border-color: rgba(232, 51, 74, 0.16);
-            background: rgba(255, 255, 255, 0.42);
-            color: var(--sl-heading);
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"]:active {
-            transform: scale(0.97);
-            border-color: rgba(232, 51, 74, 0.22);
-            background: rgba(253, 242, 244, 0.88);
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"] p {
-            width: 100%;
-            margin: 0;
-            line-height: 1.08;
-            white-space: pre-line;
-            overflow-wrap: anywhere;
-            word-break: keep-all;
-            text-align: center;
-            font-size: 0.72rem;
-            font-weight: 640;
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button {
-            min-height: 56px !important;
-            border-radius: 18px;
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button p {
-            white-space: pre-line;
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button:active {
-            transform: scale(0.97);
-            background: #fdf2f4;
-            border-color: var(--sl-primary);
-        }
-        [data-testid="stSidebar"] {
+        body.sl-has-native-bottom-nav [data-testid="stSidebar"] {
             display: none !important;
         }
         """
@@ -895,19 +986,38 @@ def inject_app_style() -> None:
         padding: var(--sl-space-2);
         margin-top: var(--sl-space-2);
     }
-    .sl-bottom-nav-anchor {
-        display: none;
-    }
-    .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] {
-        display: none;
-    }
     .sl-desktop-nav-toggle-anchor {
         display: none;
     }
     .sl-desktop-nav-toggle-anchor + div[data-testid="stButton"] {
         display: none;
     }
-    .sl-bottom-nav-tab-active {
+    .sl-native-bottom-nav {
+        position: fixed;
+        left: 0.72rem;
+        right: 0.72rem;
+        bottom: calc(var(--sl-safe-bottom) + 0.38rem);
+        z-index: 48;
+        pointer-events: none;
+    }
+    .sl-native-bottom-nav[hidden] {
+        display: none !important;
+    }
+    .sl-native-bottom-nav__list {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 0.22rem;
+        padding: 0.32rem;
+        border: 1px solid rgba(255, 255, 255, 0.55);
+        border-radius: 22px;
+        background: rgba(248, 250, 252, 0.74);
+        box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+        backdrop-filter: saturate(1.8) blur(20px);
+        -webkit-backdrop-filter: saturate(1.8) blur(20px);
+        pointer-events: auto;
+    }
+    .sl-native-bottom-nav__item {
+        appearance: none;
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -917,23 +1027,51 @@ def inject_app_style() -> None:
         min-width: 0;
         min-height: 60px;
         border-radius: 18px;
-        border: 1px solid rgba(232, 51, 74, 0.22);
-        background: rgba(255, 255, 255, 0.56);
-        color: var(--sl-heading);
-        font-weight: 700;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--sl-muted);
+        font: inherit;
+        font-weight: 640;
         text-align: center;
         line-height: 1.12;
         padding: 0.28rem 0.15rem;
         box-sizing: border-box;
-        overflow: hidden;
+        text-decoration: none;
+        transition:
+            border-color 0.2s ease,
+            background-color 0.2s ease,
+            color 0.2s ease,
+            transform 0.08s ease-out,
+            box-shadow 0.2s ease;
+        cursor: pointer;
+    }
+    .sl-native-bottom-nav__item:hover {
+        border-color: rgba(232, 51, 74, 0.16);
+        background: rgba(255, 255, 255, 0.42);
+        color: var(--sl-heading);
+    }
+    .sl-native-bottom-nav__item:active {
+        transform: scale(0.97);
+        border-color: rgba(232, 51, 74, 0.22);
+        background: rgba(253, 242, 244, 0.88);
+    }
+    .sl-native-bottom-nav__item:focus-visible {
+        outline: 3px solid rgba(232, 51, 74, 0.24);
+        outline-offset: 2px;
+    }
+    .sl-native-bottom-nav__item.is-active {
+        border-color: rgba(232, 51, 74, 0.22);
+        background: rgba(255, 255, 255, 0.56);
+        color: var(--sl-heading);
+        font-weight: 700;
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
     }
-    .sl-bottom-nav-tab-active .sl-bottom-nav-icon {
+    .sl-native-bottom-nav__icon {
         font-size: 1rem;
         line-height: 1;
         flex-shrink: 0;
     }
-    .sl-bottom-nav-tab-active .sl-bottom-nav-label {
+    .sl-native-bottom-nav__label {
         display: block;
         width: 100%;
         max-width: 100%;
@@ -1118,7 +1256,7 @@ def inject_app_style() -> None:
         [data-testid="stButton"] > button,
         [data-testid="stDownloadButton"] > button,
         [data-testid="stFormSubmitButton"] > button,
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button {
+        .sl-native-bottom-nav__item {
             transition: none !important;
         }
     }

@@ -48,11 +48,11 @@ def test_inject_app_style_hides_sidebar_only_for_mobile(monkeypatch) -> None:
 
     assert captured["html"] is not None
     assert re.search(
-        r'@media \(max-width: 820px\).*?\[data-testid="stSidebar"] \{\s*display: none !important;',
+        r'@media \(max-width: 820px\).*?body\.sl-has-native-bottom-nav \[data-testid="stSidebar"] \{\s*display: none !important;',
         captured["html"],
         re.S,
     )
-    assert 'button[kind="headerNoPadding"]' in captured["html"]
+    assert 'body.sl-has-native-bottom-nav button[kind="headerNoPadding"]' in captured["html"]
 
 
 def test_native_shell_bootstrap_registers_service_worker_with_static_scope_only(monkeypatch) -> None:
@@ -69,6 +69,25 @@ def test_native_shell_bootstrap_registers_service_worker_with_static_scope_only(
     assert captured["html"] is not None
     assert "resolveAppScopePath" not in captured["html"]
     assert "const scopeCandidates = [fallbackScope];" in captured["html"]
+
+
+def test_native_shell_bootstrap_caches_static_base_and_uses_direct_nav_links(monkeypatch) -> None:
+    captured: dict[str, str | None] = {"html": None}
+
+    monkeypatch.setattr(
+        layout.components,
+        "html",
+        lambda html, **_kwargs: captured.__setitem__("html", html),
+    )
+
+    layout._inject_native_shell_bootstrap()
+
+    assert captured["html"] is not None
+    assert "sessionStorage" in captured["html"]
+    assert "__slNativeShellStaticBase" in captured["html"]
+    assert "resolveNavigationHref" in captured["html"]
+    assert 'control.setAttribute("href", resolveNavigationHref(item && item.pathname));' in captured["html"]
+    assert 'a[data-testid="stPageLink-NavLink"]' not in captured["html"]
 
 
 def test_render_surface_does_not_mark_accent_tone_as_important(monkeypatch) -> None:

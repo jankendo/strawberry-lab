@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.components.tables import is_mobile_client
 from src.constants.ui import APP_NAME
@@ -18,14 +21,14 @@ _SIDEBAR_NAV_ITEMS: list[tuple[str, str, str, str]] = [
     ("notes", "pages/06_notes.py", "研究メモ", "📓"),
     ("settings", "pages/07_settings.py", "設定", "⚙️"),
 ]
-_MOBILE_TAB_ITEMS: list[tuple[str, str, str, str]] = [
-    ("dashboard", "Home.py", "ダッシュボード", "🏠"),
-    ("varieties", "pages/01_varieties.py", "品種管理", "🍓"),
-    ("reviews", "pages/02_reviews.py", "試食評価", "📝"),
-    ("analytics", "pages/03_analytics.py", "分析", "📊"),
-    ("settings", "pages/07_settings.py", "設定", "⚙️"),
+_MOBILE_TAB_ITEMS: list[tuple[str, str, str, str, str]] = [
+    ("dashboard", "Home.py", "/", "ダッシュボード", "🏠"),
+    ("varieties", "pages/01_varieties.py", "/varieties", "品種管理", "🍓"),
+    ("reviews", "pages/02_reviews.py", "/reviews", "試食評価", "📝"),
+    ("analytics", "pages/03_analytics.py", "/analytics", "分析", "📊"),
+    ("settings", "pages/07_settings.py", "/settings", "設定", "⚙️"),
 ]
-_CORE_TAB_KEYS = {tab_key for tab_key, _, _, _ in _MOBILE_TAB_ITEMS if tab_key != "settings"}
+_CORE_TAB_KEYS = {tab_key for tab_key, _, _, _, _ in _MOBILE_TAB_ITEMS if tab_key != "settings"}
 _SETTINGS_GROUP_PAGE_KEYS = {"pedigree", "notes", "settings"}
 
 
@@ -52,53 +55,57 @@ def _render_desktop_nav_reopen_button(*, active_page: str) -> None:
         st.rerun()
 
 
-def _render_mobile_tab(
-    tab_key: str,
-    tab_path: str,
-    tab_label: str,
-    tab_icon: str,
-    *,
-    active_tab: str,
-    active_page: str,
-) -> None:
-    is_active = tab_key == active_tab
-    if is_active:
-        st.markdown(
-            (
-                '<div class="sl-bottom-nav-tab-active" aria-current="page">'
-                f'<span class="sl-bottom-nav-icon">{tab_icon}</span>'
-                f'<span class="sl-bottom-nav-label">{tab_label}</span>'
-                "</div>"
-            ),
-            unsafe_allow_html=True,
-        )
-        return
-
-    st.page_link(
-        tab_path,
-        label=f"{tab_icon}\n{tab_label}",
-        use_container_width=True,
+def _render_native_mobile_nav(*, active_tab: str) -> None:
+    nav_config = {
+        "visible": True,
+        "activeKey": active_tab,
+        "items": [
+            {
+                "key": tab_key,
+                "pathname": tab_pathname,
+                "label": tab_label,
+                "ariaLabel": f"{tab_label}に移動",
+                "icon": tab_icon,
+            }
+            for tab_key, _tab_path, tab_pathname, tab_label, tab_icon in _MOBILE_TAB_ITEMS
+        ],
+    }
+    config_json = json.dumps(nav_config, ensure_ascii=False)
+    components.html(
+        """
+        <script>
+        (function () {
+          let parentWindow = null;
+          try {
+            parentWindow = window.parent;
+          } catch (error) {
+            console.warn("[native-shell] Unable to access parent window for nav shell:", error);
+            return;
+          }
+          if (!parentWindow) {
+            return;
+          }
+          const stateKey = "__slNativeShellState";
+          const state = parentWindow[stateKey] || {};
+          parentWindow[stateKey] = state;
+          state.bottomNavConfig = __NAV_CONFIG__;
+          if (typeof state.renderBottomNav === "function") {
+            state.renderBottomNav(state.bottomNavConfig);
+          }
+        })();
+        </script>
+        """.replace("__NAV_CONFIG__", config_json),
+        height=0,
     )
 
 
 def render_primary_nav(*, active_page: str) -> None:
-    """Render fixed bottom-tab navigation for mobile contexts."""
+    """Render mobile navigation using a native-shell bottom bar."""
     if not st.session_state.get("is_authenticated") or not is_mobile_client():
         return
 
     active_tab = _resolve_mobile_active_tab(active_page)
-    st.markdown('<div class="sl-bottom-nav-anchor" aria-hidden="true"></div>', unsafe_allow_html=True)
-    columns = st.columns(len(_MOBILE_TAB_ITEMS), gap="small")
-    for col, (tab_key, tab_path, tab_label, tab_icon) in zip(columns, _MOBILE_TAB_ITEMS, strict=True):
-        with col:
-            _render_mobile_tab(
-                tab_key,
-                tab_path,
-                tab_label,
-                tab_icon,
-                active_tab=active_tab,
-                active_page=active_page,
-            )
+    _render_native_mobile_nav(active_tab=active_tab)
 
 
 def render_sidebar(*, active_page: str) -> None:

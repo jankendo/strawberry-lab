@@ -18,34 +18,24 @@ def test_resolve_mobile_active_tab_maps_settings_group_pages() -> None:
 
 
 def test_render_primary_nav_renders_for_mobile_authenticated_users(monkeypatch) -> None:
-    markdown_calls: list[str] = []
-    page_links: list[tuple[str, str]] = []
+    component_calls: list[str] = []
 
-    class _DummyColumn:
-        def __enter__(self) -> None:
-            return None
-
-        def __exit__(self, *_args: object) -> bool:
-            return False
+    def _unexpected(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("Legacy mobile nav widgets should not render")
 
     monkeypatch.setattr(sidebar.st, "session_state", {"is_authenticated": True})
     monkeypatch.setattr(sidebar, "is_mobile_client", lambda: True)
-    monkeypatch.setattr(sidebar.st, "markdown", lambda html, **_kwargs: markdown_calls.append(html))
-    monkeypatch.setattr(
-        sidebar.st,
-        "columns",
-        lambda count, gap=None: [_DummyColumn() for _ in range(count)],
-    )
-    monkeypatch.setattr(
-        sidebar.st,
-        "page_link",
-        lambda path, label, **_kwargs: page_links.append((path, label)),
-    )
+    monkeypatch.setattr(sidebar.st, "markdown", _unexpected)
+    monkeypatch.setattr(sidebar.st, "columns", _unexpected)
+    monkeypatch.setattr(sidebar.st, "page_link", _unexpected)
+    monkeypatch.setattr(sidebar.components, "html", lambda html, **_kwargs: component_calls.append(html))
 
     sidebar.render_primary_nav(active_page="dashboard")
 
-    assert any("sl-bottom-nav-anchor" in html for html in markdown_calls)
-    assert len(page_links) == len(sidebar._MOBILE_TAB_ITEMS) - 1
+    assert len(component_calls) == 1
+    assert '"activeKey": "dashboard"' in component_calls[0]
+    assert '"pathname": "/varieties"' in component_calls[0]
+    assert '"ariaLabel": "設定に移動"' in component_calls[0]
 
 
 def test_render_primary_nav_skips_for_desktop_authenticated_users(monkeypatch) -> None:
