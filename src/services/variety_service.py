@@ -21,6 +21,7 @@ LIST_TAB_FIELDS = (
     "description,characteristics_summary,developer,updated_at,created_at,registered_year,registration_date"
 )
 LIST_TAB_SORT_FIELDS = "id,name,origin_prefecture,updated_at,created_at,registered_year,registration_date"
+LIST_TAB_LOCKED_FIELDS = "id,registration_number,application_number"
 _POSTGREST_IN_CHUNK_SIZE = 200
 _LIST_TAB_INDEX_BATCH_SIZE = 1000
 
@@ -271,6 +272,29 @@ def list_variety_list_index_for_ids(variety_ids: Sequence[str]) -> list[dict]:
 
 
 @scoped_cache_data(ttl=900, scopes="varieties")
+def list_variety_locked_index_for_ids(variety_ids: Sequence[str]) -> list[dict]:
+    """Return a minimal locked-data index for a specific variety ID set."""
+    ids = [str(variety_id) for variety_id in dict.fromkeys(variety_ids) if str(variety_id).strip()]
+    if not ids:
+        return []
+    client = get_user_client()
+    rows: list[dict] = []
+    for id_chunk in chunked_sequence(ids, _POSTGREST_IN_CHUNK_SIZE):
+        chunk = (
+            client.table("varieties")
+            .select(LIST_TAB_LOCKED_FIELDS)
+            .in_("id", id_chunk)
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+        rows.extend(dict(row) for row in chunk)
+    rows.sort(key=lambda row: normalize_search_text(str(row.get("id") or "")))
+    return rows
+
+
+@scoped_cache_data(ttl=900, scopes="varieties")
 def list_variety_sort_index_for_ids(variety_ids: Sequence[str]) -> list[dict]:
     """Return a cached lightweight sort/filter index for a specific variety ID set."""
     ids = [str(variety_id) for variety_id in dict.fromkeys(variety_ids) if str(variety_id).strip()]
@@ -378,12 +402,25 @@ def get_variety_list_page_ids(
     )
 
 
-def get_variety_list_rows(variety_ids: Sequence[str]) -> list[dict]:
+def get_variety_list_rows(variety_ids: Sequence[str], *, lightweight_ids: Sequence[str] | None = None) -> list[dict]:
     """Return ordered list-tab rows for the provided page IDs."""
     ids = [str(variety_id) for variety_id in variety_ids if str(variety_id).strip()]
     if not ids:
         return []
-    return _ordered_variety_rows_by_ids(list_variety_list_index_for_ids(ids), ids)
+    lightweight_id_set = {str(variety_id) for variety_id in (lightweight_ids or []) if str(variety_id).strip()}
+    full_ids = [variety_id for variety_id in ids if variety_id not in lightweight_id_set]
+    rows: list[dict] = []
+    if full_ids:
+        rows.extend(list_variety_list_index_for_ids(full_ids))
+    if lightweight_id_set:
+        rows.extend(list_variety_locked_index_for_ids([variety_id for variety_id in ids if variety_id in lightweight_id_set]))
+    return _ordered_variety_rows_by_ids(rows, ids)
+
+
+def get_variety_locked_detail(variety_id: str) -> dict | None:
+    """Fetch the minimal locked detail payload for an undiscovered variety."""
+    rows = list_variety_locked_index_for_ids([variety_id])
+    return dict(rows[0]) if rows else None
 
 
 def list_varieties_for_list_tab(
@@ -508,6 +545,7 @@ def _clear_variety_related_caches() -> None:
     list_variety_list_index.clear()
     list_variety_sort_index.clear()
     list_variety_list_index_for_ids.clear()
+    list_variety_locked_index_for_ids.clear()
     list_variety_sort_index_for_ids.clear()
     list_active_varieties.clear()
     get_variety_detail.clear()

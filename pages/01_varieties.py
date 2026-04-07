@@ -40,6 +40,7 @@ from src.services.variety_service import (
     create_variety,
     get_variety_list_page_ids,
     get_variety_list_rows,
+    get_variety_locked_detail,
     get_latest_review_summary_for_varieties,
     get_pokedex_progress,
     get_review_counts_for_varieties,
@@ -662,8 +663,9 @@ def _render_variety_detail_panel(
     latest_review: dict | None,
     primary_image: dict | None,
     mobile_client: bool,
+    list_row: dict | None = None,
 ) -> None:
-    detail = get_variety_detail(selected_id)
+    detail = get_variety_detail(selected_id) if discovered else (list_row or get_variety_locked_detail(selected_id))
     if not detail:
         render_empty_state("品種詳細を取得できませんでした。", title="品種詳細を表示できません")
         return
@@ -946,30 +948,31 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
 
     loading_status.update(
         step=2,
+        label="レビュー件数と図鑑進捗を取得しています",
+        loaded_count=len(page_ids),
+        total_count=total,
+    )
+    count_targets = list(page_ids)
+    if selected_id and selected_id not in count_targets:
+        count_targets.append(selected_id)
+    review_counts = get_review_counts_for_varieties(count_targets)
+    progress = get_pokedex_progress()
+    completion_ratio = (float(progress["completion_rate"]) / 100) if progress["total_varieties"] else 0.0
+
+    lightweight_page_ids = [variety_id for variety_id in page_ids if int(review_counts.get(variety_id, 0)) <= 0]
+    loading_status.update(
+        step=3,
         label="表示対象の品種情報を取得しています",
         loaded_count=len(page_ids),
         total_count=total,
     )
-    rows = get_variety_list_rows(page_ids)
+    rows = get_variety_list_rows(page_ids, lightweight_ids=lightweight_page_ids)
 
     if selected_id and not selected_matches:
         selected_id = rows[0]["id"] if rows else ""
         st.session_state["variety_selected_from_list"] = selected_id
         if mobile_client and not selected_id:
             st.session_state["variety_mobile_panel"] = "list"
-
-    loading_status.update(
-        step=3,
-        label="レビュー件数と図鑑進捗を取得しています",
-        loaded_count=len(rows),
-        total_count=total,
-    )
-    count_targets = [row["id"] for row in rows]
-    if selected_id and selected_id not in count_targets:
-        count_targets.append(selected_id)
-    review_counts = get_review_counts_for_varieties(count_targets)
-    progress = get_pokedex_progress()
-    completion_ratio = (float(progress["completion_rate"]) / 100) if progress["total_varieties"] else 0.0
 
     render_kpi_cards(
         [
@@ -1007,6 +1010,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
     )
     loading_status.clear()
     st.session_state[_VARIETY_LIST_LOADING_SIGNATURE_KEY] = loading_signature
+    row_by_id = {str(row.get("id") or ""): row for row in rows if row.get("id")}
 
     if mobile_client:
         if mobile_panel == "detail" and selected_id:
@@ -1028,6 +1032,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
                 latest_review=latest_reviews.get(selected_id),
                 primary_image=primary_images.get(selected_id),
                 mobile_client=True,
+                list_row=row_by_id.get(selected_id),
             )
         else:
             st.session_state["variety_mobile_panel"] = "list"
@@ -1106,6 +1111,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
                     latest_review=latest_reviews.get(selected_id),
                     primary_image=primary_images.get(selected_id),
                     mobile_client=False,
+                    list_row=row_by_id.get(selected_id),
                 )
             else:
                 render_empty_state("一覧から品種を選択すると詳細が表示されます。", title="品種未選択")

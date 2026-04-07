@@ -315,6 +315,26 @@ def test_get_variety_list_page_ids_uses_direct_page_query_for_default_view(monke
     assert selected_matches is True
 
 
+def test_get_variety_list_rows_uses_minimal_payload_for_lightweight_ids(monkeypatch) -> None:
+    monkeypatch.setattr(
+        variety_service,
+        "list_variety_list_index_for_ids",
+        lambda ids: [{"id": "id-1", "name": "サガホノカ", "origin_prefecture": "佐賀県"}] if list(ids) == ["id-1"] else [],
+    )
+    monkeypatch.setattr(
+        variety_service,
+        "list_variety_locked_index_for_ids",
+        lambda ids: [{"id": "id-2", "registration_number": "222", "application_number": "A-2"}] if list(ids) == ["id-2"] else [],
+    )
+
+    rows = variety_service.get_variety_list_rows(["id-1", "id-2"], lightweight_ids=["id-2"])
+
+    assert rows == [
+        {"id": "id-1", "name": "サガホノカ", "origin_prefecture": "佐賀県"},
+        {"id": "id-2", "registration_number": "222", "application_number": "A-2"},
+    ]
+
+
 def test_list_variety_list_index_breaks_when_range_does_not_advance(monkeypatch) -> None:
     variety_rows = [
         {
