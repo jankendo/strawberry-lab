@@ -21,6 +21,7 @@ from src.components.layout import (
     render_kpi_cards,
     render_page_header,
     render_section_title,
+    render_section_switcher,
     render_sticky_primary_action_anchor,
 )
 from src.components.pagination import render_pagination_controls
@@ -147,27 +148,14 @@ def _render_manage_filters(*, is_mobile: bool) -> tuple[str, list[str], str, int
 
 
 def _render_notes_section_switcher(*, is_mobile: bool) -> str:
-    default_section = str(st.session_state.get("notes_active_section") or _NOTES_SECTION_ORDER[0])
-    if default_section not in _NOTES_SECTION_ORDER:
-        default_section = _NOTES_SECTION_ORDER[0]
-    with st.container(border=True):
-        render_section_title("表示セクション", None if is_mobile else "必要なセクションのみ描画して表示速度を保ちます。")
-        if is_mobile:
-            active_section = st.selectbox(
-                "表示セクション",
-                _NOTES_SECTION_ORDER,
-                index=_NOTES_SECTION_ORDER.index(default_section),
-                key="notes_active_section",
-            )
-        else:
-            active_section = st.radio(
-                "表示セクション",
-                _NOTES_SECTION_ORDER,
-                index=_NOTES_SECTION_ORDER.index(default_section),
-                horizontal=True,
-                key="notes_active_section",
-            )
-    return active_section
+    _ = is_mobile
+    return render_section_switcher(
+        _NOTES_SECTION_ORDER,
+        key="notes_active_section",
+        title="表示セクション",
+        description="ノート管理と削除済み復元を切り替え、不要な描画を抑えます。",
+        mobile_label="表示セクション",
+    )
 
 
 def _load_note_rows(
@@ -244,7 +232,7 @@ def _render_note_cards(rows: list[dict], *, is_mobile: bool) -> None:
                     shared_key=note_id,
                     shared_role="source",
                 )
-            if st.button("このノートを開く", key=f"open_note_{note_id}", use_container_width=True):
+            if st.button("開く", key=f"open_note_{note_id}", use_container_width=True):
                 st.session_state["notes_selected_id"] = note_id
                 st.session_state["notes_editor_mode"] = "edit"
                 if is_mobile:
@@ -581,15 +569,13 @@ inject_app_style()
 render_sidebar(active_page="notes")
 render_primary_nav(active_page="notes")
 mobile_client = is_mobile_client()
-if mobile_client:
-    render_page_header("研究メモ", "一覧から必要なノートを開き、編集や復元を行います。")
-else:
-    render_hero_banner(
-        "研究メモ",
-        "調査メモを一元管理し、検索・編集・復元までを同じワークフローで運用できます。",
-        eyebrow="研究ナレッジ管理",
-        chips=["横断検索", "モバイル編集", "削除復元"],
-    )
+render_page_header(
+    "研究メモ",
+    "検索・編集・復元までを同じワークフローで進められます。"
+    if not mobile_client
+    else "一覧から必要なノートを開き、編集や復元を行います。",
+)
+if not mobile_client:
     render_action_bar(
         title="運用の流れ",
         description="一覧カードで検索・絞り込み後にノートを開いて編集します。モバイルでは編集画面を単画面表示します。",
@@ -650,6 +636,15 @@ if active_section == "ノート管理":
         _render_note_editor(selected_id=selected_id, selected_note=selected_note, is_mobile=True)
     else:
         search_query, filter_tags, sort_mode, page, page_size = _render_manage_filters(is_mobile=mobile_client)
+        render_action_bar(
+            title="現在の絞り込み",
+            description="一覧カードはこの条件で並び替え・絞り込みされています。",
+            actions=[
+                f"検索 {search_query.strip() or 'なし'}",
+                f"タグ {', '.join(filter_tags) if filter_tags else 'なし'}",
+                f"並び順 {sort_mode}",
+            ],
+        )
         list_loading_placeholder = st.empty()
         with list_loading_placeholder.container():
             _render_notes_loading_skeleton(is_mobile=mobile_client, mode="list")

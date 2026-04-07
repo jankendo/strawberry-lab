@@ -22,6 +22,7 @@ from src.components.layout import (
     render_empty_state,
     render_hero_banner,
     render_kpi_cards,
+    render_page_header,
     render_section_title,
     render_status_badge,
     render_sticky_primary_action_anchor,
@@ -528,21 +529,18 @@ require_admin_session()
 inject_app_style()
 render_sidebar(active_page="reviews")
 render_primary_nav(active_page="reviews")
-render_hero_banner(
+render_page_header(
     "試食評価",
-    "登録・履歴確認・削除復元まで、試食レビュー運用を一画面で管理できます。",
-    eyebrow="レビュー運用",
-    chips=["日本語UI最適化", "重複上書き対応", "画像なし保存OK"],
-)
-render_action_bar(
-    title="入力から運用までをシンプルに",
-    description="必須入力は最小限、重複時は上書き確認付きで安全に保存します。",
-    actions=["作成・編集", "履歴管理", "削除復元"],
+    "レビュー登録・履歴確認・削除済み復元を同じ画面で安全に進められます。",
 )
 active_varieties = list_active_varieties()
 mobile_client = is_mobile_client()
-if mobile_client:
-    _inject_mobile_bottom_sheet_style()
+if not mobile_client:
+    render_action_bar(
+        title="入力から運用までをシンプルに",
+        description="必須入力は最小限にし、履歴確認や重複上書きも同じ画面で完結させます。",
+        actions=["レビュー登録", "履歴管理", "削除済み復元"],
+    )
 pending_save_intent_removals = [
     str(value).strip()
     for value in st.session_state.pop(_REVIEWS_PENDING_SAVE_INTENT_REMOVALS_KEY, [])
@@ -813,45 +811,42 @@ with tab_edit:
                 render_status_badge("任意項目（購入場所・価格・コメント・画像）は後から追記可能", tone="info")
                 st.page_link("pages/01_varieties.py", label="🍓 品種情報を確認", use_container_width=True)
                 if mobile_client:
-                    st.markdown(
-                        '<div class="sl-bottom-nav-anchor reviews-mobile-sheet-anchor" aria-hidden="true"></div>',
-                        unsafe_allow_html=True,
-                    )
-                    sheet_col, submit_col = st.columns([1.35, 1], gap="small")
-                    with sheet_col:
-                        with st.popover("📝 任意入力シート"):
-                            purchase_place = st.text_input("購入場所", key="review_purchase_place")
-                            price_jpy = st.number_input(
-                                "価格（円）",
-                                min_value=0,
-                                max_value=1_000_000,
-                                value=0,
-                                step=10,
-                                key="review_price_jpy",
-                            )
-                            comment = st.text_area("コメント", height=140, key="review_comment")
-                            if not uploader_component_available:
-                                uploaded_files = st.file_uploader(
-                                    "画像アップロード（最大3枚）",
-                                    type=["jpg", "jpeg", "png", "webp"],
-                                    accept_multiple_files=True,
-                                    key="review_uploaded_files",
-                                )
-                                if uploaded_files:
-                                    preview_targets = uploaded_files[:3]
-                                    st.image(
-                                        [file.getvalue() for file in preview_targets],
-                                        caption=[file.name for file in preview_targets],
-                                        use_container_width=True,
-                                    )
-                            st.caption("保存する場合は右の「この内容で保存」をタップしてください。")
-                    with submit_col:
-                        submit = st.form_submit_button(
-                            "この内容で保存",
-                            use_container_width=True,
-                            type="primary",
-                            disabled=bool(pending_image_upload),
+                    with st.expander(
+                        "📝 任意情報を追加",
+                        expanded=bool(purchase_place or price_jpy or comment or uploaded_files),
+                    ):
+                        purchase_place = st.text_input("購入場所", key="review_purchase_place")
+                        price_jpy = st.number_input(
+                            "価格（円）",
+                            min_value=0,
+                            max_value=1_000_000,
+                            value=0,
+                            step=10,
+                            key="review_price_jpy",
                         )
+                        comment = st.text_area("コメント", height=140, key="review_comment")
+                        if not uploader_component_available:
+                            uploaded_files = st.file_uploader(
+                                "画像アップロード（最大3枚）",
+                                type=["jpg", "jpeg", "png", "webp"],
+                                accept_multiple_files=True,
+                                key="review_uploaded_files",
+                            )
+                            if uploaded_files:
+                                preview_targets = uploaded_files[:3]
+                                st.image(
+                                    [file.getvalue() for file in preview_targets],
+                                    caption=[file.name for file in preview_targets],
+                                    use_container_width=True,
+                                )
+                        st.caption("任意項目は必要なときだけ開いて入力できます。")
+                    render_sticky_primary_action_anchor("reviews-save")
+                    submit = st.form_submit_button(
+                        "この内容で保存",
+                        use_container_width=True,
+                        type="primary",
+                        disabled=bool(pending_image_upload),
+                    )
                 else:
                     render_sticky_primary_action_anchor("reviews-save")
                     submit = st.form_submit_button(

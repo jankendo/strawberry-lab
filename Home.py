@@ -26,6 +26,7 @@ try:
         render_info_card,
         render_kpi_cards,
         render_lead,
+        render_section_switcher,
         render_status_badge,
         render_surface,
     )
@@ -86,11 +87,35 @@ except ImportError:
             st.page_link(action_path, label=action_label, use_container_width=True)
 
 
-    def render_kpi_cards(items: list[tuple[str, str, str | None]]) -> None:
+    def render_kpi_cards(items: list[tuple[str, str, str | None]], *, per_row: int = 4) -> None:
         """Fallback KPI renderer for partially refreshed runtimes."""
+        _ = per_row
         columns = st.columns(len(items))
         for column, (label, value, sub_text) in zip(columns, items, strict=True):
             column.metric(label, value, help=sub_text)
+
+
+    def render_section_switcher(
+        options: list[str],
+        *,
+        key: str,
+        title: str = "表示セクション",
+        description: str | None = None,
+        mobile_label: str | None = None,
+    ) -> str:
+        """Fallback section switcher for partially refreshed runtimes."""
+        _ = title, description
+        active_value = str(st.session_state.get(key) or options[0])
+        if active_value not in options:
+            active_value = options[0]
+        return str(
+            st.selectbox(
+                mobile_label or "表示セクション",
+                options,
+                index=options.index(active_value),
+                key=key,
+            )
+        )
 
 
     def render_surface(
@@ -302,15 +327,15 @@ def _render_dashboard_loading_skeleton(*, is_mobile: bool, include_feed: bool) -
 def _render_login() -> None:
     persistence = get_auth_persistence_status()
     mobile_client = is_mobile_client()
-    if mobile_client:
-        render_page_header("StrawberryLab", "ログインして管理ワークスペースを利用します。")
-    else:
-        render_hero_banner(
-            "StrawberryLab",
-            "いちご品種の研究・評価を一元管理するための管理アプリです。",
-            eyebrow="管理者ワークスペース",
-            chips=["ログインが必要です", "30日ログイン保持対応"],
-        )
+    render_hero_banner(
+        "StrawberryLab",
+        "いちご品種の研究・評価を一元管理するための管理アプリです。"
+        if not mobile_client
+        else "ログインして管理ワークスペースを利用します。",
+        eyebrow="管理者ワークスペース",
+        chips=["ログインが必要です", "30日ログイン保持対応"],
+    )
+    if not mobile_client:
         render_lead("品種登録情報・試食評価・分析・メモを一体運用する管理者向けワークスペースです。")
         render_action_bar(
             title="サインイン",
@@ -322,11 +347,17 @@ def _render_login() -> None:
             f"⚠️ {persistence['message']} 恒久運用では `.streamlit/secrets.toml` に APP_COOKIE_SECRET を設定してください。"
         )
     elif persistence["available"]:
-        st.caption("✅ 30日ログイン保持: 有効")
+        if mobile_client:
+            render_status_badge("30日ログイン保持: 有効", tone="success", icon="✅")
+        else:
+            st.caption("✅ 30日ログイン保持: 有効")
     elif persistence["code"] in {"missing_secret", "cookie_manager_not_ready_ephemeral_secret"}:
         st.warning(f"⚠️ {persistence['message']} `.streamlit/secrets.toml` を確認してください。")
     else:
-        st.caption(f"ℹ️ {persistence['message']}")
+        if mobile_client:
+            render_status_badge(persistence["message"], tone="info", icon="ℹ️")
+        else:
+            st.caption(f"ℹ️ {persistence['message']}")
 
     if mobile_client:
         form_container = st.container()
@@ -335,13 +366,17 @@ def _render_login() -> None:
         form_container = center
 
     with form_container:
-        render_surface(
-            "アクセス権限を持つアカウントのみ利用できます。ログイン成功後はダッシュボードへ移動します。",
-            title="ログイン",
-            subtitle="管理者認証",
-            tone="soft",
-            elevated=True,
-        )
+        if mobile_client:
+            st.markdown("### ログイン")
+            st.caption("アクセス権限を持つアカウントのみ利用できます。")
+        else:
+            render_surface(
+                "アクセス権限を持つアカウントのみ利用できます。ログイン成功後はダッシュボードへ移動します。",
+                title="ログイン",
+                subtitle="管理者認証",
+                tone="soft",
+                elevated=True,
+            )
         with st.form("login_form"):
             email = st.text_input("メールアドレス")
             password = st.text_input("パスワード", type="password")
@@ -362,14 +397,22 @@ def _render_dashboard() -> None:
     render_primary_nav(active_page="dashboard")
     mobile_client = is_mobile_client()
 
-    render_page_header(
+    render_hero_banner(
         "ダッシュボード",
         (
             "最優先の作業を上から順に実行できます。"
             if mobile_client
             else "今日の状況 → 今日やること → 最新ログの順で、必要な操作だけ進めます。"
         ),
+        eyebrow="今日のワークフロー",
+        chips=["優先タスク", "状況サマリー", "更新ログ"],
     )
+    if not mobile_client:
+        render_action_bar(
+            title="今日の見方",
+            description="上から順に確認すると、必要な判断と次アクションが最短で分かります。",
+            actions=["今日の状況", "今日やること", "更新ログ"],
+        )
 
     metrics_loading_placeholder = st.empty()
     with metrics_loading_placeholder.container():
@@ -399,14 +442,18 @@ def _render_dashboard() -> None:
                 ("有効レビュー数", str(metrics["active_reviews"]), None),
                 ("直近取得件数", str(metrics["latest_upserted"]), f"状態: {metrics['latest_status']}"),
                 ("直近評価平均", f"{metrics['avg_score']:.2f}", average_hint),
-            ]
+            ],
+            per_row=5,
         )
         render_status_badge(f"最新取得ステータス: {metrics['latest_status']}", tone=status_tone, icon=status_icon)
         render_section_title("今日やること", "上から順に実行すると進捗が止まりにくくなります。")
 
     for index, (title, hint, path) in enumerate(today_tasks, start=1):
-        st.page_link(path, label=f"{index}. {title}", use_container_width=True)
-        st.caption(hint)
+        with st.container(border=True):
+            render_status_badge(f"優先 {index}", tone="info", icon="➡️")
+            st.markdown(f"**{title}**")
+            st.caption(hint)
+            st.page_link(path, label="この作業を開く", use_container_width=True)
 
     if mobile_client:
         render_section_title("今日の状況")
@@ -417,20 +464,17 @@ def _render_dashboard() -> None:
                 ("有効レビュー数", str(metrics["active_reviews"]), None),
                 ("直近取得件数", str(metrics["latest_upserted"]), f"状態: {metrics['latest_status']}"),
                 ("直近評価平均", f"{metrics['avg_score']:.2f}", average_hint),
-            ]
+            ],
+            per_row=5,
         )
         render_status_badge(f"最新取得ステータス: {metrics['latest_status']}", tone=status_tone, icon=status_icon)
 
-    render_section_title(
-        "最新レビュー / 最新取得ログ",
-        None if mobile_client else "初期表示は1つだけ読み込み、必要時に切り替えます。",
-    )
-    feed_view = st.radio(
-        "更新情報",
-        options=["最新レビュー", "最新取得ログ"],
-        horizontal=True,
+    feed_view = render_section_switcher(
+        ["最新レビュー", "最新取得ログ"],
         key="dashboard_feed_view",
-        label_visibility="collapsed",
+        title="最新レビュー / 最新取得ログ",
+        description=None if mobile_client else "初期表示は1つだけ読み込み、必要時に切り替えます。",
+        mobile_label="更新情報",
     )
 
     if feed_view == "最新レビュー":

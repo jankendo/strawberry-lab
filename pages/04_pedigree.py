@@ -70,18 +70,17 @@ if mobile_client:
     max_nodes = st.slider("最大表示ノード数", 50, 120, 80, step=10)
     full_canvas_mode = st.checkbox("全幅グラフ表示", value=True)
 else:
-    c1, c2, c3, c4, c5 = st.columns([1, 1.4, 1, 1.2, 1.1], gap="small")
+    c1, c2, c3 = st.columns(3, gap="medium")
     with c1:
         include_deleted = st.checkbox("削除済みを含む", value=False)
-    with c2:
         direction_label = st.selectbox("表示方向", list(direction_map.keys()), index=2)
         direction = direction_map[direction_label]
-    with c3:
+    with c2:
         max_depth = st.slider("最大深さ", 1, 5, 3)
-    with c4:
         max_nodes = st.slider("最大表示ノード数", 50, 120, 80, step=10)
-    with c5:
+    with c3:
         full_canvas_mode = st.checkbox("全幅グラフ表示", value=True)
+        st.caption("全幅表示をオンにすると詳細パネルがグラフ下に移動します。")
 
 data_loading_placeholder = st.empty()
 with data_loading_placeholder.container():
@@ -109,6 +108,19 @@ root_id = st.selectbox(
     "起点品種",
     [""] + root_options,
     format_func=lambda x: "全体" if not x else name_by_id.get(x, x),
+)
+render_surface(
+    " / ".join(
+        [
+            f"起点 {'全体' if not root_id else name_by_id.get(root_id, root_id)}",
+            f"方向 {direction_label}",
+            f"深さ {max_depth}",
+            f"最大ノード {max_nodes}",
+            "全幅表示" if full_canvas_mode else "分割表示",
+        ]
+    ),
+    title="現在の表示条件",
+    tone="soft",
 )
 
 try:

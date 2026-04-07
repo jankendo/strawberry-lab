@@ -25,7 +25,8 @@ AUTH_PERSISTENCE_MANAGER_NOT_READY_EPHEMERAL_SECRET = "cookie_manager_not_ready_
 
 _EPHEMERAL_COOKIE_SECRET: str | None = None
 _COOKIE_MANAGER_RUN_CACHE: dict[str, object | None] = {
-    "run_token": None,
+    "session_id": None,
+    "run_context": None,
     "secret": None,
     "is_ephemeral": None,
     "manager": None,
@@ -40,16 +41,19 @@ def initialize_auth_state() -> None:
             st.session_state[key] = None if key != "is_authenticated" else False
 
 
-def _get_script_run_token() -> str:
+def _get_script_run_cache_identity() -> tuple[str | None, object | None]:
     try:
         from streamlit.runtime.scriptrunner import get_script_run_ctx
 
         context = get_script_run_ctx()
         if context is None:
-            return "no-script-context"
-        return f"{context.session_id}:{context.page_script_hash}:{id(context.cursors)}"
+            return None, None
+        page_hash = getattr(context, "page_script_hash", "") or getattr(context, "active_script_hash", "") or "no-page"
+        # Streamlit fragments can replace ctx.cursors mid-run, so cache against
+        # collections that are recreated only when a new script run starts.
+        return f"{context.session_id}:{page_hash}", getattr(context, "widget_ids_this_run", None)
     except Exception:
-        return "no-script-context"
+        return None, None
 
 
 def _get_process_ephemeral_cookie_secret() -> str | None:
@@ -85,9 +89,10 @@ def _get_cookie_manager_with_status():
     if not secret:
         return None, AUTH_PERSISTENCE_MISSING_SECRET
 
-    run_token = _get_script_run_token()
+    session_id, run_context = _get_script_run_cache_identity()
     if (
-        _COOKIE_MANAGER_RUN_CACHE.get("run_token") == run_token
+        _COOKIE_MANAGER_RUN_CACHE.get("session_id") == session_id
+        and _COOKIE_MANAGER_RUN_CACHE.get("run_context") is run_context
         and _COOKIE_MANAGER_RUN_CACHE.get("secret") == secret
         and _COOKIE_MANAGER_RUN_CACHE.get("is_ephemeral") == is_ephemeral
     ):
@@ -98,7 +103,8 @@ def _get_cookie_manager_with_status():
     except Exception:
         _COOKIE_MANAGER_RUN_CACHE.update(
             {
-                "run_token": run_token,
+                "session_id": session_id,
+                "run_context": run_context,
                 "secret": secret,
                 "is_ephemeral": is_ephemeral,
                 "manager": None,
@@ -116,7 +122,8 @@ def _get_cookie_manager_with_status():
         )
         _COOKIE_MANAGER_RUN_CACHE.update(
             {
-                "run_token": run_token,
+                "session_id": session_id,
+                "run_context": run_context,
                 "secret": secret,
                 "is_ephemeral": is_ephemeral,
                 "manager": None,
@@ -128,7 +135,8 @@ def _get_cookie_manager_with_status():
     status = AUTH_PERSISTENCE_READY_EPHEMERAL_SECRET if is_ephemeral else AUTH_PERSISTENCE_READY
     _COOKIE_MANAGER_RUN_CACHE.update(
         {
-            "run_token": run_token,
+            "session_id": session_id,
+            "run_context": run_context,
             "secret": secret,
             "is_ephemeral": is_ephemeral,
             "manager": cookies,
@@ -143,8 +151,9 @@ def _get_cookie_manager():
     return cookies
 
 
-def _clear_auth_cookie() -> None:
-    cookies = _get_cookie_manager()
+def _clear_auth_cookie(cookies=None) -> None:
+    if cookies is None:
+        cookies = _get_cookie_manager()
     if cookies is None:
         return
     if AUTH_COOKIE_NAME in cookies:
@@ -176,11 +185,11 @@ def _read_auth_cookie() -> dict | None:
     try:
         payload = json.loads(raw)
     except Exception:
-        _clear_auth_cookie()
+        _clear_auth_cookie(cookies)
         return None
     expires_at = int(payload.get("expires_at", 0))
     if not expires_at or expires_at <= int(time.time()):
-        _clear_auth_cookie()
+        _clear_auth_cookie(cookies)
         return None
     return payload
 

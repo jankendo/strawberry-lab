@@ -16,13 +16,14 @@ from src.components.layout import (
     render_kpi_cards,
     render_page_header,
     render_section_title,
+    render_section_switcher,
     render_status_badge,
     render_surface,
 )
 from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.tables import is_mobile_client, render_table
 from src.config import get_config
-from src.services.auth_service import get_auth_persistence_status, require_admin_session
+from src.services.auth_service import get_auth_persistence_status, logout_user, require_admin_session
 from src.services.cache_service import get_cache_runtime_status
 from src.services.export_service import export_table_csv
 from src.services.scrape_service import (
@@ -93,27 +94,15 @@ def _safe_text(value: object | None) -> str:
 
 
 def _render_section_switcher(*, is_mobile: bool) -> str:
-    default_section = str(st.session_state.get(_SETTINGS_ACTIVE_SECTION_KEY) or _DEFAULT_ACTIVE_SECTION)
-    if default_section not in SECTION_ORDER:
-        default_section = _DEFAULT_ACTIVE_SECTION
-    with st.container(border=True):
-        render_section_title("設定セクション", None if is_mobile else "iPhoneでも崩れにくい切替UIで表示内容を変更します。")
-        if is_mobile:
-            active_section = st.selectbox(
-                "表示セクション",
-                SECTION_ORDER,
-                index=SECTION_ORDER.index(default_section),
-                key=_SETTINGS_ACTIVE_SECTION_KEY,
-            )
-        else:
-            active_section = st.radio(
-                "表示セクション",
-                SECTION_ORDER,
-                horizontal=True,
-                index=SECTION_ORDER.index(default_section),
-                key=_SETTINGS_ACTIVE_SECTION_KEY,
-            )
-        st.caption(SECTION_HINTS.get(active_section, ""))
+    _ = is_mobile
+    active_section = render_section_switcher(
+        SECTION_ORDER,
+        key=_SETTINGS_ACTIVE_SECTION_KEY,
+        title="設定セクション",
+        description="用途ごとに表示内容を切り替え、必要な操作だけを表示します。",
+        mobile_label="表示セクション",
+    )
+    st.caption(SECTION_HINTS.get(active_section, ""))
     return active_section
 
 
@@ -125,15 +114,13 @@ render_primary_nav(active_page="settings")
 cfg = get_config()
 mobile_client = is_mobile_client()
 
-if mobile_client:
-    render_page_header("設定", "必要なセクションを選んで操作できます。")
-else:
-    render_hero_banner(
-        "設定",
-        "データエクスポート、ローカル取込運用、診断確認を一画面で管理します。",
-        eyebrow="運用管理",
-        chips=["CSVエクスポート", "取込履歴確認", "診断チェック"],
-    )
+render_page_header(
+    "設定",
+    "データ出力・実行履歴・診断確認を目的別に切り替えて操作できます。"
+    if not mobile_client
+    else "必要なセクションを選んで操作できます。",
+)
+if not mobile_client:
     render_action_bar(
         title="設定メニュー",
         description="目的ごとにセクションを切り替え、必要な機能だけを安全に操作してください。",
@@ -142,10 +129,12 @@ else:
 
 with st.container(border=True):
     if mobile_client:
-        render_section_title("関連ページ")
+        render_section_title("関連ページ / アカウント")
         with st.expander("移動メニューを開く", expanded=False):
             st.page_link("pages/04_pedigree.py", label="🧬 交配図を開く", use_container_width=True)
             st.page_link("pages/06_notes.py", label="📓 研究メモを開く", use_container_width=True)
+            if st.button("ログアウト", use_container_width=True, type="secondary", key="settings_mobile_logout"):
+                logout_user()
     else:
         render_section_title("その他ページ", "交配図・研究メモへの移動はこちらから行えます。")
         nav_col_left, nav_col_right = st.columns(2, gap="small")
@@ -201,7 +190,9 @@ latest_success = next(
 
 if active_section == "データ出力":
     render_section_title("データエクスポート", "一括ダウンロードと個別ダウンロードを分けて提供します。")
-    if st.toggle("CSVデータを読み込む", value=False, key="settings_load_exports"):
+    if st.button("CSVデータを読み込む", key="settings_load_exports", use_container_width=True, type="primary"):
+        st.session_state["settings_exports_loaded"] = True
+    if st.session_state.get("settings_exports_loaded"):
         export_payloads = {table: export_table_csv(table) for table in export_tables}
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zip_file:
@@ -233,7 +224,7 @@ if active_section == "データ出力":
                         use_container_width=True,
                     )
     else:
-        render_surface("初期表示ではCSVの生成を行いません。必要なときに読み込んでからダウンロードしてください。", tone="soft")
+        render_surface("初期表示ではCSVの生成を行いません。必要なときだけ読み込んでからダウンロードしてください。", tone="soft")
 
 elif active_section == "実行履歴":
     if st.button("実行履歴を再読み込み", key="reload_scrape_runs", use_container_width=True, type="secondary"):

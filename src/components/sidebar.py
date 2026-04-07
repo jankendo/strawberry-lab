@@ -8,6 +8,7 @@ from src.components.tables import is_mobile_client
 from src.constants.ui import APP_NAME
 from src.services.auth_service import logout_user
 
+_DESKTOP_NAV_COLLAPSED_KEY = "_desktop_nav_collapsed"
 _SIDEBAR_NAV_ITEMS: list[tuple[str, str, str, str]] = [
     ("dashboard", "Home.py", "ダッシュボード", "🏠"),
     ("varieties", "pages/01_varieties.py", "品種管理", "🍓"),
@@ -22,18 +23,33 @@ _MOBILE_TAB_ITEMS: list[tuple[str, str, str, str]] = [
     ("varieties", "pages/01_varieties.py", "品種管理", "🍓"),
     ("reviews", "pages/02_reviews.py", "試食評価", "📝"),
     ("analytics", "pages/03_analytics.py", "分析", "📊"),
-    ("more", "pages/07_settings.py", "その他", "⋯"),
+    ("settings", "pages/07_settings.py", "設定", "⚙️"),
 ]
-_CORE_TAB_KEYS = {tab_key for tab_key, _, _, _ in _MOBILE_TAB_ITEMS if tab_key != "more"}
-_MORE_PAGE_KEYS = {"pedigree", "notes", "settings"}
+_CORE_TAB_KEYS = {tab_key for tab_key, _, _, _ in _MOBILE_TAB_ITEMS if tab_key != "settings"}
+_SETTINGS_GROUP_PAGE_KEYS = {"pedigree", "notes", "settings"}
 
 
 def _resolve_mobile_active_tab(active_page: str) -> str:
     if active_page in _CORE_TAB_KEYS:
         return active_page
-    if active_page in _MORE_PAGE_KEYS:
-        return "more"
-    return "more"
+    if active_page in _SETTINGS_GROUP_PAGE_KEYS:
+        return "settings"
+    return "settings"
+
+
+def _is_desktop_nav_collapsed() -> bool:
+    return bool(st.session_state.get(_DESKTOP_NAV_COLLAPSED_KEY, False))
+
+
+def _set_desktop_nav_collapsed(collapsed: bool) -> None:
+    st.session_state[_DESKTOP_NAV_COLLAPSED_KEY] = collapsed
+
+
+def _render_desktop_nav_reopen_button(*, active_page: str) -> None:
+    st.markdown('<div class="sl-desktop-nav-toggle-anchor" aria-hidden="true"></div>', unsafe_allow_html=True)
+    if st.button("☰ メニュー", key=f"desktop_nav_reopen_{active_page}", type="secondary"):
+        _set_desktop_nav_collapsed(False)
+        st.rerun()
 
 
 def _render_mobile_tab(
@@ -90,6 +106,20 @@ def render_sidebar(*, active_page: str) -> None:
     if not st.session_state.get("is_authenticated") or is_mobile_client():
         return
 
+    if _is_desktop_nav_collapsed():
+        st.markdown(
+            """
+            <style>
+            [data-testid="stSidebar"] {
+                display: none !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        _render_desktop_nav_reopen_button(active_page=active_page)
+        return
+
     with st.sidebar:
         st.markdown(
             f"""
@@ -116,3 +146,6 @@ def render_sidebar(*, active_page: str) -> None:
             st.caption(f"ログイン中: {(user or {}).get('email', '-')}")
             if st.button("ログアウト", use_container_width=True, type="secondary", key="sidebar_logout"):
                 logout_user()
+        if st.button("← メニューを閉じる", use_container_width=True, type="secondary", key=f"desktop_nav_close_{active_page}"):
+            _set_desktop_nav_collapsed(True)
+            st.rerun()

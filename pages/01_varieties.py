@@ -57,6 +57,7 @@ try:
         render_hero_banner,
         render_info_card,
         render_kpi_cards,
+        render_section_switcher,
         render_status_badge,
         render_surface,
     )
@@ -113,6 +114,29 @@ except ImportError:
         columns = st.columns(len(items))
         for column, (label, value, sub_text) in zip(columns, items, strict=True):
             column.metric(label, value, help=sub_text)
+
+
+    def render_section_switcher(
+        options: list[str],
+        *,
+        key: str,
+        title: str = "表示セクション",
+        description: str | None = None,
+        mobile_label: str | None = None,
+    ) -> str:
+        """Fallback section switcher for partially refreshed runtimes."""
+        _ = title, description
+        active_value = str(st.session_state.get(key) or options[0])
+        if active_value not in options:
+            active_value = options[0]
+        return str(
+            st.selectbox(
+                mobile_label or "表示セクション",
+                options,
+                index=options.index(active_value),
+                key=key,
+            )
+        )
 
 
     def render_surface(
@@ -423,8 +447,8 @@ def _render_variety_list_item(
                     st.caption(latest_line)
                 st.caption(_build_variety_summary(row, discovered=True, max_length=120))
             else:
-                st.caption("レビュー未登録のため詳細は非表示です。")
-                st.caption("試食評価を1件登録すると情報が開示されます。")
+                st.caption("レビュー未登録のため詳細はロックされています。")
+                st.caption("試食評価を1件登録すると詳細情報と画像が開示されます。")
         return st.button("この品種を開く", key=f"{key_prefix}_{row['id']}", use_container_width=True)
 
 
@@ -462,7 +486,7 @@ def _render_mobile_variety_cards(
                         st.caption(latest_line)
                     st.caption(_build_variety_summary(row, discovered=True, max_length=88))
                 else:
-                    st.caption("レビュー未登録（詳細ロック中）")
+                    st.caption("レビュー未登録（詳細情報はロック中）")
             render_swipe_action_row_marker(
                 _VARIETY_MOBILE_SWIPE_SCOPE,
                 variety_id,
@@ -628,7 +652,7 @@ def _render_variety_detail_panel(
     else:
         render_surface("画像はまだ登録されていません。", title="品種画像", tone="soft")
 
-    with st.expander("その他の操作", expanded=False):
+    with st.expander("⚠️ この品種を削除", expanded=False):
         st.caption("削除後も「削除済み」セクションから復元できます。")
         delete_confirmed = st.checkbox(
             "この品種を削除することを確認しました",
@@ -655,15 +679,13 @@ inject_app_style()
 render_sidebar(active_page="varieties")
 render_primary_nav(active_page="varieties")
 mobile_client = is_mobile_client()
-if mobile_client:
-    render_page_header("品種管理", "一覧から品種を開き、必要な更新や復元を行います。")
-else:
-    render_hero_banner(
-        "品種管理",
-        "登録情報の参照・編集・削除復元・画像管理を行います。",
-        eyebrow="品種データベース",
-        chips=["図鑑モード", "レビュー連動開示", "画像管理"],
-    )
+render_page_header(
+    "品種管理",
+    "一覧から探索し、作成・編集・削除復元までを同じ流れで進められます。"
+    if not mobile_client
+    else "一覧から品種を開き、必要な更新や復元を行います。",
+)
+if not mobile_client:
     render_action_bar(
         title="画面の使い方",
         description="一覧で探索、作成・編集で更新、削除済みから復元できます。",
@@ -686,32 +708,50 @@ render_offline_intent_queue_bridge(
 
 
 def _render_variety_section_switcher(*, mobile_client: bool) -> str:
-    default_section = str(st.session_state.get("variety_active_section") or _VARIETY_SECTION_ORDER[0])
-    if default_section not in _VARIETY_SECTION_ORDER:
-        default_section = _VARIETY_SECTION_ORDER[0]
-    with st.container(border=True):
-        render_section_title("表示セクション", None if mobile_client else "必要なセクションだけ読み込みます。")
-        if mobile_client:
-            active_section = st.selectbox(
-                "表示セクション",
-                _VARIETY_SECTION_ORDER,
-                index=_VARIETY_SECTION_ORDER.index(default_section),
-                key="variety_active_section",
-            )
-        else:
-            active_section = st.radio(
-                "表示セクション",
-                _VARIETY_SECTION_ORDER,
-                index=_VARIETY_SECTION_ORDER.index(default_section),
-                horizontal=True,
-                key="variety_active_section",
-            )
-    return active_section
+    _ = mobile_client
+    return render_section_switcher(
+        _VARIETY_SECTION_ORDER,
+        key="variety_active_section",
+        title="表示セクション",
+        description="一覧・作成編集・削除済み復元をここで切り替えます。",
+        mobile_label="表示セクション",
+    )
+
+
+def _render_variety_list_empty_state(discovery_filter: str) -> None:
+    if discovery_filter == "発見済み":
+        render_empty_state(
+            "まだレビュー登録がないため、発見済みの品種はありません。",
+            title="発見済みの品種はまだありません",
+            hint="「図鑑表示」を「すべて」に切り替えると、未発見の品種も含めて一覧を確認できます。",
+        )
+        return
+    if discovery_filter == "未発見":
+        render_empty_state(
+            "未発見の品種はありません。",
+            title="すべての品種が発見済みです",
+            hint="一覧全体を見たい場合は「図鑑表示」を「すべて」に戻してください。",
+        )
+        return
+    render_empty_state(
+        "条件に一致する品種がありません。",
+        title="表示できる品種がありません",
+        hint="キーワードや都道府県条件を調整してください。",
+    )
 
 
 def _render_variety_list_section(*, mobile_client: bool) -> None:
     render_section_title("品種一覧", "フィルタで絞り込み、一覧から詳細へ進みます。")
     keyword, prefecture, discovery_filter = _render_variety_filters(mobile_client=mobile_client)
+    render_action_bar(
+        title="現在の絞り込み",
+        description="一覧・詳細パネルはこの条件で更新されます。",
+        actions=[
+            f"キーワード {keyword or 'なし'}",
+            f"都道府県 {prefecture or 'すべて'}",
+            f"図鑑表示 {discovery_filter}",
+        ],
+    )
 
     if "variety_selected_from_list" not in st.session_state:
         st.session_state["variety_selected_from_list"] = ""
@@ -848,11 +888,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
                     st.session_state["variety_mobile_panel"] = "detail"
                     st.rerun()
             else:
-                render_empty_state(
-                    "条件に一致する品種がありません。",
-                    title="表示できる品種がありません",
-                    hint="キーワードや都道府県条件を調整してください。",
-                )
+                _render_variety_list_empty_state(discovery_filter)
     else:
         list_col, detail_col = st.columns([1.4, 1], gap="large")
         with list_col:
@@ -870,11 +906,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
                         selected_id = row["id"]
                         st.session_state["variety_selected_from_list"] = selected_id
             else:
-                render_empty_state(
-                    "条件に一致する品種がありません。",
-                    title="表示できる品種がありません",
-                    hint="キーワードや都道府県条件を調整してください。",
-                )
+                _render_variety_list_empty_state(discovery_filter)
 
         with detail_col:
             if selected_id:
@@ -906,6 +938,12 @@ def _render_variety_edit_section() -> None:
         format_func=lambda x: "新規作成" if x == "新規作成" else next((v["name"] for v in active if v["id"] == x), x),
     )
     base = get_variety_detail(edit_id) if edit_id != "新規作成" else {}
+    current_target_label = "新規作成" if edit_id == "新規作成" else str(base.get("name") or edit_id)
+    render_surface(
+        f"現在の対象: **{current_target_label}**\n\n図鑑に出る情報から親品種リンク、画像まで同じ画面で更新できます。",
+        title="編集対象",
+        tone="soft",
+    )
     pending_upload_task = _resolve_pending_variety_upload_task()
 
     uploader_state = render_asset_uploader(
@@ -979,6 +1017,8 @@ def _render_variety_edit_section() -> None:
     with st.form("variety_form"):
         prefecture_options = [""] + PREFECTURES
         acidity_options = [x.value for x in AcidityLevel]
+        st.markdown("##### 1) 基本情報")
+        st.caption("品種名・産地・開発情報など、図鑑の基礎になる情報を入力します。")
         c1, c2 = st.columns(2)
         with c1:
             name = st.text_input("品種名*", value=base.get("name", ""))
@@ -995,9 +1035,9 @@ def _render_variety_edit_section() -> None:
                 max_value=2100,
                 value=int(base.get("registered_year") or 2024),
             )
+        with c2:
             skin_color = st.text_input("果皮色", value=base.get("skin_color", ""))
             flesh_color = st.text_input("果肉色", value=base.get("flesh_color", ""))
-        with c2:
             brix_min = st.number_input("糖度下限", min_value=0.0, max_value=30.0, value=float(base.get("brix_min") or 0.0))
             brix_max = st.number_input("糖度上限", min_value=0.0, max_value=30.0, value=float(base.get("brix_max") or 0.0))
             acidity_level = st.selectbox(
@@ -1017,12 +1057,14 @@ def _render_variety_edit_section() -> None:
                 max_value=12,
                 value=int(base.get("harvest_end_month") or 12),
             )
-            tags = comma_values_input("タグ (カンマ区切り)", "variety_tags_input", 20, 30)
-            parent_ids = st.multiselect(
-                "親品種",
-                options=[v["id"] for v in active if v["id"] != edit_id],
-                format_func=lambda i: next((v["name"] for v in active if v["id"] == i), i),
-            )
+        st.markdown("##### 2) 関連付けと説明")
+        st.caption("タグ・親品種・説明文は検索性と詳細画面の分かりやすさに影響します。")
+        tags = comma_values_input("タグ (カンマ区切り)", "variety_tags_input", 20, 30)
+        parent_ids = st.multiselect(
+            "親品種",
+            options=[v["id"] for v in active if v["id"] != edit_id],
+            format_func=lambda i: next((v["name"] for v in active if v["id"] == i), i),
+        )
         description = st.text_area("説明", value=base.get("description", ""), height=140)
         if not uploader_state.get("component_available"):
             fallback_uploaded_files = st.file_uploader(

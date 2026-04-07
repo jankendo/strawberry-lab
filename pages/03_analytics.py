@@ -20,6 +20,7 @@ from src.components.layout import (
     render_hero_banner,
     render_kpi_cards,
     render_section_title,
+    render_section_switcher,
     render_sticky_primary_action_anchor,
     render_surface,
 )
@@ -54,6 +55,14 @@ _CHART_SECTIONS = [
     "D. 糖度と総合評価",
     "E. 都道府県マップ",
 ]
+_CHART_SWITCHER_OPTIONS = [
+    ("ランキング", "A. 総合評価ランキング"),
+    ("月次推移", "B. 月次推移"),
+    ("レーダー", "C. レーダーチャート"),
+    ("糖度相関", "D. 糖度と総合評価"),
+    ("地図", "E. 都道府県マップ"),
+]
+_CHART_SWITCHER_MAP = dict(_CHART_SWITCHER_OPTIONS)
 
 _ANALYTICS_APPLIED_FILTERS_KEY = "analytics_applied_filters"
 _ANALYTICS_PAYLOAD_KEY = "analytics_analysis_payload"
@@ -195,9 +204,9 @@ render_sidebar(active_page="analytics")
 render_primary_nav(active_page="analytics")
 render_hero_banner(
     "分析ダッシュボード",
-    "iPhone向けに実行ステップを明確化し、結論を先に確認できる構成へ更新しました。",
+    "レビューデータを期間・品種・産地で集計し、比較しながら傾向を確認できます。",
     eyebrow="分析インサイト",
-    chips=["1カラム条件入力", "分析実行", "結論先出し", "実行後にチャート"],
+    chips=["条件を設定", "分析を実行", "結論を確認", "必要なチャートだけ表示"],
 )
 render_action_bar(
     title="分析フロー",
@@ -354,17 +363,18 @@ with st.container(border=True):
         ]
     )
 
-with st.container(border=True):
-    render_section_title("4) チャート詳細", "情報量が低い場合はチャートを省略し、次の操作を案内します。")
-    active_chart = st.selectbox(
-        "表示チャート",
-        _CHART_SECTIONS,
-        key="analytics_active_chart",
-    )
-    if mobile_client:
-        st.caption("iPhoneでは初期表示を1チャートに限定し、必要なときだけ切り替えて描画します。")
-    else:
-        st.caption("表示中のチャートのみ描画して、再実行時の待ち時間を抑えます。")
+active_chart_label = render_section_switcher(
+    [label for label, _ in _CHART_SWITCHER_OPTIONS],
+    key="analytics_active_chart",
+    title="4) チャート詳細",
+    description="結論確認後に、必要な可視化だけを切り替えて確認します。",
+    mobile_label="表示チャート",
+)
+active_chart = _CHART_SWITCHER_MAP.get(active_chart_label, _CHART_SECTIONS[0])
+if mobile_client:
+    st.caption("iPhoneでは初期表示を1チャートに限定し、必要なときだけ切り替えて描画します。")
+else:
+    st.caption("表示中のチャートのみ描画して、再実行時の待ち時間を抑えます。")
 
 if active_chart == "A. 総合評価ランキング":
     ranking_rows = list(analysis_payload.get("ranking_rows") or [])

@@ -298,20 +298,6 @@ def _inject_native_shell_bootstrap() -> None:
         return text.endsWith("/") ? text : text + "/";
       }
 
-      function resolveAppScopePath(staticBaseUrl) {
-        try {
-          const staticPath = normalizeScopePath(new URL(staticBaseUrl).pathname || "/");
-          const marker = "/static/";
-          const markerIndex = staticPath.indexOf(marker);
-          if (markerIndex >= 0) {
-            return normalizeScopePath(staticPath.slice(0, markerIndex + 1));
-          }
-          return staticPath;
-        } catch (error) {
-          return "/";
-        }
-      }
-
       function resolveStaticScopePath(staticBaseUrl) {
         try {
           return normalizeScopePath(new URL("./", staticBaseUrl).pathname || "/");
@@ -361,12 +347,8 @@ def _inject_native_shell_bootstrap() -> None:
           return;
         }
         const swUrl = new URL("app-sw.js", staticBaseUrl).href;
-        const preferredScope = resolveAppScopePath(staticBaseUrl);
         const fallbackScope = resolveStaticScopePath(staticBaseUrl);
-        const scopeCandidates = [preferredScope];
-        if (fallbackScope !== preferredScope) {
-          scopeCandidates.push(fallbackScope);
-        }
+        const scopeCandidates = [fallbackScope];
         const scopeSignature = scopeCandidates.join("|");
 
         if (
@@ -482,15 +464,101 @@ def inject_app_style() -> None:
         [data-testid="stToolbar"],
         [data-testid="stDecoration"],
         [data-testid="stStatusWidget"],
-        [data-testid="collapsedControl"],
-        [data-testid="stSidebarCollapsedControl"],
-        [data-testid="stSidebarCollapseButton"],
-        [data-testid="stSidebarNav"],
         #MainMenu,
-        button[kind="header"] {
+        button[kind="header"],
+        button[kind="headerNoPadding"] {
             display: none !important;
             visibility: hidden !important;
             height: 0 !important;
+        }
+        """
+    mobile_nav_css = ""
+    if is_mobile_client():
+        mobile_nav_css = """
+        .sl-bottom-nav-anchor {
+            display: block;
+            height: 0;
+            margin: 0;
+            padding: 0;
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] {
+            display: flex !important;
+            flex-direction: row !important;
+            gap: 0.22rem !important;
+            position: fixed;
+            left: 0.72rem;
+            right: 0.72rem;
+            bottom: calc(var(--sl-safe-bottom) + 0.38rem);
+            z-index: 48;
+            padding: 0.32rem;
+            border: 1px solid rgba(255, 255, 255, 0.55);
+            border-radius: 22px;
+            background: rgba(248, 250, 252, 0.74);
+            box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+            backdrop-filter: saturate(1.8) blur(20px);
+            -webkit-backdrop-filter: saturate(1.8) blur(20px);
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] > div {
+            min-width: 0 !important;
+            max-width: none !important;
+            width: 0 !important;
+            flex: 1 1 0 !important;
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"] {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 60px !important;
+            border-radius: 18px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--sl-muted);
+            margin-bottom: 0 !important;
+            padding: 0.28rem 0.15rem;
+            line-height: 1.08;
+            text-decoration: none;
+            box-shadow: none;
+            transition:
+                border-color 0.2s ease,
+                background-color 0.2s ease,
+                color 0.2s ease,
+                transform 0.08s ease-out;
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"]:hover {
+            border-color: rgba(232, 51, 74, 0.16);
+            background: rgba(255, 255, 255, 0.42);
+            color: var(--sl-heading);
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"]:active {
+            transform: scale(0.97);
+            border-color: rgba(232, 51, 74, 0.22);
+            background: rgba(253, 242, 244, 0.88);
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"] p {
+            width: 100%;
+            margin: 0;
+            line-height: 1.08;
+            white-space: pre-line;
+            overflow-wrap: anywhere;
+            word-break: keep-all;
+            text-align: center;
+            font-size: 0.72rem;
+            font-weight: 640;
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button {
+            min-height: 56px !important;
+            border-radius: 18px;
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button p {
+            white-space: pre-line;
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button:active {
+            transform: scale(0.97);
+            background: #fdf2f4;
+            border-color: var(--sl-primary);
+        }
+        [data-testid="stSidebar"] {
+            display: none !important;
         }
         """
 
@@ -833,6 +901,12 @@ def inject_app_style() -> None:
     .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] {
         display: none;
     }
+    .sl-desktop-nav-toggle-anchor {
+        display: none;
+    }
+    .sl-desktop-nav-toggle-anchor + div[data-testid="stButton"] {
+        display: none;
+    }
     .sl-bottom-nav-tab-active {
         display: flex;
         flex-direction: column;
@@ -912,6 +986,22 @@ def inject_app_style() -> None:
         font-size: 0.84rem;
         font-weight: 600;
     }
+    .sl-segmented-control-active {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: var(--sl-touch-target);
+        padding: 0 var(--sl-space-2);
+        border-radius: 999px;
+        border: 1px solid rgba(232, 51, 74, 0.2);
+        background: rgba(232, 51, 74, 0.1);
+        color: var(--sl-heading);
+        font-size: 0.92rem;
+        font-weight: 700;
+        text-align: center;
+        box-sizing: border-box;
+    }
 
     .sl-status-badge {
         display: inline-flex;
@@ -922,6 +1012,32 @@ def inject_app_style() -> None:
         padding: 0.2rem 0.58rem;
         font-size: 0.82rem;
         font-weight: 700;
+    }
+
+    @media (min-width: 821px) {
+        .sl-desktop-nav-toggle-anchor {
+            display: block;
+            height: 0;
+            margin: 0;
+            padding: 0;
+        }
+        .sl-desktop-nav-toggle-anchor + div[data-testid="stButton"] {
+            display: block !important;
+            position: fixed;
+            top: 1rem;
+            left: 1rem;
+            z-index: 49;
+            margin: 0;
+        }
+        .sl-desktop-nav-toggle-anchor + div[data-testid="stButton"] > button {
+            min-height: 2.5rem;
+            padding: 0 0.95rem;
+            border-radius: 999px;
+            border: 1px solid rgba(215, 221, 231, 0.95);
+            background: rgba(255, 255, 255, 0.96);
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+            backdrop-filter: blur(10px);
+        }
     }
 
     @media (max-width: 820px) {
@@ -967,7 +1083,8 @@ def inject_app_style() -> None:
         [data-testid="stFormSubmitButton"] > button,
         .stTabs [data-baseweb="tab"],
         .sl-meta-chip,
-        .sl-user-chip {
+        .sl-user-chip,
+        .sl-segmented-control-active {
             min-height: var(--sl-touch-target-mobile);
             font-size: 0.98rem;
         }
@@ -994,91 +1111,7 @@ def inject_app_style() -> None:
             width: 100% !important;
             flex: 1 1 100% !important;
         }
-        .sl-bottom-nav-anchor {
-            display: block;
-            height: 0;
-            margin: 0;
-            padding: 0;
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] {
-            display: flex !important;
-            flex-direction: row !important;
-            gap: 0.22rem !important;
-            position: fixed;
-            left: 0.72rem;
-            right: 0.72rem;
-            bottom: calc(var(--sl-safe-bottom) + 0.38rem);
-            z-index: 48;
-            padding: 0.32rem;
-            border: 1px solid rgba(255, 255, 255, 0.55);
-            border-radius: 22px;
-            background: rgba(248, 250, 252, 0.74);
-            box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.7);
-            backdrop-filter: saturate(1.8) blur(20px);
-            -webkit-backdrop-filter: saturate(1.8) blur(20px);
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] > div {
-            min-width: 0 !important;
-            max-width: none !important;
-            width: 0 !important;
-            flex: 1 1 0 !important;
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"] {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 60px !important;
-            border-radius: 18px;
-            border: 1px solid transparent;
-            background: transparent;
-            color: var(--sl-muted);
-            margin-bottom: 0 !important;
-            padding: 0.28rem 0.15rem;
-            line-height: 1.08;
-            text-decoration: none;
-            box-shadow: none;
-            transition:
-                border-color 0.2s ease,
-                background-color 0.2s ease,
-                color 0.2s ease,
-                transform 0.08s ease-out;
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"]:hover {
-            border-color: rgba(232, 51, 74, 0.16);
-            background: rgba(255, 255, 255, 0.42);
-            color: var(--sl-heading);
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"]:active {
-            transform: scale(0.97);
-            border-color: rgba(232, 51, 74, 0.22);
-            background: rgba(253, 242, 244, 0.88);
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"] p {
-            width: 100%;
-            margin: 0;
-            line-height: 1.08;
-            white-space: pre-line;
-            overflow-wrap: anywhere;
-            word-break: keep-all;
-            text-align: center;
-            font-size: 0.72rem;
-            font-weight: 640;
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button {
-            min-height: 56px !important;
-            border-radius: 18px;
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button p {
-            white-space: pre-line;
-        }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button:active {
-            transform: scale(0.97);
-            background: #fdf2f4;
-            border-color: var(--sl-primary);
-        }
-        [data-testid="stSidebar"] {
-            display: none !important;
-        }
+        __MOBILE_NAV_CSS__
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -1126,7 +1159,10 @@ def inject_app_style() -> None:
     __HOST_CHROME_CSS__
     </style>
     """
-    st.markdown(style.replace("__HOST_CHROME_CSS__", host_chrome_css), unsafe_allow_html=True)
+    st.markdown(
+        style.replace("__HOST_CHROME_CSS__", host_chrome_css).replace("__MOBILE_NAV_CSS__", mobile_nav_css),
+        unsafe_allow_html=True,
+    )
     _inject_native_shell_bootstrap()
     inject_offline_runtime()
 
@@ -1192,7 +1228,6 @@ def _render_workspace_meta_controls(context: str) -> None:
     if user_email.strip().lower() in _PLACEHOLDER_VALUES:
         user_email = ""
     user_label = user_email or "アカウント"
-    notification_count = int(st.session_state.get("ui_notification_count", 0) or 0)
     mobile_client = is_mobile_client()
 
     if mobile_client:
@@ -1207,22 +1242,15 @@ def _render_workspace_meta_controls(context: str) -> None:
             st.page_link("pages/07_settings.py", label="⚙️ 設定", use_container_width=True)
         return
 
-    left_space, controls_col = st.columns([1.5, 1.9], gap="small")
+    left_space, controls_col = st.columns([1.6, 1.4], gap="small")
     with left_space:
         st.caption("研究ワークスペース")
     with controls_col:
         st.markdown('<div class="sl-workspace-meta-row"></div>', unsafe_allow_html=True)
-        c1, c2, c3, c4 = st.columns([1, 1, 1, 2], gap="small")
+        c1, c2 = st.columns([1, 2], gap="small")
         with c1:
-            st.markdown(
-                f'<span class="sl-meta-chip">🔔 通知 {notification_count}</span>',
-                unsafe_allow_html=True,
-            )
-        with c2:
-            st.markdown('<span class="sl-meta-chip">❓ ヘルプ</span>', unsafe_allow_html=True)
-        with c3:
             st.page_link("pages/07_settings.py", label="⚙️ 設定", use_container_width=True)
-        with c4:
+        with c2:
             st.markdown(
                 f'<span class="sl-user-chip">👤 {user_label}</span>',
                 unsafe_allow_html=True,
@@ -1232,8 +1260,68 @@ def _render_workspace_meta_controls(context: str) -> None:
 def render_page_header(title: str, description: str) -> None:
     """Render consistent page title block."""
     with st.container(border=True):
+        _render_workspace_meta_controls(title)
         st.markdown(f"## {_sanitize_text(title)}")
         st.write(_sanitize_text(description))
+
+
+def render_section_switcher(
+    options: list[str],
+    *,
+    key: str,
+    title: str = "表示セクション",
+    description: str | None = None,
+    mobile_label: str | None = None,
+) -> str:
+    """Render a compact section switcher with desktop pills and mobile select."""
+    if not options:
+        raise ValueError("options must not be empty")
+
+    active_value = str(st.session_state.get(key) or options[0])
+    if active_value not in options:
+        active_value = options[0]
+        st.session_state[key] = active_value
+
+    clean_title = _sanitize_text(title)
+    clean_description = _sanitize_text(description)
+    label_text = _sanitize_text(mobile_label) or clean_title or "表示を選択"
+
+    with st.container(border=True):
+        if clean_title:
+            render_section_title(clean_title, clean_description or None)
+        elif clean_description:
+            st.caption(clean_description)
+
+        if is_mobile_client():
+            return str(
+                st.selectbox(
+                    label_text,
+                    options,
+                    index=options.index(active_value),
+                    key=key,
+                )
+            )
+
+        columns = st.columns(len(options), gap="small")
+        for column, option in zip(columns, options, strict=True):
+            clean_option = _sanitize_text(option)
+            with column:
+                if option == active_value:
+                    st.markdown(
+                        f'<div class="sl-segmented-control-active" aria-current="true">{clean_option}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    continue
+                if st.button(
+                    clean_option,
+                    key=f"{key}_{_keyify(option)}",
+                    use_container_width=True,
+                    type="secondary",
+                ):
+                    st.session_state[key] = option
+                    st.rerun()
+
+    return str(st.session_state.get(key) or active_value)
 
 
 def render_hero_banner(
@@ -1248,7 +1336,7 @@ def render_hero_banner(
         _render_workspace_meta_controls(title)
         if eyebrow:
             st.caption(_sanitize_text(eyebrow))
-        st.markdown(f"# {_sanitize_text(title)}")
+        st.markdown(f"## {_sanitize_text(title)}")
         st.write(_sanitize_text(description))
         clean_chips = [chip for chip in (_sanitize_text(item) for item in (chips or [])) if chip]
         if clean_chips:
@@ -1335,9 +1423,9 @@ def render_surface(
 
     _ = elevated  # kept for backward compatibility
     with st.container(border=True):
-        if tone_class in {"accent", "warning", "danger"}:
-            label_map = {"accent": "重要", "warning": "注意", "danger": "警告"}
-            tone_map = {"accent": "info", "warning": "warning", "danger": "danger"}
+        if tone_class in {"warning", "danger"}:
+            label_map = {"warning": "注意", "danger": "警告"}
+            tone_map = {"warning": "warning", "danger": "danger"}
             render_status_badge(label_map[tone_class], tone=tone_map[tone_class])
         if clean_title:
             st.markdown(f"**{clean_title}**")
@@ -1347,12 +1435,12 @@ def render_surface(
             st.markdown(clean_content)
 
 
-def render_kpi_cards(items: list[tuple[str, str, str | None]]) -> None:
+def render_kpi_cards(items: list[tuple[str, str, str | None]], *, per_row: int = 4) -> None:
     """Render compact KPI cards in wrapped rows."""
     if not items:
         return
 
-    per_row = 4
+    per_row = max(1, int(per_row or 4))
     for start in range(0, len(items), per_row):
         row_items = items[start : start + per_row]
         columns = st.columns(len(row_items))
