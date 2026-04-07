@@ -9,7 +9,7 @@ import streamlit.components.v1 as components
 
 from src.components.tables import is_mobile_client
 from src.constants.ui import APP_NAME
-from src.services.auth_service import is_auth_cookie_sync_pending, logout_user
+from src.services.auth_service import logout_user
 
 _DESKTOP_NAV_COLLAPSED_KEY = "_desktop_nav_collapsed"
 _DESKTOP_NAV_COLLAPSED_PAGE_KEY = "_desktop_nav_collapsed_page"
@@ -138,11 +138,7 @@ def _render_native_mobile_nav(*, active_page: str, active_tab: str, visible: boo
 
 def render_primary_nav(*, active_page: str) -> None:
     """Render mobile navigation using a native-shell bottom bar."""
-    visible = bool(
-        st.session_state.get("is_authenticated")
-        and is_mobile_client()
-        and not is_auth_cookie_sync_pending()
-    )
+    visible = bool(st.session_state.get("is_authenticated") and is_mobile_client())
     active_tab = _resolve_mobile_active_tab(active_page) if visible else ""
     _render_native_mobile_nav(active_page=active_page if visible else "", active_tab=active_tab, visible=visible)
 

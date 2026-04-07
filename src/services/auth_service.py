@@ -245,27 +245,39 @@ def get_pending_auth_cookie_action() -> dict | None:
             _set_auth_cookie_sync_pending(False)
             _set_auth_cookie_sync_error(None)
             return None
-    elif action_type == "clear":
+        _set_auth_cookie_sync_pending(True)
+        _set_auth_cookie_sync_error(None)
+        return dict(action)
+    if action_type == "clear":
         if not current_cookie:
             _clear_auth_cookie_action()
             _set_auth_cookie_sync_error(None)
             return None
-    else:
-        _clear_auth_cookie_action()
-        return None
+        attempts = int(action.get("attempts") or 0) + 1
+        if attempts > 2:
+            _clear_auth_cookie_action()
+            return None
+        next_action = dict(action)
+        next_action["attempts"] = attempts
+        st.session_state[AUTH_COOKIE_ACTION_KEY] = next_action
+        return dict(next_action)
+    _clear_auth_cookie_action()
+    return None
 
-    attempts = int(action.get("attempts") or 0) + 1
-    if attempts > 2:
-        if action_type == "set":
-            _set_auth_cookie_sync_error("ログイン保持 cookie の同期に失敗しました。iPhone のプライベートブラウズや cookie 制限を確認してください。")
-            _set_auth_cookie_sync_pending(False)
-        _clear_auth_cookie_action()
-        return None
 
-    next_action = dict(action)
-    next_action["attempts"] = attempts
-    st.session_state[AUTH_COOKIE_ACTION_KEY] = next_action
-    return dict(next_action)
+def mark_auth_cookie_set_rendered(action_id: str | None) -> None:
+    """Stop blocking the authenticated UI once the browser has received a set-cookie action."""
+    initialize_auth_state()
+    current_action = st.session_state.get(AUTH_COOKIE_ACTION_KEY)
+    if not isinstance(current_action, dict):
+        return
+    if str(current_action.get("type") or "") != "set":
+        return
+    if str(current_action.get("id") or "") != str(action_id or ""):
+        return
+    _clear_auth_cookie_action()
+    _set_auth_cookie_sync_pending(False)
+    _set_auth_cookie_sync_error(None)
 
 
 def _set_authenticated_state(*, client, user, access_token: str, refresh_token: str) -> None:

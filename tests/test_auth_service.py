@@ -77,7 +77,7 @@ def test_get_pending_auth_cookie_action_clears_set_action_when_cookie_matches(mo
     assert session_state[auth_service.AUTH_COOKIE_SYNC_PENDING_KEY] is False
 
 
-def test_get_pending_auth_cookie_action_stops_after_repeated_failures(monkeypatch) -> None:
+def test_get_pending_auth_cookie_action_keeps_set_action_available_until_request_cookie_matches(monkeypatch) -> None:
     session_state = {
         auth_service.AUTH_COOKIE_ACTION_KEY: {
             "id": "action-1",
@@ -95,10 +95,31 @@ def test_get_pending_auth_cookie_action_stops_after_repeated_failures(monkeypatc
 
     action = auth_service.get_pending_auth_cookie_action()
 
-    assert action is None
+    assert action == session_state[auth_service.AUTH_COOKIE_ACTION_KEY]
+    assert session_state[auth_service.AUTH_COOKIE_SYNC_PENDING_KEY] is True
+    assert session_state[auth_service.AUTH_COOKIE_SYNC_ERROR_KEY] is None
+
+
+def test_mark_auth_cookie_set_rendered_clears_blocking_state(monkeypatch) -> None:
+    session_state = {
+        auth_service.AUTH_COOKIE_ACTION_KEY: {
+            "id": "action-1",
+            "type": "set",
+            "cookie_name": auth_service.AUTH_COOKIE_NAME,
+            "cookie_value": "signed-cookie",
+            "expires_at": 4_102_444_800,
+            "attempts": 0,
+        },
+        auth_service.AUTH_COOKIE_SYNC_PENDING_KEY: True,
+        auth_service.AUTH_COOKIE_SYNC_ERROR_KEY: None,
+    }
+    monkeypatch.setattr(auth_service.st, "session_state", session_state)
+
+    auth_service.mark_auth_cookie_set_rendered("action-1")
+
     assert session_state[auth_service.AUTH_COOKIE_ACTION_KEY] is None
     assert session_state[auth_service.AUTH_COOKIE_SYNC_PENDING_KEY] is False
-    assert "ログイン保持 cookie の同期に失敗しました" in str(session_state[auth_service.AUTH_COOKIE_SYNC_ERROR_KEY])
+    assert session_state[auth_service.AUTH_COOKIE_SYNC_ERROR_KEY] is None
 
 
 def test_restore_login_from_cookie_queues_clear_for_invalid_cookie(monkeypatch) -> None:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src.components.auth_cookie_bridge import render_auth_cookie_bridge_if_needed
 from src.components.layout import inject_app_style, render_page_header, render_section_title
 from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.skeletons import render_card_skeleton, render_table_skeleton
@@ -15,7 +14,6 @@ from src.services.auth_service import (
     get_auth_persistence_status,
     get_user_client,
     initialize_auth_state,
-    is_auth_cookie_sync_pending,
     login_user,
     restore_login_from_cookie,
 )
@@ -366,10 +364,6 @@ def _render_login() -> None:
         if submitted:
             try:
                 login_user(email, password)
-                if is_auth_cookie_sync_pending():
-                    st.success("ログインしました。ブラウザへログイン状態を保存しています。")
-                    render_auth_cookie_bridge_if_needed()
-                    st.stop()
                 st.success("ログインしました。")
                 st.rerun()
             except PermissionError as exc:
@@ -534,9 +528,7 @@ def _render_dashboard() -> None:
             )
 
 
-if st.session_state.get("is_authenticated") and is_auth_cookie_sync_pending():
-    _render_auth_cookie_sync_pending()
-elif st.session_state.get("is_authenticated"):
+if st.session_state.get("is_authenticated"):
     _render_dashboard()
 elif _AUTH_RESTORE_RESULT is None:
     _render_auth_restore_pending()

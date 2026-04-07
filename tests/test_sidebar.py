@@ -25,7 +25,6 @@ def test_render_primary_nav_renders_for_mobile_authenticated_users(monkeypatch) 
 
     monkeypatch.setattr(sidebar.st, "session_state", {"is_authenticated": True})
     monkeypatch.setattr(sidebar, "is_mobile_client", lambda: True)
-    monkeypatch.setattr(sidebar, "is_auth_cookie_sync_pending", lambda: False)
     monkeypatch.setattr(sidebar.st, "markdown", _unexpected)
     monkeypatch.setattr(sidebar.st, "columns", _unexpected)
     monkeypatch.setattr(sidebar.st, "page_link", _unexpected)
@@ -49,7 +48,6 @@ def test_render_primary_nav_clears_nav_for_desktop_authenticated_users(monkeypat
 
     monkeypatch.setattr(sidebar.st, "session_state", {"is_authenticated": True})
     monkeypatch.setattr(sidebar, "is_mobile_client", lambda: False)
-    monkeypatch.setattr(sidebar, "is_auth_cookie_sync_pending", lambda: False)
     monkeypatch.setattr(sidebar.components, "html", lambda html, **_kwargs: component_calls.append(html))
 
     sidebar.render_primary_nav(active_page="dashboard")
@@ -66,7 +64,6 @@ def test_render_primary_nav_marks_exact_drawer_item_active_for_settings_group_pa
 
     monkeypatch.setattr(sidebar.st, "session_state", {"is_authenticated": True})
     monkeypatch.setattr(sidebar, "is_mobile_client", lambda: True)
-    monkeypatch.setattr(sidebar, "is_auth_cookie_sync_pending", lambda: False)
     monkeypatch.setattr(sidebar.components, "html", lambda html, **_kwargs: component_calls.append(html))
 
     sidebar.render_primary_nav(active_page="pedigree")
@@ -77,19 +74,18 @@ def test_render_primary_nav_marks_exact_drawer_item_active_for_settings_group_pa
     assert '"pathname": "/pedigree", "label": "交配図", "icon": "🧬", "active": true' in component_calls[0]
 
 
-def test_render_primary_nav_hides_mobile_nav_while_auth_cookie_sync_is_pending(monkeypatch) -> None:
+def test_render_primary_nav_stays_visible_while_auth_cookie_sync_is_pending(monkeypatch) -> None:
     component_calls: list[str] = []
 
-    monkeypatch.setattr(sidebar.st, "session_state", {"is_authenticated": True})
+    monkeypatch.setattr(sidebar.st, "session_state", {"is_authenticated": True, "_auth_cookie_sync_pending": True})
     monkeypatch.setattr(sidebar, "is_mobile_client", lambda: True)
-    monkeypatch.setattr(sidebar, "is_auth_cookie_sync_pending", lambda: True)
     monkeypatch.setattr(sidebar.components, "html", lambda html, **_kwargs: component_calls.append(html))
 
     sidebar.render_primary_nav(active_page="dashboard")
 
     assert len(component_calls) == 1
-    assert '"visible": false' in component_calls[0]
-    assert '"activeKey": ""' in component_calls[0]
+    assert '"visible": true' in component_calls[0]
+    assert '"activeKey": "dashboard"' in component_calls[0]
 
 
 def test_render_sidebar_renders_for_desktop_authenticated_users(monkeypatch) -> None:

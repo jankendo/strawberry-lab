@@ -6,7 +6,7 @@ import json
 
 import streamlit.components.v1 as components
 
-from src.services.auth_service import get_pending_auth_cookie_action
+from src.services.auth_service import get_pending_auth_cookie_action, mark_auth_cookie_set_rendered
 
 
 def render_auth_cookie_bridge_if_needed() -> None:
@@ -15,6 +15,7 @@ def render_auth_cookie_bridge_if_needed() -> None:
     if not action:
         return
     action_json = json.dumps(action, ensure_ascii=False)
+    should_reload = str(action.get("type") or "") == "clear"
     components.html(
         """
         <script>
@@ -35,19 +36,6 @@ def render_auth_cookie_bridge_if_needed() -> None:
           if (!parentWindow || !doc) {
             return;
           }
-          const markerKey = "__slAuthCookieBridge:" + String(action.id || "");
-          let storage = null;
-          try {
-            storage = parentWindow.sessionStorage || null;
-          } catch (error) {
-            storage = null;
-          }
-          if (storage && storage.getItem(markerKey) === "done") {
-            return;
-          }
-          if (storage) {
-            storage.setItem(markerKey, "done");
-          }
           const secureAttr = parentWindow.location.protocol === "https:" ? "; Secure" : "";
           if (action.type === "clear") {
             doc.cookie =
@@ -61,15 +49,21 @@ def render_auth_cookie_bridge_if_needed() -> None:
               String(action.cookie_name) +
               "=" +
               encodeURIComponent(String(action.cookie_value || "")) +
-              "; Path=/; SameSite=Lax" +
-              secureAttr +
-              (expiresUtc ? "; Expires=" + expiresUtc : "");
+               "; Path=/; SameSite=Lax" +
+               secureAttr +
+               (expiresUtc ? "; Expires=" + expiresUtc : "");
           }
-          parentWindow.setTimeout(function () {
-            parentWindow.location.reload();
-          }, 0);
+          if (__SHOULD_RELOAD__) {
+            parentWindow.setTimeout(function () {
+              parentWindow.location.reload();
+            }, 0);
+          }
         })();
         </script>
-        """.replace("__AUTH_COOKIE_ACTION__", action_json),
+        """
+        .replace("__AUTH_COOKIE_ACTION__", action_json)
+        .replace("__SHOULD_RELOAD__", "true" if should_reload else "false"),
         height=0,
     )
+    if not should_reload:
+        mark_auth_cookie_set_rendered(str(action.get("id") or ""))
