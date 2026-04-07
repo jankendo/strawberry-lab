@@ -59,6 +59,30 @@ class _ChunkingClient:
         return _ChunkingTable(name, self)
 
 
+class _RepeatingRangeTable(_ChunkingTable):
+    def execute(self):
+        rows = [dict(row) for row in self.client.rows.get(self.name, [])]
+        for mode, column, value in self._filters:
+            if mode == "in":
+                rows = [row for row in rows if row.get(column) in value]
+            elif mode == "is":
+                if value == "null":
+                    rows = [row for row in rows if row.get(column) is None]
+                else:
+                    rows = [row for row in rows if row.get(column) is value]
+        for column, desc in reversed(self._orders):
+            rows.sort(key=lambda row: row.get(column), reverse=desc)
+        if self._range is not None:
+            _start, end = self._range
+            rows = rows[: end + 1]
+        return SimpleNamespace(data=rows, count=len(rows))
+
+
+class _RepeatingRangeClient(_ChunkingClient):
+    def table(self, name: str) -> _ChunkingTable:
+        return _RepeatingRangeTable(name, self)
+
+
 def test_get_review_counts_for_varieties_chunks_large_id_lists(monkeypatch) -> None:
     review_rows = [{"variety_id": f"id-{index}", "deleted_at": None} for index in range(205)]
     client = _ChunkingClient({"reviews": review_rows})
@@ -188,3 +212,79 @@ def test_list_varieties_for_list_tab_filters_discovered_rows_before_paging(monke
     assert total == 3
     assert matched_ids == ["id-1", "id-3", "id-5"]
     assert [row["id"] for row in rows] == ["id-1", "id-3"]
+
+
+def test_list_varieties_for_list_tab_uses_discovered_only_index(monkeypatch) -> None:
+    monkeypatch.setattr(variety_service, "get_discovered_variety_ids", lambda: ["id-3", "id-5"])
+    monkeypatch.setattr(
+        variety_service,
+        "list_variety_list_index_for_ids",
+        lambda ids: [
+            {
+                "id": "id-3",
+                "name": "サガホノカ",
+                "alias_names": [],
+                "_search_key": "サガホノカ",
+                "origin_prefecture": "佐賀県",
+                "updated_at": "2026-04-01",
+                "created_at": "2026-04-01",
+                "registered_year": 2026,
+                "registration_date": "2026-04-01",
+            },
+            {
+                "id": "id-5",
+                "name": "ベニホッペ",
+                "alias_names": [],
+                "_search_key": "ベニホッペ",
+                "origin_prefecture": "静岡県",
+                "updated_at": "2026-04-01",
+                "created_at": "2026-04-01",
+                "registered_year": 2026,
+                "registration_date": "2026-04-01",
+            },
+        ]
+        if list(ids) == ["id-3", "id-5"]
+        else [],
+    )
+
+    def _unexpected_full_index():
+        raise AssertionError("full variety index should not be loaded for 発見済み filter")
+
+    monkeypatch.setattr(variety_service, "list_variety_list_index", _unexpected_full_index)
+    variety_service.list_varieties_for_list_tab.clear()
+
+    rows, total, matched_ids = variety_service.list_varieties_for_list_tab(discovery_filter="発見済み", sort_field="name", sort_desc=False)
+
+    assert total == 2
+    assert matched_ids == ["id-3", "id-5"]
+    assert [row["id"] for row in rows] == ["id-3", "id-5"]
+
+
+def test_list_variety_list_index_breaks_when_range_does_not_advance(monkeypatch) -> None:
+    variety_rows = [
+        {
+            "id": f"id-{index:04d}",
+            "name": f"品種{index}",
+            "alias_names": [],
+            "japanese_name": None,
+            "origin_prefecture": "佐賀県",
+            "registration_number": str(index),
+            "application_number": f"A-{index}",
+            "description": "",
+            "characteristics_summary": "",
+            "developer": "",
+            "updated_at": "2026-04-01",
+            "created_at": "2026-04-01",
+            "registered_year": 2026,
+            "registration_date": "2026-04-01",
+            "deleted_at": None,
+        }
+        for index in range(1000)
+    ]
+    client = _RepeatingRangeClient({"varieties": variety_rows})
+    monkeypatch.setattr(variety_service, "get_user_client", lambda: client)
+    variety_service.list_variety_list_index.clear()
+
+    rows = variety_service.list_variety_list_index()
+
+    assert len(rows) == 1000

@@ -69,6 +69,10 @@ def _coerce_variety_sort_value(value: object) -> object:
     return normalize_search_text(str(value))
 
 
+def _annotate_variety_index_rows(rows: Sequence[dict]) -> list[dict]:
+    return [{**row, "_search_key": _build_variety_search_key(row)} for row in rows]
+
+
 @scoped_cache_data(ttl=300, scopes="varieties")
 def list_varieties(
     *,
@@ -113,20 +117,29 @@ def list_variety_list_index() -> list[dict]:
     client = get_user_client()
     rows: list[dict] = []
     start = 0
+    seen_batch_ids: set[tuple[str, ...]] = set()
     while True:
         chunk = (
             client.table("varieties")
             .select(LIST_TAB_FIELDS)
             .is_("deleted_at", "null")
+            .order("id")
             .range(start, start + _LIST_TAB_INDEX_BATCH_SIZE - 1)
             .execute()
             .data
             or []
         )
-        rows.extend({**row, "_search_key": _build_variety_search_key(row)} for row in chunk)
+        if not chunk:
+            break
+        batch_ids = tuple(str(row.get("id") or "") for row in chunk if row.get("id"))
+        if batch_ids and batch_ids in seen_batch_ids:
+            break
+        if batch_ids:
+            seen_batch_ids.add(batch_ids)
+        rows.extend(_annotate_variety_index_rows(chunk))
         if len(chunk) < _LIST_TAB_INDEX_BATCH_SIZE:
             break
-        start += _LIST_TAB_INDEX_BATCH_SIZE
+        start += len(chunk)
     return rows
 
 
@@ -134,14 +147,60 @@ def list_variety_list_index() -> list[dict]:
 def get_discovered_variety_ids() -> list[str]:
     """Return IDs of varieties that have at least one active review."""
     client = get_user_client()
-    reviewed_rows = client.table("reviews").select("variety_id").is_("deleted_at", "null").execute().data or []
-    return list(
-        dict.fromkeys(
-            str(row.get("variety_id"))
-            for row in reviewed_rows
-            if row.get("variety_id")
+    discovered_ids: list[str] = []
+    seen_variety_ids: set[str] = set()
+    seen_batch_review_ids: set[tuple[str, ...]] = set()
+    start = 0
+    while True:
+        reviewed_rows = (
+            client.table("reviews")
+            .select("id,variety_id")
+            .is_("deleted_at", "null")
+            .order("id")
+            .range(start, start + _LIST_TAB_INDEX_BATCH_SIZE - 1)
+            .execute()
+            .data
+            or []
         )
-    )
+        if not reviewed_rows:
+            break
+        batch_review_ids = tuple(str(row.get("id") or "") for row in reviewed_rows if row.get("id"))
+        if batch_review_ids and batch_review_ids in seen_batch_review_ids:
+            break
+        if batch_review_ids:
+            seen_batch_review_ids.add(batch_review_ids)
+        for row in reviewed_rows:
+            variety_id = str(row.get("variety_id") or "").strip()
+            if variety_id and variety_id not in seen_variety_ids:
+                seen_variety_ids.add(variety_id)
+                discovered_ids.append(variety_id)
+        if len(reviewed_rows) < _LIST_TAB_INDEX_BATCH_SIZE:
+            break
+        start += len(reviewed_rows)
+    return discovered_ids
+
+
+@scoped_cache_data(ttl=900, scopes=("varieties", "reviews"))
+def list_variety_list_index_for_ids(variety_ids: Sequence[str]) -> list[dict]:
+    """Return a cached lightweight index for a specific variety ID set."""
+    ids = [str(variety_id) for variety_id in dict.fromkeys(variety_ids) if str(variety_id).strip()]
+    if not ids:
+        return []
+    client = get_user_client()
+    rows: list[dict] = []
+    for id_chunk in chunked_sequence(ids, _POSTGREST_IN_CHUNK_SIZE):
+        chunk = (
+            client.table("varieties")
+            .select(LIST_TAB_FIELDS)
+            .in_("id", id_chunk)
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+        rows.extend(chunk)
+    rows.sort(key=lambda row: normalize_search_text(str(row.get("id") or "")))
+    return _annotate_variety_index_rows(rows)
 
 
 @scoped_cache_data(ttl=900, scopes=("varieties", "reviews"))
@@ -160,16 +219,18 @@ def list_varieties_for_list_tab(
     if sort_field not in allowed_sort:
         sort_field = "updated_at"
     normalized_keyword = normalize_search_text(keyword or "")
-    discovered_ids = set(get_discovered_variety_ids())
-    rows = [dict(row) for row in list_variety_list_index()]
+    discovered_ids = get_discovered_variety_ids()
+    discovered_id_set = set(discovered_ids)
+    if discovery_filter == "発見済み":
+        rows = [dict(row) for row in list_variety_list_index_for_ids(discovered_ids)]
+    else:
+        rows = [dict(row) for row in list_variety_list_index()]
     if normalized_keyword:
         rows = [row for row in rows if normalized_keyword in str(row.get("_search_key") or "")]
     if prefecture:
         rows = [row for row in rows if str(row.get("origin_prefecture") or "") == prefecture]
-    if discovery_filter == "発見済み":
-        rows = [row for row in rows if str(row.get("id") or "") in discovered_ids]
-    elif discovery_filter == "未発見":
-        rows = [row for row in rows if str(row.get("id") or "") not in discovered_ids]
+    if discovery_filter == "未発見":
+        rows = [row for row in rows if str(row.get("id") or "") not in discovered_id_set]
 
     rows.sort(key=lambda row: _coerce_variety_sort_value(row.get(sort_field)), reverse=sort_desc)
     rows.sort(key=lambda row: row.get(sort_field) in {None, ""})
@@ -277,6 +338,7 @@ def get_pokedex_progress() -> dict[str, int]:
 def _clear_variety_related_caches() -> None:
     list_varieties.clear()
     list_variety_list_index.clear()
+    list_variety_list_index_for_ids.clear()
     list_varieties_for_list_tab.clear()
     list_active_varieties.clear()
     get_variety_detail.clear()
