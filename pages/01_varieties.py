@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import streamlit as st
 
+from src.components.asset_uploader import render_asset_uploader
 from src.components.forms import comma_values_input
 from src.components.image_gallery import render_image_gallery
 from src.components.layout import inject_app_style, render_page_header, render_section_title
+from src.components.offline_queue import enqueue_offline_intent, remove_offline_intent, render_offline_intent_queue_bridge
 from src.components.pagination import render_pagination_controls
 from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.swipe_actions import (
@@ -24,8 +28,10 @@ from src.constants.enums import AcidityLevel
 from src.constants.prefectures import PREFECTURES
 from src.services.auth_service import require_admin_session
 from src.services.storage_service import (
+    finalize_variety_image_direct_uploads,
     list_primary_variety_images_with_signed_urls,
     list_images_with_signed_urls,
+    prepare_variety_image_direct_upload_targets,
     set_primary_variety_image,
     upload_variety_image,
 )
@@ -42,6 +48,7 @@ from src.services.variety_service import (
     soft_delete_variety,
     update_variety,
 )
+from src.utils.navigation import build_review_variety_query_params, resolve_selected_variety_query_param
 
 try:
     from src.components.layout import (
@@ -147,6 +154,12 @@ _LATEST_REVIEW_METRICS: list[tuple[str, str, int]] = [
     ("見た目", "appearance", 5),
 ]
 _VARIETY_MOBILE_SWIPE_SCOPE = "varieties-mobile-card-actions"
+_VARIETY_ASSET_UPLOADER_KEY = "variety_asset_uploader"
+_VARIETY_PENDING_UPLOAD_TASK_KEY = "variety_pending_upload_task"
+_VARIETY_ASSET_CLEAR_TOKEN_KEY = "variety_asset_clear_token"
+_VARIETY_IMAGE_UPLOAD_QUEUE_KEY = "variety-image-upload-queue"
+_VARIETY_IMAGE_UPLOAD_REPLAY_EVENT = "ichigodb:variety-image-upload-replay-request"
+_VARIETY_PENDING_UPLOAD_INTENT_REMOVALS_KEY = "variety_pending_upload_intent_removals"
 
 
 def _resolve_select_index(options: list[str], value: object, *, fallback: int = 0) -> int:
@@ -156,6 +169,62 @@ def _resolve_select_index(options: list[str], value: object, *, fallback: int = 
     if 0 <= fallback < len(options):
         return fallback
     return 0
+
+
+def _resolve_pending_variety_upload_task() -> dict | None:
+    pending = st.session_state.get(_VARIETY_PENDING_UPLOAD_TASK_KEY)
+    if not isinstance(pending, dict):
+        return None
+
+    intent_id = str(pending.get("intent_id") or "").strip()
+    token = str(pending.get("token") or "").strip()
+    target_id = str(pending.get("target_id") or "").strip()
+    targets_raw = pending.get("targets")
+    if not token or not target_id or not isinstance(targets_raw, list):
+        if intent_id:
+            _queue_pending_variety_upload_intent_removal(intent_id)
+        st.session_state.pop(_VARIETY_PENDING_UPLOAD_TASK_KEY, None)
+        return None
+
+    targets = [dict(target) for target in targets_raw if isinstance(target, dict)]
+    try:
+        expected_count = int(pending.get("expected_count") or len(targets))
+    except (TypeError, ValueError):
+        expected_count = len(targets)
+    return {
+        "intent_id": intent_id,
+        "token": token,
+        "target_id": target_id,
+        "targets": targets,
+        "expected_count": max(0, expected_count),
+        "success_message": str(pending.get("success_message") or "保存しました。"),
+    }
+
+
+def _queue_pending_variety_upload_intent_removal(intent_id: str) -> None:
+    normalized_id = str(intent_id or "").strip()
+    if not normalized_id:
+        return
+    pending_ids = [
+        str(value).strip()
+        for value in st.session_state.get(_VARIETY_PENDING_UPLOAD_INTENT_REMOVALS_KEY, [])
+        if str(value).strip()
+    ]
+    if normalized_id not in pending_ids:
+        pending_ids.append(normalized_id)
+    st.session_state[_VARIETY_PENDING_UPLOAD_INTENT_REMOVALS_KEY] = pending_ids
+
+
+def _clear_pending_variety_upload_task() -> None:
+    pending = _resolve_pending_variety_upload_task()
+    st.session_state.pop(_VARIETY_PENDING_UPLOAD_TASK_KEY, None)
+    intent_id = str((pending or {}).get("intent_id") or "").strip()
+    if intent_id:
+        _queue_pending_variety_upload_intent_removal(intent_id)
+
+
+def _reset_variety_upload_widget_state() -> None:
+    st.session_state[_VARIETY_ASSET_CLEAR_TOKEN_KEY] = str(uuid4())
 
 
 def _build_variety_summary(row: dict, *, discovered: bool, max_length: int = 96) -> str:
@@ -321,9 +390,8 @@ def _display_variety_name(row: dict, *, discovered: bool) -> str:
     return f"No.{token} ？？？？？"
 
 
-def _open_review_entry(variety_id: str) -> None:
-    st.session_state["review_variety_id"] = variety_id
-    st.switch_page("pages/02_reviews.py")
+def _review_entry_query_params(variety_id: str) -> dict[str, str]:
+    return build_review_variety_query_params(variety_id)
 
 
 def _render_variety_list_item(
@@ -413,8 +481,12 @@ def _render_mobile_variety_cards(
             render_swipe_action_secondary_marker(_VARIETY_MOBILE_SWIPE_SCOPE, variety_id)
             quick_action_col = st.columns(1)[0]
             with quick_action_col:
-                if st.button("評価", key=f"variety_mobile_review_{variety_id}", use_container_width=True, type="secondary"):
-                    _open_review_entry(variety_id)
+                st.page_link(
+                    "pages/02_reviews.py",
+                    label="評価",
+                    query_params=_review_entry_query_params(variety_id),
+                    use_container_width=True,
+                )
     return selected_id
 
 
@@ -439,8 +511,12 @@ def _render_variety_detail_panel(
             title="情報ロック中",
             tone="soft",
         )
-        if st.button("📝 この品種を評価", key=f"go_review_locked_{selected_id}", use_container_width=True, type="primary"):
-            _open_review_entry(selected_id)
+        st.page_link(
+            "pages/02_reviews.py",
+            label="📝 この品種を評価",
+            query_params=_review_entry_query_params(selected_id),
+            use_container_width=True,
+        )
         return
 
     images = list_images_with_signed_urls("variety_images", "variety_id", selected_id)
@@ -464,8 +540,12 @@ def _render_variety_detail_panel(
             subtitle=f"レビュー件数: {review_count}件",
             tone="soft",
         )
-        if st.button("📝 この品種を評価", key=f"go_review_mobile_{selected_id}", use_container_width=True, type="primary"):
-            _open_review_entry(selected_id)
+        st.page_link(
+            "pages/02_reviews.py",
+            label="📝 この品種を評価",
+            query_params=_review_entry_query_params(selected_id),
+            use_container_width=True,
+        )
     else:
         hero_image_col, hero_meta_col = st.columns([1, 1.1], gap="medium")
         with hero_image_col:
@@ -477,8 +557,12 @@ def _render_variety_detail_panel(
                 subtitle=f"レビュー件数: {review_count}件",
                 tone="soft",
             )
-            if st.button("📝 この品種を評価", key=f"go_review_desktop_{selected_id}", use_container_width=True, type="primary"):
-                _open_review_entry(selected_id)
+            st.page_link(
+                "pages/02_reviews.py",
+                label="📝 この品種を評価",
+                query_params=_review_entry_query_params(selected_id),
+                use_container_width=True,
+            )
 
     if latest_review:
         latest_date = _clean_text(latest_review.get("tasted_date"))
@@ -585,6 +669,20 @@ else:
         description="一覧で探索、作成・編集で更新、削除済みから復元できます。",
         actions=["一覧", "作成・編集", "削除済み"],
     )
+pending_upload_intent_removals = [
+    str(value).strip()
+    for value in st.session_state.pop(_VARIETY_PENDING_UPLOAD_INTENT_REMOVALS_KEY, [])
+    if str(value).strip()
+]
+for pending_intent_id in pending_upload_intent_removals:
+    remove_offline_intent(_VARIETY_IMAGE_UPLOAD_QUEUE_KEY, pending_intent_id)
+render_offline_intent_queue_bridge(
+    _VARIETY_IMAGE_UPLOAD_QUEUE_KEY,
+    queue_label="品種画像アップロード待ち",
+    replay_event_name=_VARIETY_IMAGE_UPLOAD_REPLAY_EVENT,
+    show_replay_button=False,
+    auto_replay_on_online=True,
+)
 
 
 def _render_variety_section_switcher(*, mobile_client: bool) -> str:
@@ -620,7 +718,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
     if "variety_mobile_panel" not in st.session_state:
         st.session_state["variety_mobile_panel"] = "list"
 
-    preselected = st.session_state.pop("selected_variety_id", "")
+    preselected = resolve_selected_variety_query_param(st.query_params) or st.session_state.pop("selected_variety_id", "")
     if preselected:
         st.session_state["variety_selected_from_list"] = preselected
         if mobile_client:
@@ -808,6 +906,76 @@ def _render_variety_edit_section() -> None:
         format_func=lambda x: "新規作成" if x == "新規作成" else next((v["name"] for v in active if v["id"] == x), x),
     )
     base = get_variety_detail(edit_id) if edit_id != "新規作成" else {}
+    pending_upload_task = _resolve_pending_variety_upload_task()
+
+    uploader_state = render_asset_uploader(
+        key=_VARIETY_ASSET_UPLOADER_KEY,
+        max_files=5,
+        label="画像アップロード（最大5枚）",
+        height=430,
+        upload_targets=pending_upload_task.get("targets") if pending_upload_task else None,
+        upload_request_token=str(pending_upload_task.get("token") or "") if pending_upload_task else "",
+        clear_token=str(st.session_state.get(_VARIETY_ASSET_CLEAR_TOKEN_KEY) or ""),
+        replay_event_name=_VARIETY_IMAGE_UPLOAD_REPLAY_EVENT,
+        replay_queue_key=_VARIETY_IMAGE_UPLOAD_QUEUE_KEY,
+    )
+    uploader_files = list(uploader_state.get("files") or [])[:5]
+    if uploader_state.get("component_available"):
+        st.caption("画像はブラウザ側で長辺2048pxへ最適化し、保存時にSupabase Storageへ直接アップロードされます。")
+    else:
+        st.caption("カスタム画像アップローダーを読み込めないため、標準アップロードへフォールバックします。")
+
+    if pending_upload_task:
+        pending_token = str(pending_upload_task.get("token") or "")
+        expected_count = int(pending_upload_task.get("expected_count") or 0)
+        matching_uploaded = [
+            entry
+            for entry in (uploader_state.get("uploaded") or [])
+            if str(entry.get("upload_request_token") or "") == pending_token
+        ]
+        matching_failed = [
+            entry
+            for entry in (uploader_state.get("failed") or [])
+            if str(entry.get("upload_request_token") or "") == pending_token
+        ]
+        can_cancel_pending = False
+        if not uploader_state.get("component_available"):
+            st.warning("保留中の画像アップロードを復元できません。再読み込みで解消しない場合は取り消してください。")
+            can_cancel_pending = True
+        elif str(uploader_state.get("last_processed_upload_token") or "") == pending_token:
+            if matching_failed:
+                st.error("画像アップロードに失敗したファイルがあります。再試行後に保存完了となります。")
+                can_cancel_pending = True
+            elif expected_count and len(matching_uploaded) >= expected_count:
+                try:
+                    finalize_variety_image_direct_uploads(
+                        str(pending_upload_task["target_id"]),
+                        matching_uploaded,
+                    )
+                    _reset_variety_upload_widget_state()
+                    _clear_pending_variety_upload_task()
+                    st.success(str(pending_upload_task.get("success_message") or "保存しました。"))
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+                    can_cancel_pending = True
+            else:
+                st.warning("画像アップロード結果を確認できませんでした。再試行後に解消しない場合は取り消してください。")
+                can_cancel_pending = True
+        else:
+            st.caption("画像アップロードを処理中です。完了まで少しお待ちください。")
+
+        if can_cancel_pending and st.button(
+            "画像アップロード待ちを取り消す",
+            key="variety_cancel_pending_upload",
+            use_container_width=True,
+            type="secondary",
+        ):
+            _clear_pending_variety_upload_task()
+            _reset_variety_upload_widget_state()
+            st.rerun()
+
+    fallback_uploaded_files = None
     with st.form("variety_form"):
         prefecture_options = [""] + PREFECTURES
         acidity_options = [x.value for x in AcidityLevel]
@@ -856,12 +1024,18 @@ def _render_variety_edit_section() -> None:
                 format_func=lambda i: next((v["name"] for v in active if v["id"] == i), i),
             )
         description = st.text_area("説明", value=base.get("description", ""), height=140)
-        uploaded_files = st.file_uploader(
-            "画像アップロード (最大5枚)",
-            type=["jpg", "jpeg", "png", "webp"],
-            accept_multiple_files=True,
+        if not uploader_state.get("component_available"):
+            fallback_uploaded_files = st.file_uploader(
+                "画像アップロード (最大5枚)",
+                type=["jpg", "jpeg", "png", "webp"],
+                accept_multiple_files=True,
+            )
+        save = st.form_submit_button(
+            "保存",
+            use_container_width=True,
+            type="primary",
+            disabled=bool(pending_upload_task),
         )
-        save = st.form_submit_button("保存", use_container_width=True, type="primary")
 
     if save:
         payload = {
@@ -881,6 +1055,7 @@ def _render_variety_edit_section() -> None:
             "tags": tags,
         }
         parent_links = [{"parent_variety_id": pid, "parent_order": idx + 1} for idx, pid in enumerate(parent_ids)]
+        fallback_files_to_upload = list(fallback_uploaded_files or []) if not uploader_state.get("component_available") else []
         try:
             if edit_id == "新規作成":
                 target_id = create_variety(payload, parent_links)
@@ -889,8 +1064,39 @@ def _render_variety_edit_section() -> None:
                 update_variety(edit_id, payload, parent_links)
                 target_id = edit_id
                 success_message = "更新しました。"
-            for file in uploaded_files[:5]:
-                upload_variety_image(target_id, file.name, file.getvalue())
+            if uploader_state.get("component_available"):
+                targets = prepare_variety_image_direct_upload_targets(target_id, uploader_files)
+                if targets:
+                    upload_token = str(uuid4())
+                    intent_id = enqueue_offline_intent(
+                        _VARIETY_IMAGE_UPLOAD_QUEUE_KEY,
+                        intent_type="varieties:image-upload",
+                        payload={
+                            "token": upload_token,
+                            "target_id": str(target_id),
+                            "expected_count": len(targets),
+                        },
+                        metadata={"page": "01_varieties"},
+                    )
+                    st.session_state[_VARIETY_PENDING_UPLOAD_TASK_KEY] = {
+                        "intent_id": intent_id,
+                        "token": upload_token,
+                        "target_id": target_id,
+                        "targets": targets,
+                        "expected_count": len(targets),
+                        "success_message": success_message,
+                    }
+                    st.rerun()
+            else:
+                if len(fallback_files_to_upload) > 5:
+                    raise ValueError("画像は最大5枚までです。")
+                if fallback_files_to_upload:
+                    existing_count = len(list_images_with_signed_urls("variety_images", "variety_id", target_id))
+                    if existing_count + len(fallback_files_to_upload) > 5:
+                        raise ValueError("画像は最大5枚までです。")
+                for file in fallback_files_to_upload:
+                    upload_variety_image(target_id, file.name, file.getvalue())
+            _reset_variety_upload_widget_state()
             st.success(success_message)
             st.rerun()
         except Exception as exc:

@@ -1,0 +1,1137 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Asset Uploader</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+      font-size: 14px;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+    }
+
+    #asset-uploader-root {
+      box-sizing: border-box;
+      width: 100%;
+      display: grid;
+      gap: 0.6rem;
+      align-items: start;
+      padding: 0.45rem 0.2rem 0.25rem;
+    }
+
+    #asset-uploader-root.disabled {
+      opacity: 0.78;
+      filter: grayscale(0.08);
+    }
+
+    .panel {
+      border: 1px solid rgba(148, 163, 184, 0.42);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 0.72rem;
+      display: grid;
+      gap: 0.58rem;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .label {
+      margin: 0;
+      font-weight: 650;
+      color: #0f172a;
+      font-size: 0.95rem;
+    }
+
+    .meta {
+      margin: 0;
+      color: #475569;
+      font-size: 0.79rem;
+      line-height: 1.45;
+    }
+
+    .meta.bad {
+      color: #b91c1c;
+    }
+
+    .meta.good {
+      color: #166534;
+    }
+
+    .file-button {
+      appearance: none;
+      border: 1px solid #94a3b8;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #0f172a;
+      padding: 0.45rem 0.75rem;
+      font-size: 0.82rem;
+      font-weight: 640;
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease;
+    }
+
+    .file-button:hover {
+      border-color: #64748b;
+      background: #f8fafc;
+    }
+
+    .file-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    .hidden-input {
+      display: none;
+    }
+
+    .list {
+      display: grid;
+      gap: 0.5rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .item {
+      border: 1px solid rgba(148, 163, 184, 0.34);
+      border-radius: 10px;
+      padding: 0.45rem;
+      display: grid;
+      grid-template-columns: 72px minmax(0, 1fr);
+      gap: 0.5rem;
+      align-items: center;
+      background: rgba(248, 250, 252, 0.65);
+    }
+
+    .thumb {
+      width: 72px;
+      height: 72px;
+      border-radius: 8px;
+      border: 1px solid rgba(148, 163, 184, 0.42);
+      object-fit: cover;
+      background: #f1f5f9;
+    }
+
+    .details {
+      min-width: 0;
+      display: grid;
+      gap: 0.12rem;
+    }
+
+    .name {
+      margin: 0;
+      font-size: 0.84rem;
+      font-weight: 630;
+      color: #0f172a;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .sub {
+      margin: 0;
+      font-size: 0.74rem;
+      color: #475569;
+      line-height: 1.36;
+    }
+
+    .sub.error {
+      color: #b91c1c;
+    }
+
+    .sub.pending {
+      color: #92400e;
+    }
+
+    .debug {
+      margin: 0;
+      padding: 0.45rem;
+      border-radius: 10px;
+      background: rgba(15, 23, 42, 0.04);
+      border: 1px dashed rgba(100, 116, 139, 0.38);
+      font-size: 0.72rem;
+      line-height: 1.35;
+      color: #334155;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <div id="asset-uploader-root" aria-live="polite">
+    <div class="panel">
+      <p id="label" class="label">画像アップロード</p>
+      <p id="summary" class="meta">画像を選択するとブラウザ側でリサイズ・圧縮されます。</p>
+      <div class="toolbar">
+        <button id="pick-button" class="file-button" type="button">画像を選択</button>
+        <button id="retry-button" class="file-button" type="button">失敗分を再試行</button>
+        <button id="clear-button" class="file-button" type="button">選択をクリア</button>
+      </div>
+      <input id="file-input" class="hidden-input" type="file" multiple />
+      <ul id="file-list" class="list"></ul>
+      <pre id="debug" class="debug" hidden></pre>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const PROTOCOL = {
+        READY: "streamlit:componentReady",
+        RENDER: "streamlit:render",
+        SET_COMPONENT_VALUE: "streamlit:setComponentValue",
+        SET_FRAME_HEIGHT: "streamlit:setFrameHeight",
+      };
+
+      const root = document.getElementById("asset-uploader-root");
+      const labelNode = document.getElementById("label");
+      const summaryNode = document.getElementById("summary");
+      const pickButton = document.getElementById("pick-button");
+      const retryButton = document.getElementById("retry-button");
+      const clearButton = document.getElementById("clear-button");
+      const fileInput = document.getElementById("file-input");
+      const fileList = document.getElementById("file-list");
+      const debugNode = document.getElementById("debug");
+
+      const RUNTIME_KEY = "__ichigodbAssetUploaderRuntime";
+      const DEFAULT_REPLAY_EVENT_NAME = "ichigodb:offline-intent-queue-replay-request";
+      const OUTPUT_EXTENSION_BY_MIME_TYPE = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+      };
+
+      let argsState = {
+        componentKey: "asset-uploader",
+        label: "画像アップロード",
+        maxFiles: 5,
+        maxLongEdge: 2048,
+        quality: 0.82,
+        disabled: false,
+        height: 420,
+        uploadTargets: [],
+        uploadRequestToken: "",
+        clearToken: "",
+        replayEventName: DEFAULT_REPLAY_EVENT_NAME,
+        replayQueueKey: "",
+        debug: false,
+      };
+      let instance = null;
+
+      function post(type, payload) {
+        window.parent.postMessage(
+          Object.assign(
+            {
+              isStreamlitMessage: true,
+              type: type,
+            },
+            payload || {}
+          ),
+          "*"
+        );
+      }
+
+      function coerceInt(value, fallback, minValue, maxValue) {
+        if (typeof value === "boolean") {
+          return fallback;
+        }
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          return fallback;
+        }
+        let rounded = Math.round(numeric);
+        if (Number.isFinite(minValue)) {
+          rounded = Math.max(minValue, rounded);
+        }
+        if (Number.isFinite(maxValue)) {
+          rounded = Math.min(maxValue, rounded);
+        }
+        return rounded;
+      }
+
+      function coerceFloat(value, fallback, minValue, maxValue) {
+        if (typeof value === "boolean") {
+          return fallback;
+        }
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          return fallback;
+        }
+        let adjusted = numeric;
+        if (Number.isFinite(minValue)) {
+          adjusted = Math.max(minValue, adjusted);
+        }
+        if (Number.isFinite(maxValue)) {
+          adjusted = Math.min(maxValue, adjusted);
+        }
+        return adjusted;
+      }
+
+      function formatBytes(value) {
+        const bytes = Number(value);
+        if (!Number.isFinite(bytes) || bytes <= 0) {
+          return "0 B";
+        }
+        const units = ["B", "KB", "MB", "GB"];
+        let size = bytes;
+        let unitIndex = 0;
+        while (size >= 1024 && unitIndex < units.length - 1) {
+          size /= 1024;
+          unitIndex += 1;
+        }
+        const fixed = size >= 100 || unitIndex === 0 ? 0 : 1;
+        return `${size.toFixed(fixed)} ${units[unitIndex]}`;
+      }
+
+      function sanitizeText(value, fallback) {
+        const text = String(value || "").trim();
+        return text || fallback;
+      }
+
+      function normalizeEventName(value, fallback) {
+        const candidate = sanitizeText(value, "") || sanitizeText(fallback, DEFAULT_REPLAY_EVENT_NAME);
+        const normalized = candidate
+          .replace(/[^A-Za-z0-9._:-]+/g, "-")
+          .replace(/^[-_.:]+|[-_.:]+$/g, "");
+        return sanitizeText(normalized, DEFAULT_REPLAY_EVENT_NAME).slice(0, 96);
+      }
+
+      function normalizeQueueKey(value) {
+        const candidate = sanitizeText(value, "");
+        if (!candidate) {
+          return "";
+        }
+        return candidate
+          .replace(/[^A-Za-z0-9._:-]+/g, "-")
+          .replace(/^[-_.:]+|[-_.:]+$/g, "")
+          .slice(0, 96);
+      }
+
+      function outputExtensionForMimeType(mimeType) {
+        return OUTPUT_EXTENSION_BY_MIME_TYPE[sanitizeText(mimeType, "").toLowerCase()] || ".webp";
+      }
+
+      function runtimeRegistry() {
+        let parentWindow = null;
+        try {
+          parentWindow = window.parent;
+        } catch (error) {
+          return {};
+        }
+        if (!parentWindow) {
+          return {};
+        }
+        const runtime = parentWindow[RUNTIME_KEY] || {};
+        parentWindow[RUNTIME_KEY] = runtime;
+        runtime.instances = runtime.instances || {};
+        return runtime.instances;
+      }
+
+      function appendDebug(message) {
+        if (!instance) {
+          return;
+        }
+        const text = sanitizeText(message, "");
+        if (!text) {
+          return;
+        }
+        instance.debugMessages.push(text);
+        if (instance.debugMessages.length > 40) {
+          instance.debugMessages = instance.debugMessages.slice(instance.debugMessages.length - 40);
+        }
+      }
+
+      function ensureInstance(componentKey) {
+        const registry = runtimeRegistry();
+        const safeKey = sanitizeText(componentKey, "asset-uploader");
+        if (!registry[safeKey]) {
+          registry[safeKey] = {
+            filesById: {},
+            order: [],
+            blobsById: {},
+            previewsById: {},
+            uploaded: [],
+            failed: [],
+            pending: [],
+            status: "idle",
+            expectedUploadCount: 0,
+            lastSerialized: "",
+            lastUploadToken: "",
+            lastProcessedUploadToken: "",
+            clearToken: "",
+            debugMessages: [],
+            uploadPromise: null,
+            replayEventName: "",
+            replayQueueKey: "",
+            replayListener: null,
+            onlineListener: null,
+          };
+        }
+        instance = registry[safeKey];
+        return instance;
+      }
+
+      function normalizeFileMeta(raw) {
+        if (!raw || typeof raw !== "object") {
+          return null;
+        }
+        const clientFileId = sanitizeText(raw.client_file_id, "");
+        const fileName = sanitizeText(raw.file_name, "");
+        const mimeType = sanitizeText(raw.mime_type, "").toLowerCase();
+        const width = coerceInt(raw.width, 0, 1, 100000);
+        const height = coerceInt(raw.height, 0, 1, 100000);
+        const fileSizeBytes = coerceInt(raw.file_size_bytes, 0, 1, Number.MAX_SAFE_INTEGER);
+        if (!clientFileId || !fileName || !mimeType || !width || !height || !fileSizeBytes) {
+          return null;
+        }
+        return {
+          client_file_id: clientFileId,
+          file_name: fileName,
+          mime_type: mimeType,
+          file_size_bytes: fileSizeBytes,
+          width: width,
+          height: height,
+        };
+      }
+
+      function normalizeUploadTargets(rawTargets) {
+        if (!Array.isArray(rawTargets)) {
+          return [];
+        }
+        const targets = [];
+        rawTargets.forEach(function (raw) {
+          const fileMeta = normalizeFileMeta(raw);
+          if (!fileMeta) {
+            return;
+          }
+          const signedUploadUrl = sanitizeText(raw.signed_upload_url, "");
+          const storagePath = sanitizeText(raw.storage_path, "");
+          if (!signedUploadUrl || !storagePath) {
+            return;
+          }
+          targets.push({
+            client_file_id: fileMeta.client_file_id,
+            file_name: fileMeta.file_name,
+            mime_type: fileMeta.mime_type,
+            file_size_bytes: fileMeta.file_size_bytes,
+            width: fileMeta.width,
+            height: fileMeta.height,
+            signed_upload_url: signedUploadUrl,
+            storage_path: storagePath,
+          });
+        });
+        return targets;
+      }
+
+      function serializeFiles() {
+        if (!instance) {
+          return [];
+        }
+        return instance.order
+          .map(function (clientFileId) {
+            return instance.filesById[clientFileId] || null;
+          })
+          .filter(function (entry) {
+            return !!entry;
+          })
+          .map(function (entry) {
+            return {
+              client_file_id: entry.client_file_id,
+              file_name: entry.file_name,
+              mime_type: entry.mime_type,
+              file_size_bytes: entry.file_size_bytes,
+              width: entry.width,
+              height: entry.height,
+              preview_data_url: entry.preview_data_url || "",
+            };
+          });
+      }
+
+      function emitFrameHeight() {
+        root.style.minHeight = `${argsState.height}px`;
+        const measured = Math.ceil(root.getBoundingClientRect().height);
+        const target = Math.max(220, argsState.height, measured + 2);
+        post(PROTOCOL.SET_FRAME_HEIGHT, { height: target });
+      }
+
+      function emitValue(force) {
+        if (!instance) {
+          return;
+        }
+        const payload = {
+          status: instance.status,
+          files: serializeFiles(),
+          uploaded: instance.uploaded.slice(),
+          failed: instance.failed.slice(),
+          pending_count: instance.pending.length,
+          upload_request_token: instance.lastUploadToken,
+          last_processed_upload_token: instance.lastProcessedUploadToken,
+          debug_messages: instance.debugMessages.slice(),
+        };
+        const serialized = JSON.stringify(payload);
+        if (!force && serialized === instance.lastSerialized) {
+          return;
+        }
+        instance.lastSerialized = serialized;
+        post(PROTOCOL.SET_COMPONENT_VALUE, { value: payload });
+      }
+
+      function clearSelection() {
+        if (!instance) {
+          return;
+        }
+        Object.keys(instance.previewsById).forEach(function (clientFileId) {
+          const previewUrl = instance.previewsById[clientFileId];
+          if (previewUrl) {
+            try {
+              URL.revokeObjectURL(previewUrl);
+            } catch (error) {
+              // ignore revoke failures
+            }
+          }
+        });
+        instance.filesById = {};
+        instance.order = [];
+        instance.blobsById = {};
+        instance.previewsById = {};
+        instance.uploaded = [];
+        instance.failed = [];
+        instance.pending = [];
+        instance.status = "idle";
+        instance.expectedUploadCount = 0;
+      }
+
+      async function decodeImage(file) {
+        if (typeof createImageBitmap === "function") {
+          const bitmap = await createImageBitmap(file);
+          return {
+            width: bitmap.width,
+            height: bitmap.height,
+            drawToCanvas: function (canvas, targetWidth, targetHeight) {
+              const ctx = canvas.getContext("2d");
+              if (!ctx) {
+                throw new Error("canvas_context_error");
+              }
+              ctx.clearRect(0, 0, targetWidth, targetHeight);
+              ctx.drawImage(bitmap, 0, 0, targetWidth, targetHeight);
+            },
+            close: function () {
+              try {
+                bitmap.close();
+              } catch (error) {
+                // ignore close failures
+              }
+            },
+          };
+        }
+
+        const imageUrl = URL.createObjectURL(file);
+        try {
+          const imageElement = await new Promise(function (resolve, reject) {
+            const image = new Image();
+            image.onload = function () {
+              resolve(image);
+            };
+            image.onerror = function () {
+              reject(new Error("image_decode_error"));
+            };
+            image.src = imageUrl;
+          });
+          return {
+            width: imageElement.naturalWidth || imageElement.width,
+            height: imageElement.naturalHeight || imageElement.height,
+            drawToCanvas: function (canvas, targetWidth, targetHeight) {
+              const ctx = canvas.getContext("2d");
+              if (!ctx) {
+                throw new Error("canvas_context_error");
+              }
+              ctx.clearRect(0, 0, targetWidth, targetHeight);
+              ctx.drawImage(imageElement, 0, 0, targetWidth, targetHeight);
+            },
+            close: function () {},
+          };
+        } finally {
+          try {
+            URL.revokeObjectURL(imageUrl);
+          } catch (error) {
+            // ignore revoke failures
+          }
+        }
+      }
+
+      function canvasToBlob(canvas, mimeType, quality) {
+        return new Promise(function (resolve, reject) {
+          canvas.toBlob(
+            function (blob) {
+              if (!blob) {
+                reject(new Error("image_encode_error"));
+                return;
+              }
+              resolve(blob);
+            },
+            mimeType,
+            quality
+          );
+        });
+      }
+
+      function randomClientFileId(index) {
+        if (window.crypto && typeof window.crypto.randomUUID === "function") {
+          return `asset-${window.crypto.randomUUID()}`;
+        }
+        return `asset-${Date.now()}-${Math.round(Math.random() * 100000)}-${index}`;
+      }
+
+      async function processFile(file, index) {
+        if (!file || typeof file !== "object") {
+          throw new Error("invalid_file");
+        }
+        const decoded = await decodeImage(file);
+        const sourceWidth = coerceInt(decoded.width, 0, 1, 50000);
+        const sourceHeight = coerceInt(decoded.height, 0, 1, 50000);
+        if (!sourceWidth || !sourceHeight) {
+          decoded.close();
+          throw new Error("image_dimension_error");
+        }
+
+        const longEdge = Math.max(sourceWidth, sourceHeight);
+        const maxLongEdge = Math.max(64, argsState.maxLongEdge);
+        const ratio = longEdge > maxLongEdge ? maxLongEdge / longEdge : 1;
+        const targetWidth = Math.max(1, Math.round(sourceWidth * ratio));
+        const targetHeight = Math.max(1, Math.round(sourceHeight * ratio));
+
+        const canvas = document.createElement("canvas");
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        decoded.drawToCanvas(canvas, targetWidth, targetHeight);
+        decoded.close();
+
+        const requestedMimeType = "image/webp";
+        const blob = await canvasToBlob(canvas, requestedMimeType, argsState.quality);
+        const detectedMimeType = sanitizeText(blob.type, requestedMimeType).toLowerCase();
+        const outputMimeType = OUTPUT_EXTENSION_BY_MIME_TYPE[detectedMimeType] ? detectedMimeType : requestedMimeType;
+        if (outputMimeType !== requestedMimeType) {
+          appendDebug(`encode_fallback:${requestedMimeType}->${outputMimeType}`);
+        }
+        const outputFileName = `${sanitizeText(file.name || "image", "image").replace(/\.[^.]+$/, "")}${outputExtensionForMimeType(outputMimeType)}`;
+        const clientFileId = randomClientFileId(index);
+        const previewUrl = URL.createObjectURL(blob);
+        return {
+          client_file_id: clientFileId,
+          file_name: outputFileName,
+          mime_type: outputMimeType,
+          file_size_bytes: blob.size,
+          width: targetWidth,
+          height: targetHeight,
+          preview_data_url: "",
+          blob: blob,
+          preview_url: previewUrl,
+        };
+      }
+
+      async function handleFileSelection(fileListInput) {
+        if (!instance || argsState.disabled) {
+          return;
+        }
+        const selected = Array.from(fileListInput || []);
+        if (!selected.length) {
+          return;
+        }
+        instance.status = "processing";
+        instance.failed = [];
+        instance.pending = [];
+        instance.uploaded = [];
+        emitValue(true);
+        render();
+
+        let acceptedCount = instance.order.length;
+        for (let index = 0; index < selected.length; index += 1) {
+          if (acceptedCount >= argsState.maxFiles) {
+            appendDebug(`max_files_reached:${argsState.maxFiles}`);
+            break;
+          }
+          const file = selected[index];
+          try {
+            const processed = await processFile(file, index);
+            instance.filesById[processed.client_file_id] = {
+              client_file_id: processed.client_file_id,
+              file_name: processed.file_name,
+              mime_type: processed.mime_type,
+              file_size_bytes: processed.file_size_bytes,
+              width: processed.width,
+              height: processed.height,
+              preview_data_url: "",
+            };
+            instance.blobsById[processed.client_file_id] = processed.blob;
+            instance.previewsById[processed.client_file_id] = processed.preview_url;
+            instance.order.push(processed.client_file_id);
+            acceptedCount += 1;
+          } catch (error) {
+            appendDebug(`compress_error:${sanitizeText(error && error.message, "unknown")}`);
+          }
+        }
+
+        instance.status = instance.order.length ? "ready" : "idle";
+        emitValue(true);
+        render();
+      }
+
+      async function uploadOneTarget(target, uploadToken) {
+        const blob = instance.blobsById[target.client_file_id];
+        if (!blob) {
+          return {
+            ok: false,
+            target: target,
+            error: "圧縮済みデータが見つかりません。",
+            retryable: false,
+          };
+        }
+        try {
+          const response = await fetch(target.signed_upload_url, {
+            method: "PUT",
+            headers: {
+              "content-type": target.mime_type,
+            },
+            body: blob,
+          });
+          if (!response.ok) {
+            return {
+              ok: false,
+              target: target,
+              error: `HTTP ${response.status}`,
+              retryable: response.status >= 500,
+              status: response.status,
+            };
+          }
+          return {
+            ok: true,
+            target: target,
+            status: response.status,
+            upload_request_token: uploadToken,
+          };
+        } catch (error) {
+          const offline = !(window.navigator && window.navigator.onLine);
+          return {
+            ok: false,
+            target: target,
+            error: offline ? "オフラインのためアップロードできません。" : "ネットワークエラーでアップロードに失敗しました。",
+            retryable: true,
+          };
+        }
+      }
+
+      function clearFailedForTargets(uploadToken, clientFileIds) {
+        const targetIds = new Set(clientFileIds);
+        instance.failed = instance.failed.filter(function (entry) {
+          if (entry.upload_request_token !== uploadToken) {
+            return true;
+          }
+          return !targetIds.has(entry.client_file_id);
+        });
+      }
+
+      function removePendingForIds(clientFileIds) {
+        const targetIds = new Set(clientFileIds);
+        instance.pending = instance.pending.filter(function (entry) {
+          return !targetIds.has(entry.client_file_id);
+        });
+      }
+
+      async function runUploadPlan(uploadTargets, uploadToken) {
+        if (!instance || !uploadTargets.length || !uploadToken) {
+          return;
+        }
+        instance.status = "uploading";
+        clearFailedForTargets(
+          uploadToken,
+          uploadTargets.map(function (target) {
+            return target.client_file_id;
+          })
+        );
+        emitValue(true);
+        render();
+
+        const uploadedById = {};
+        instance.uploaded.forEach(function (entry) {
+          if (entry.upload_request_token === uploadToken) {
+            uploadedById[entry.client_file_id] = true;
+          }
+        });
+
+        const pendingClientFileIds = [];
+        for (let index = 0; index < uploadTargets.length; index += 1) {
+          const target = uploadTargets[index];
+          if (uploadedById[target.client_file_id]) {
+            continue;
+          }
+          const result = await uploadOneTarget(target, uploadToken);
+          if (result.ok) {
+            instance.uploaded.push({
+              client_file_id: target.client_file_id,
+              file_name: target.file_name,
+              mime_type: target.mime_type,
+              file_size_bytes: target.file_size_bytes,
+              width: target.width,
+              height: target.height,
+              storage_path: target.storage_path,
+              upload_request_token: uploadToken,
+              http_status: result.status || 200,
+            });
+            removePendingForIds([target.client_file_id]);
+          } else {
+            instance.failed.push({
+              client_file_id: target.client_file_id,
+              file_name: target.file_name,
+              mime_type: target.mime_type,
+              file_size_bytes: target.file_size_bytes,
+              width: target.width,
+              height: target.height,
+              storage_path: target.storage_path,
+              upload_request_token: uploadToken,
+              error: result.error || "アップロードに失敗しました。",
+            });
+            if (result.retryable) {
+              pendingClientFileIds.push(target.client_file_id);
+              instance.pending.push({
+                client_file_id: target.client_file_id,
+                upload_request_token: uploadToken,
+                target: target,
+              });
+            }
+          }
+          emitValue(true);
+          render();
+        }
+
+        if (pendingClientFileIds.length) {
+          instance.pending = instance.pending.filter(function (item, index, self) {
+            if (!item || item.upload_request_token !== uploadToken) {
+              return true;
+            }
+            const duplicateIndex = self.findIndex(function (candidate) {
+              return (
+                candidate &&
+                candidate.upload_request_token === item.upload_request_token &&
+                candidate.client_file_id === item.client_file_id
+              );
+            });
+            return duplicateIndex === index;
+          });
+        }
+
+        instance.lastProcessedUploadToken = uploadToken;
+        const uploadedCount = instance.uploaded.filter(function (entry) {
+          return entry.upload_request_token === uploadToken;
+        }).length;
+        const failedCount = instance.failed.filter(function (entry) {
+          return entry.upload_request_token === uploadToken;
+        }).length;
+        const pendingCount = instance.pending.filter(function (entry) {
+          return entry.upload_request_token === uploadToken;
+        }).length;
+
+        if (uploadedCount >= instance.expectedUploadCount && !failedCount && !pendingCount) {
+          instance.status = "uploaded";
+        } else if (pendingCount || failedCount) {
+          instance.status = "error";
+        } else {
+          instance.status = "ready";
+        }
+
+        emitValue(true);
+        render();
+      }
+
+      async function retryPendingUploads() {
+        if (!instance) {
+          return;
+        }
+        const uploadToken = sanitizeText(argsState.uploadRequestToken, "");
+        if (!uploadToken) {
+          return;
+        }
+        const pendingTargets = instance.pending
+          .filter(function (entry) {
+            return entry.upload_request_token === uploadToken && entry.target;
+          })
+          .map(function (entry) {
+            return entry.target;
+          });
+        if (!pendingTargets.length) {
+          return;
+        }
+        instance.pending = instance.pending.filter(function (entry) {
+          return entry.upload_request_token !== uploadToken;
+        });
+        await runUploadPlan(pendingTargets, uploadToken);
+      }
+
+      function maybeStartUpload() {
+        if (!instance) {
+          return;
+        }
+        const uploadToken = sanitizeText(argsState.uploadRequestToken, "");
+        if (!uploadToken) {
+          return;
+        }
+        const targets = normalizeUploadTargets(argsState.uploadTargets);
+        if (!targets.length) {
+          return;
+        }
+        if (instance.uploadPromise) {
+          return;
+        }
+        if (instance.lastUploadToken !== uploadToken) {
+          instance.lastUploadToken = uploadToken;
+          instance.expectedUploadCount = targets.length;
+          instance.uploaded = [];
+          instance.failed = [];
+          instance.pending = [];
+        } else if (instance.lastProcessedUploadToken === uploadToken) {
+          return;
+        }
+
+        instance.uploadPromise = runUploadPlan(targets, uploadToken).finally(function () {
+          instance.uploadPromise = null;
+        });
+      }
+
+      function bindInstanceListeners() {
+        if (!instance) {
+          return;
+        }
+        const replayEventName = normalizeEventName(argsState.replayEventName, DEFAULT_REPLAY_EVENT_NAME);
+        instance.replayQueueKey = normalizeQueueKey(argsState.replayQueueKey);
+        const parentWindow = window.parent;
+        if (instance.replayEventName !== replayEventName) {
+          if (instance.replayListener && instance.replayEventName && parentWindow && parentWindow.removeEventListener) {
+            parentWindow.removeEventListener(instance.replayEventName, instance.replayListener);
+          }
+          instance.replayEventName = replayEventName;
+          instance.replayListener = function (event) {
+            const detail = event && event.detail && typeof event.detail === "object" ? event.detail : {};
+            const detailQueueKey = normalizeQueueKey(detail.queueKey || "");
+            const expectedQueueKey = normalizeQueueKey(instance.replayQueueKey || "");
+            if (expectedQueueKey && detailQueueKey && detailQueueKey !== expectedQueueKey) {
+              return;
+            }
+            retryPendingUploads();
+          };
+          if (parentWindow && parentWindow.addEventListener) {
+            parentWindow.addEventListener(replayEventName, instance.replayListener);
+          }
+        }
+        if (!instance.onlineListener) {
+          instance.onlineListener = function () {
+            retryPendingUploads();
+          };
+          if (window.addEventListener) {
+            window.addEventListener("online", instance.onlineListener);
+          }
+        }
+      }
+
+      function renderDebug() {
+        if (!argsState.debug) {
+          debugNode.hidden = true;
+          debugNode.textContent = "";
+          return;
+        }
+        debugNode.hidden = false;
+        debugNode.textContent = (instance.debugMessages || []).join("\n") || "(debug log empty)";
+      }
+
+      function renderFileItems() {
+        if (!instance) {
+          fileList.innerHTML = "";
+          return;
+        }
+        const uploadedById = {};
+        const failedById = {};
+        const pendingById = {};
+        instance.uploaded.forEach(function (entry) {
+          uploadedById[entry.client_file_id] = entry;
+        });
+        instance.failed.forEach(function (entry) {
+          failedById[entry.client_file_id] = entry;
+        });
+        instance.pending.forEach(function (entry) {
+          pendingById[entry.client_file_id] = true;
+        });
+
+        fileList.innerHTML = "";
+        instance.order.forEach(function (clientFileId) {
+          const fileMeta = instance.filesById[clientFileId];
+          if (!fileMeta) {
+            return;
+          }
+          const item = document.createElement("li");
+          item.className = "item";
+
+          const thumb = document.createElement("img");
+          thumb.className = "thumb";
+          thumb.alt = fileMeta.file_name;
+          thumb.src = instance.previewsById[clientFileId] || "";
+
+          const details = document.createElement("div");
+          details.className = "details";
+          const name = document.createElement("p");
+          name.className = "name";
+          name.textContent = fileMeta.file_name;
+          details.appendChild(name);
+
+          const meta = document.createElement("p");
+          meta.className = "sub";
+          meta.textContent = `${fileMeta.width}x${fileMeta.height}px / ${formatBytes(fileMeta.file_size_bytes)}`;
+          details.appendChild(meta);
+
+          if (uploadedById[clientFileId]) {
+            const status = document.createElement("p");
+            status.className = "sub";
+            status.textContent = "✅ アップロード済み";
+            details.appendChild(status);
+          } else if (pendingById[clientFileId]) {
+            const status = document.createElement("p");
+            status.className = "sub pending";
+            status.textContent = "⏳ 再試行待ち";
+            details.appendChild(status);
+          } else if (failedById[clientFileId]) {
+            const status = document.createElement("p");
+            status.className = "sub error";
+            status.textContent = `❌ ${failedById[clientFileId].error}`;
+            details.appendChild(status);
+          }
+
+          item.appendChild(thumb);
+          item.appendChild(details);
+          fileList.appendChild(item);
+        });
+      }
+
+      function renderSummary() {
+        if (!instance) {
+          summaryNode.textContent = "画像を選択するとブラウザ側でリサイズ・圧縮されます。";
+          return;
+        }
+        const selectedCount = instance.order.length;
+        const uploadedCount = instance.uploaded.filter(function (entry) {
+          return entry.upload_request_token === instance.lastUploadToken;
+        }).length;
+        const failedCount = instance.failed.filter(function (entry) {
+          return entry.upload_request_token === instance.lastUploadToken;
+        }).length;
+        const pendingCount = instance.pending.filter(function (entry) {
+          return entry.upload_request_token === instance.lastUploadToken;
+        }).length;
+        const lines = [
+          `選択: ${selectedCount}/${argsState.maxFiles} 枚`,
+          `状態: ${instance.status}`,
+        ];
+        if (instance.lastUploadToken) {
+          lines.push(`アップロード: 成功 ${uploadedCount} / 失敗 ${failedCount} / 保留 ${pendingCount}`);
+        }
+        summaryNode.textContent = lines.join(" / ");
+        summaryNode.className = failedCount || pendingCount ? "meta bad" : uploadedCount ? "meta good" : "meta";
+      }
+
+      function render() {
+        if (!instance) {
+          return;
+        }
+        root.classList.toggle("disabled", !!argsState.disabled);
+        labelNode.textContent = argsState.label;
+
+        const canPick = !argsState.disabled && instance.status !== "uploading";
+        pickButton.disabled = !canPick;
+        clearButton.disabled = !instance.order.length || instance.status === "uploading";
+        retryButton.disabled =
+          instance.status === "uploading" ||
+          !instance.pending.some(function (entry) {
+            return entry.upload_request_token === instance.lastUploadToken;
+          });
+
+        fileInput.disabled = !canPick;
+        fileInput.accept = "image/jpeg,image/png,image/webp";
+        renderSummary();
+        renderFileItems();
+        renderDebug();
+        emitFrameHeight();
+      }
+
+      function applyArgs(rawArgs) {
+        argsState = {
+          componentKey: sanitizeText(rawArgs.componentKey || "asset-uploader", "asset-uploader"),
+          label: sanitizeText(rawArgs.label, "画像アップロード"),
+          maxFiles: coerceInt(rawArgs.maxFiles, 5, 1, 10),
+          maxLongEdge: coerceInt(rawArgs.maxLongEdge, 2048, 320, 4096),
+          quality: coerceFloat(rawArgs.quality, 0.82, 0.3, 0.98),
+          disabled: !!rawArgs.disabled,
+          height: coerceInt(rawArgs.height, 420, 240, 1200),
+          uploadTargets: normalizeUploadTargets(rawArgs.uploadTargets),
+          uploadRequestToken: sanitizeText(rawArgs.uploadRequestToken, ""),
+          clearToken: sanitizeText(rawArgs.clearToken, ""),
+          replayEventName: normalizeEventName(rawArgs.replayEventName, DEFAULT_REPLAY_EVENT_NAME),
+          replayQueueKey: normalizeQueueKey(rawArgs.replayQueueKey),
+          debug: !!rawArgs.debug,
+        };
+        ensureInstance(argsState.componentKey);
+        bindInstanceListeners();
+        if (argsState.clearToken && instance.clearToken !== argsState.clearToken) {
+          instance.clearToken = argsState.clearToken;
+          clearSelection();
+          emitValue(true);
+        }
+      }
+
+      function handleRenderEvent(event) {
+        if (!event || !event.data || event.data.type !== PROTOCOL.RENDER) {
+          return;
+        }
+        const nextArgs = event.data.args || {};
+        applyArgs(nextArgs);
+        render();
+        maybeStartUpload();
+      }
+
+      pickButton.addEventListener("click", function () {
+        if (pickButton.disabled) {
+          return;
+        }
+        fileInput.click();
+      });
+
+      clearButton.addEventListener("click", function () {
+        clearSelection();
+        emitValue(true);
+        render();
+      });
+
+      retryButton.addEventListener("click", function () {
+        retryPendingUploads();
+      });
+
+      fileInput.addEventListener("change", async function (event) {
+        const files = event && event.target ? event.target.files : null;
+        event.target.value = "";
+        await handleFileSelection(files);
+      });
+
+      window.addEventListener("message", handleRenderEvent);
+      window.addEventListener("resize", emitFrameHeight);
+
+      post(PROTOCOL.READY, { apiVersion: 1 });
+      emitFrameHeight();
+    })();
+  </script>
+</body>
+</html>

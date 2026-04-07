@@ -51,6 +51,11 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 - **Service worker support**: a conservative static-shell cache worker (`static/app-sw.js`) now uses versioned cache rotation, same-origin matching for `/app/static/` + `/static/`, and lightweight `ichigodb:network-status` messages for optional offline indicators.
 - **Static asset serving**: `.streamlit/config.toml` enables `enableStaticServing = true` for manifest/icon/service-worker delivery.
 
+## v10 updates (image pipeline acceleration)
+- **Client-side image optimization**: new `asset_uploader` component resizes and compresses images in-browser (long edge 2048px / WebP) before upload.
+- **Direct upload flow**: review/variety pages now use signed upload URLs and browser-to-Supabase direct PUT, then finalize metadata rows in `variety_images` / `review_images`.
+- **Retry-aware UX**: upload results are tracked in component state, with replay-event retry hooks for transient network failures.
+
 ## Login persistence (30 days)
 - This app supports login skip on revisit by storing encrypted auth session cookies.
 - For stable persistence across restarts, set:

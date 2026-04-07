@@ -11,6 +11,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from src.components.offline_runtime import inject_offline_runtime
+from src.components.tables import is_mobile_client
 
 _BADGE_TONE_ALIASES = {
     "default": "neutral",
@@ -481,6 +482,10 @@ def inject_app_style() -> None:
         [data-testid="stToolbar"],
         [data-testid="stDecoration"],
         [data-testid="stStatusWidget"],
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="stSidebarNav"],
         #MainMenu,
         button[kind="header"] {
             display: none !important;
@@ -515,7 +520,9 @@ def inject_app_style() -> None:
         --sl-space-6: 3rem;     /* 48px */
         --sl-touch-target: 44px;
         --sl-touch-target-mobile: 48px;
+        --sl-safe-top: env(safe-area-inset-top, 0px);
         --sl-safe-bottom: env(safe-area-inset-bottom, 0px);
+        --sl-mobile-nav-height: 5.35rem;
         --sl-body-size: 0.95rem;
         --sl-caption-size: 0.84rem;
         --sl-mobile-gap: 0.72rem;
@@ -523,7 +530,8 @@ def inject_app_style() -> None:
 
     [data-testid="stAppViewContainer"],
     [data-testid="stSidebar"] {
-        font-family: "Yu Gothic UI", "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+        letter-spacing: -0.01em;
     }
     [data-testid="stAppViewContainer"] {
         background: var(--sl-bg);
@@ -833,17 +841,18 @@ def inject_app_style() -> None:
         gap: 0.16rem;
         width: 100%;
         min-width: 0;
-        min-height: 56px;
-        border-radius: 12px;
-        border: 1px solid var(--sl-primary);
-        background: rgba(232, 51, 74, 0.14);
+        min-height: 60px;
+        border-radius: 18px;
+        border: 1px solid rgba(232, 51, 74, 0.22);
+        background: rgba(255, 255, 255, 0.56);
         color: var(--sl-heading);
         font-weight: 700;
         text-align: center;
         line-height: 1.12;
-        padding: 0.2rem 0.15rem;
+        padding: 0.28rem 0.15rem;
         box-sizing: border-box;
         overflow: hidden;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
     }
     .sl-bottom-nav-tab-active .sl-bottom-nav-icon {
         font-size: 1rem;
@@ -918,10 +927,14 @@ def inject_app_style() -> None:
     @media (max-width: 820px) {
         .block-container {
             max-width: 100%;
-            padding-top: var(--sl-space-2);
-            padding-right: 0.75rem;
-            padding-left: 0.75rem;
-            padding-bottom: calc(8rem + var(--sl-safe-bottom));
+            padding-top: calc(0.35rem + var(--sl-safe-top));
+            padding-right: 0.82rem;
+            padding-left: 0.82rem;
+            padding-bottom: calc(var(--sl-mobile-nav-height) + 1.35rem + var(--sl-safe-bottom));
+        }
+        [data-testid="stMain"],
+        [data-testid="stMainBlockContainer"] {
+            padding-top: 0 !important;
         }
         [data-testid="stVerticalBlock"] {
             gap: var(--sl-mobile-gap);
@@ -990,18 +1003,19 @@ def inject_app_style() -> None:
         .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] {
             display: flex !important;
             flex-direction: row !important;
-            gap: 0.3rem !important;
+            gap: 0.22rem !important;
             position: fixed;
-            left: 0.55rem;
-            right: 0.55rem;
-            bottom: calc(var(--sl-safe-bottom) + 0.45rem);
-            z-index: 45;
-            padding: 0.34rem;
-            border: 1px solid var(--sl-border);
-            border-radius: 16px;
-            background: rgba(255, 255, 255, 0.97);
-            box-shadow: 0 -8px 24px rgba(17, 24, 39, 0.18);
-            backdrop-filter: blur(8px);
+            left: 0.72rem;
+            right: 0.72rem;
+            bottom: calc(var(--sl-safe-bottom) + 0.38rem);
+            z-index: 48;
+            padding: 0.32rem;
+            border: 1px solid rgba(255, 255, 255, 0.55);
+            border-radius: 22px;
+            background: rgba(248, 250, 252, 0.74);
+            box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+            backdrop-filter: saturate(1.8) blur(20px);
+            -webkit-backdrop-filter: saturate(1.8) blur(20px);
         }
         .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] > div {
             min-width: 0 !important;
@@ -1009,35 +1023,53 @@ def inject_app_style() -> None:
             width: 0 !important;
             flex: 1 1 0 !important;
         }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button {
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"] {
             display: flex;
             align-items: center;
             justify-content: center;
-            min-height: 56px !important;
-            border-radius: 12px;
+            min-height: 60px !important;
+            border-radius: 18px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--sl-muted);
             margin-bottom: 0 !important;
-            padding: 0.2rem 0.15rem;
-            line-height: 1.12;
-            font-size: 0.72rem;
-            white-space: pre-line;
-            overflow-wrap: anywhere;
-            word-break: keep-all;
-            box-sizing: border-box;
-            overflow: hidden;
+            padding: 0.28rem 0.15rem;
+            line-height: 1.08;
+            text-decoration: none;
+            box-shadow: none;
             transition:
                 border-color 0.2s ease,
                 background-color 0.2s ease,
                 color 0.2s ease,
                 transform 0.08s ease-out;
         }
-        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button p {
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"]:hover {
+            border-color: rgba(232, 51, 74, 0.16);
+            background: rgba(255, 255, 255, 0.42);
+            color: var(--sl-heading);
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"]:active {
+            transform: scale(0.97);
+            border-color: rgba(232, 51, 74, 0.22);
+            background: rgba(253, 242, 244, 0.88);
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] a[data-testid="stPageLink-NavLink"] p {
             width: 100%;
             margin: 0;
-            line-height: 1.12;
+            line-height: 1.08;
             white-space: pre-line;
             overflow-wrap: anywhere;
             word-break: keep-all;
             text-align: center;
+            font-size: 0.72rem;
+            font-weight: 640;
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button {
+            min-height: 56px !important;
+            border-radius: 18px;
+        }
+        .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button p {
+            white-space: pre-line;
         }
         .sl-bottom-nav-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button:active {
             transform: scale(0.97);
@@ -1161,7 +1193,19 @@ def _render_workspace_meta_controls(context: str) -> None:
         user_email = ""
     user_label = user_email or "アカウント"
     notification_count = int(st.session_state.get("ui_notification_count", 0) or 0)
-    control_key = _keyify(context)
+    mobile_client = is_mobile_client()
+
+    if mobile_client:
+        title_col, action_col = st.columns([1.35, 1], gap="small")
+        with title_col:
+            st.caption("研究ワークスペース")
+            st.markdown(
+                f'<span class="sl-user-chip">👤 {user_label}</span>',
+                unsafe_allow_html=True,
+            )
+        with action_col:
+            st.page_link("pages/07_settings.py", label="⚙️ 設定", use_container_width=True)
+        return
 
     left_space, controls_col = st.columns([1.5, 1.9], gap="small")
     with left_space:
@@ -1177,8 +1221,7 @@ def _render_workspace_meta_controls(context: str) -> None:
         with c2:
             st.markdown('<span class="sl-meta-chip">❓ ヘルプ</span>', unsafe_allow_html=True)
         with c3:
-            if st.button("⚙️ 設定", key=f"workspace_settings_{control_key}", type="secondary", use_container_width=True):
-                st.switch_page("pages/07_settings.py")
+            st.page_link("pages/07_settings.py", label="⚙️ 設定", use_container_width=True)
         with c4:
             st.markdown(
                 f'<span class="sl-user-chip">👤 {user_label}</span>',

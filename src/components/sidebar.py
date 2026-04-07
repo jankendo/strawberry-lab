@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from src.components.tables import is_mobile_client
 from src.constants.ui import APP_NAME
 from src.services.auth_service import logout_user
 
@@ -48,7 +49,7 @@ def _render_mobile_tab(
     if is_active:
         st.markdown(
             (
-                '<div class="sl-bottom-nav-tab-active">'
+                '<div class="sl-bottom-nav-tab-active" aria-current="page">'
                 f'<span class="sl-bottom-nav-icon">{tab_icon}</span>'
                 f'<span class="sl-bottom-nav-label">{tab_label}</span>'
                 "</div>"
@@ -57,18 +58,16 @@ def _render_mobile_tab(
         )
         return
 
-    if st.button(
-        f"{tab_icon}\n{tab_label}",
-        key=f"mobile_bottom_nav_{active_page}_{tab_key}",
+    st.page_link(
+        tab_path,
+        label=f"{tab_icon}\n{tab_label}",
         use_container_width=True,
-        type="secondary",
-    ):
-        st.switch_page(tab_path)
+    )
 
 
 def render_primary_nav(*, active_page: str) -> None:
     """Render fixed bottom-tab navigation for mobile contexts."""
-    if not st.session_state.get("is_authenticated"):
+    if not st.session_state.get("is_authenticated") or not is_mobile_client():
         return
 
     active_tab = _resolve_mobile_active_tab(active_page)
@@ -88,6 +87,9 @@ def render_primary_nav(*, active_page: str) -> None:
 
 def render_sidebar(*, active_page: str) -> None:
     """Render desktop sidebar with explicit active navigation state."""
+    if not st.session_state.get("is_authenticated") or is_mobile_client():
+        return
+
     with st.sidebar:
         st.markdown(
             f"""

@@ -26,6 +26,7 @@ from src.services.pedigree_service import (
     get_cached_layout,
     subgraph_by_root,
 )
+from src.utils.navigation import build_selected_variety_query_params
 
 st.set_page_config(page_title="交配図", layout="wide")
 require_admin_session()
@@ -200,9 +201,12 @@ def _render_selected_node_panel() -> None:
             st.caption(f"子ノード数: {graph.out_degree(selected_node)}")
             btn_col1, btn_col2 = st.columns(2)
             with btn_col1:
-                if st.button("品種詳細を開く", key="open_selected_pedigree_node", use_container_width=True, type="primary"):
-                    st.session_state["selected_variety_id"] = selected_node
-                    st.switch_page("pages/01_varieties.py")
+                st.page_link(
+                    "pages/01_varieties.py",
+                    label="品種詳細を開く",
+                    query_params=build_selected_variety_query_params(selected_node),
+                    use_container_width=True,
+                )
             with btn_col2:
                 if st.button("選択解除", key="clear_selected_pedigree_node", use_container_width=True, type="secondary"):
                     st.session_state.pop("pedigree_selected_node", None)
