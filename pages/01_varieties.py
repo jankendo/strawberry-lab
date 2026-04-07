@@ -191,6 +191,7 @@ _VARIETY_EDIT_TARGET_REQUEST_KEY = "variety_edit_target_requested_id"
 _VARIETY_NEW_TARGET = "新規作成"
 _VARIETY_LIST_DEFAULT_PAGE_SIZE = 50
 _VARIETY_LIST_LOADING_STEPS = 3
+_VARIETY_LIST_LOADING_SIGNATURE_KEY = "variety_list_loading_signature"
 
 
 def _resolve_select_index(options: list[str], value: object, *, fallback: int = 0) -> int:
@@ -205,8 +206,9 @@ def _resolve_select_index(options: list[str], value: object, *, fallback: int = 
 class _VarietyListLoadingStatus:
     """Render a temporary loading block while the variety list is being assembled."""
 
-    def __init__(self) -> None:
-        self._placeholder = st.empty()
+    def __init__(self, *, enabled: bool) -> None:
+        self._enabled = enabled
+        self._placeholder = st.empty() if enabled else None
 
     def update(
         self,
@@ -216,6 +218,8 @@ class _VarietyListLoadingStatus:
         loaded_count: int,
         total_count: int | None,
     ) -> None:
+        if not self._enabled or self._placeholder is None:
+            return
         normalized_step = min(max(step, 1), _VARIETY_LIST_LOADING_STEPS)
         ratio = normalized_step / _VARIETY_LIST_LOADING_STEPS
         current_count = max(0, loaded_count)
@@ -228,7 +232,27 @@ class _VarietyListLoadingStatus:
             st.progress(ratio, text=f"{label} ({count_text})")
 
     def clear(self) -> None:
-        self._placeholder.empty()
+        if self._placeholder is not None:
+            self._placeholder.empty()
+
+
+def _build_variety_list_loading_signature(
+    *,
+    keyword: str,
+    prefecture: str,
+    discovery_filter: str,
+    page: int,
+    page_size: int,
+    mobile_client: bool,
+) -> tuple[object, ...]:
+    return (
+        normalize_search_text(keyword),
+        str(prefecture or "").strip(),
+        str(discovery_filter or "").strip(),
+        max(int(page), 1),
+        max(int(page_size), 1),
+        bool(mobile_client),
+    )
 
 
 def _set_variety_edit_target(target_id: object, *, switch_section: bool = True) -> None:
@@ -859,7 +883,16 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
     _ensure_variety_list_pagination_defaults()
     keyword, prefecture, discovery_filter = _render_variety_filters(mobile_client=mobile_client)
     page, page_size = render_pagination_controls("variety_list")
-    loading_status = _VarietyListLoadingStatus()
+    loading_signature = _build_variety_list_loading_signature(
+        keyword=keyword,
+        prefecture=prefecture,
+        discovery_filter=discovery_filter,
+        page=page,
+        page_size=page_size,
+        mobile_client=mobile_client,
+    )
+    show_loading_status = st.session_state.get(_VARIETY_LIST_LOADING_SIGNATURE_KEY) != loading_signature
+    loading_status = _VarietyListLoadingStatus(enabled=show_loading_status)
 
     if "variety_selected_from_list" not in st.session_state:
         st.session_state["variety_selected_from_list"] = ""
@@ -953,6 +986,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
         else {}
     )
     loading_status.clear()
+    st.session_state[_VARIETY_LIST_LOADING_SIGNATURE_KEY] = loading_signature
 
     if mobile_client:
         if mobile_panel == "detail" and selected_id:
