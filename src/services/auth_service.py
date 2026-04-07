@@ -16,12 +16,17 @@ AUTH_KEYS = ("current_user", "supabase_client_user", "is_authenticated", "access
 AUTH_COOKIE_NAME = "remember_auth_v1"
 AUTH_COOKIE_PREFIX = "strawberrylab_"
 AUTH_COOKIE_TTL_DAYS = 30
+AUTH_COOKIE_SYNC_PENDING_KEY = "_auth_cookie_sync_pending"
 AUTH_PERSISTENCE_READY = "ready"
 AUTH_PERSISTENCE_READY_EPHEMERAL_SECRET = "ready_ephemeral_secret"
 AUTH_PERSISTENCE_MISSING_SECRET = "missing_secret"
 AUTH_PERSISTENCE_MANAGER_UNAVAILABLE = "cookie_manager_unavailable"
 AUTH_PERSISTENCE_MANAGER_NOT_READY = "cookie_manager_not_ready"
 AUTH_PERSISTENCE_MANAGER_NOT_READY_EPHEMERAL_SECRET = "cookie_manager_not_ready_ephemeral_secret"
+_AUTH_PERSISTENCE_PENDING_STATUSES = {
+    AUTH_PERSISTENCE_MANAGER_NOT_READY,
+    AUTH_PERSISTENCE_MANAGER_NOT_READY_EPHEMERAL_SECRET,
+}
 
 _EPHEMERAL_COOKIE_SECRET: str | None = None
 _COOKIE_MANAGER_RUN_CACHE: dict[str, object | None] = {
@@ -39,6 +44,8 @@ def initialize_auth_state() -> None:
     for key in AUTH_KEYS:
         if key not in st.session_state:
             st.session_state[key] = None if key != "is_authenticated" else False
+    if AUTH_COOKIE_SYNC_PENDING_KEY not in st.session_state:
+        st.session_state[AUTH_COOKIE_SYNC_PENDING_KEY] = False
 
 
 def _get_script_run_cache_identity() -> tuple[str | None, object | None]:
@@ -151,6 +158,15 @@ def _get_cookie_manager():
     return cookies
 
 
+def _is_auth_persistence_pending(status: str | None) -> bool:
+    return str(status or "") in _AUTH_PERSISTENCE_PENDING_STATUSES
+
+
+def _set_auth_cookie_sync_pending(pending: bool) -> None:
+    initialize_auth_state()
+    st.session_state[AUTH_COOKIE_SYNC_PENDING_KEY] = bool(pending)
+
+
 def _clear_auth_cookie(cookies=None) -> None:
     if cookies is None:
         cookies = _get_cookie_manager()
@@ -175,22 +191,27 @@ def _save_auth_cookie(*, access_token: str, refresh_token: str) -> bool:
     return True
 
 
-def _read_auth_cookie() -> dict | None:
-    cookies = _get_cookie_manager()
+def _read_auth_cookie_with_status() -> tuple[dict | None, str]:
+    cookies, status = _get_cookie_manager_with_status()
     if cookies is None:
-        return None
+        return None, str(status or "")
     raw = cookies.get(AUTH_COOKIE_NAME)
     if not raw:
-        return None
+        return None, str(status or "")
     try:
         payload = json.loads(raw)
     except Exception:
         _clear_auth_cookie(cookies)
-        return None
+        return None, str(status or "")
     expires_at = int(payload.get("expires_at", 0))
     if not expires_at or expires_at <= int(time.time()):
         _clear_auth_cookie(cookies)
-        return None
+        return None, str(status or "")
+    return payload, str(status or "")
+
+
+def _read_auth_cookie() -> dict | None:
+    payload, _status = _read_auth_cookie_with_status()
     return payload
 
 
@@ -201,6 +222,7 @@ def _set_authenticated_state(*, client, user, access_token: str, refresh_token: 
     st.session_state["access_token"] = access_token
     st.session_state["refresh_token"] = refresh_token
     st.session_state["admin_checked_at"] = int(time.time())
+    st.session_state[AUTH_COOKIE_SYNC_PENDING_KEY] = False
 
 
 def get_auth_persistence_status() -> dict[str, str | bool]:
@@ -247,17 +269,25 @@ def ensure_auth_cookie_persistence() -> bool:
     """Retry persisting auth cookie when an authenticated session already exists."""
     initialize_auth_state()
     if not st.session_state.get("is_authenticated") or not st.session_state.get("current_user"):
+        _set_auth_cookie_sync_pending(False)
         return False
 
     access_token = st.session_state.get("access_token")
     refresh_token = st.session_state.get("refresh_token")
     if not access_token or not refresh_token:
+        _set_auth_cookie_sync_pending(False)
         return False
 
-    payload = _read_auth_cookie()
+    payload, status = _read_auth_cookie_with_status()
     if payload and payload.get("access_token") == access_token and payload.get("refresh_token") == refresh_token:
+        _set_auth_cookie_sync_pending(False)
         return True
-    return _save_auth_cookie(access_token=access_token, refresh_token=refresh_token)
+    if _is_auth_persistence_pending(status):
+        _set_auth_cookie_sync_pending(True)
+        return False
+    saved = _save_auth_cookie(access_token=access_token, refresh_token=refresh_token)
+    _set_auth_cookie_sync_pending(False)
+    return saved
 
 
 def _is_admin_user(*, client, user_id: str) -> bool:
@@ -291,20 +321,28 @@ def login_user(email: str, password: str) -> None:
     _save_auth_cookie(access_token=result.session.access_token, refresh_token=result.session.refresh_token)
 
 
-def restore_login_from_cookie() -> bool:
+def is_auth_cookie_sync_pending() -> bool:
+    initialize_auth_state()
+    return bool(st.session_state.get(AUTH_COOKIE_SYNC_PENDING_KEY))
+
+
+def restore_login_from_cookie() -> bool | None:
     """Restore login state from encrypted cookie when available."""
     initialize_auth_state()
     if st.session_state.get("is_authenticated") and st.session_state.get("current_user"):
         ensure_auth_cookie_persistence()
         return True
-    payload = _read_auth_cookie()
+    payload, status = _read_auth_cookie_with_status()
     if not payload:
-        return False
+        pending = _is_auth_persistence_pending(status)
+        _set_auth_cookie_sync_pending(pending)
+        return None if pending else False
 
     access_token = payload.get("access_token")
     refresh_token = payload.get("refresh_token")
     if not refresh_token:
         _clear_auth_cookie()
+        _set_auth_cookie_sync_pending(False)
         return False
 
     client = get_anon_supabase_client()
@@ -330,11 +368,13 @@ def restore_login_from_cookie() -> bool:
             access_token=auth_result.session.access_token,
             refresh_token=auth_result.session.refresh_token,
         )
+        _set_auth_cookie_sync_pending(False)
         return True
     except Exception:
         _clear_auth_cookie()
         for key in AUTH_KEYS:
             st.session_state[key] = None if key != "is_authenticated" else False
+        _set_auth_cookie_sync_pending(False)
         return False
 
 
@@ -346,6 +386,7 @@ def logout_user() -> None:
     _clear_auth_cookie()
     for key in AUTH_KEYS:
         st.session_state.pop(key, None)
+    st.session_state.pop(AUTH_COOKIE_SYNC_PENDING_KEY, None)
     st.switch_page("Home.py")
 
 
@@ -358,7 +399,11 @@ def require_admin_session() -> None:
     """Guard protected pages and redirect to Home.py when unauthorized."""
     initialize_auth_state()
     if not st.session_state.get("is_authenticated") or not st.session_state.get("current_user"):
-        if not restore_login_from_cookie():
+        restored = restore_login_from_cookie()
+        if restored is None:
+            st.info("ログイン状態を復元しています。数秒後に自動で続行します。")
+            st.stop()
+        if not restored:
             st.switch_page("Home.py")
             st.stop()
     if not st.session_state.get("is_authenticated") or not st.session_state.get("current_user"):

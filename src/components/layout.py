@@ -385,6 +385,31 @@ def _inject_native_shell_bootstrap() -> None:
         return root;
       }
 
+      function ensureMobileTopBarRoot() {
+        let root = doc.getElementById("sl-native-mobile-topbar");
+        if (!root) {
+          root = doc.createElement("header");
+          root.id = "sl-native-mobile-topbar";
+          root.className = "sl-native-mobile-topbar";
+          root.setAttribute("aria-label", "モバイルメニュー");
+          root.hidden = true;
+          doc.body.appendChild(root);
+        }
+        return root;
+      }
+
+      function ensureMobileDrawerRoot() {
+        let root = doc.getElementById("sl-native-mobile-drawer");
+        if (!root) {
+          root = doc.createElement("div");
+          root.id = "sl-native-mobile-drawer";
+          root.className = "sl-native-mobile-drawer";
+          root.hidden = true;
+          doc.body.appendChild(root);
+        }
+        return root;
+      }
+
       function resolveNavigationHref(pathname) {
         const normalizedPath = String(pathname || "/").trim();
         const relativePath = normalizedPath === "/" ? "" : normalizedPath.replace(/^\\/+/, "");
@@ -399,7 +424,12 @@ def _inject_native_shell_bootstrap() -> None:
 
       function renderBottomNav(config) {
         const root = ensureBottomNavRoot();
-        const items = config && Array.isArray(config.items) ? config.items : [];
+        const items =
+          config && Array.isArray(config.bottomItems)
+            ? config.bottomItems
+            : config && Array.isArray(config.items)
+              ? config.items
+              : [];
         if (!config || !config.visible || !items.length) {
           root.hidden = true;
           root.replaceChildren();
@@ -439,6 +469,155 @@ def _inject_native_shell_bootstrap() -> None:
 
         root.appendChild(list);
         doc.body.classList.add("sl-has-native-bottom-nav");
+      }
+
+      function setMobileMenuOpen(isOpen) {
+        state.mobileMenuOpen = !!isOpen;
+        if (typeof state.renderMobileShell === "function") {
+          state.renderMobileShell(state.mobileNavConfig || state.bottomNavConfig || null);
+        }
+      }
+
+      function renderMobileShell(config) {
+        const topBarRoot = ensureMobileTopBarRoot();
+        const drawerRoot = ensureMobileDrawerRoot();
+        const menuItems = config && Array.isArray(config.drawerItems) ? config.drawerItems : [];
+        const visible = !!(config && config.visible && menuItems.length);
+
+        if (!visible) {
+          state.mobileMenuOpen = false;
+          topBarRoot.hidden = true;
+          topBarRoot.replaceChildren();
+          drawerRoot.hidden = true;
+          drawerRoot.replaceChildren();
+          doc.body.classList.remove("sl-has-native-mobile-topbar");
+          doc.body.classList.remove("sl-mobile-menu-open");
+          return;
+        }
+
+        const activePageKey = String((config && config.activePageKey) || "");
+        if (state.lastMobileShellActivePageKey !== activePageKey) {
+          state.mobileMenuOpen = false;
+          state.lastMobileShellActivePageKey = activePageKey;
+        }
+
+        const activeMenuItem =
+          menuItems.find(function (item) {
+            return item && item.active;
+          }) || null;
+        const titleText =
+          (activeMenuItem && activeMenuItem.label) ||
+          String((config && config.appTitle) || "");
+
+        topBarRoot.hidden = false;
+        topBarRoot.replaceChildren();
+
+        const topBarInner = doc.createElement("div");
+        topBarInner.className = "sl-native-mobile-topbar__inner";
+
+        const menuButton = doc.createElement("button");
+        menuButton.type = "button";
+        menuButton.className = "sl-native-mobile-topbar__menu-button";
+        menuButton.textContent = "☰";
+        menuButton.setAttribute("aria-label", String((config && config.menuButtonLabel) || "メニューを開く"));
+        menuButton.setAttribute("aria-expanded", state.mobileMenuOpen ? "true" : "false");
+        menuButton.onclick = function () {
+          setMobileMenuOpen(!state.mobileMenuOpen);
+        };
+
+        const title = doc.createElement("div");
+        title.className = "sl-native-mobile-topbar__title";
+        title.textContent = titleText;
+
+        const titleSub = doc.createElement("div");
+        titleSub.className = "sl-native-mobile-topbar__subtitle";
+        titleSub.textContent = String((config && config.appTitle) || "");
+
+        const titleStack = doc.createElement("div");
+        titleStack.className = "sl-native-mobile-topbar__title-stack";
+        titleStack.appendChild(title);
+        if (titleSub.textContent && titleSub.textContent !== title.textContent) {
+          titleStack.appendChild(titleSub);
+        }
+
+        topBarInner.appendChild(menuButton);
+        topBarInner.appendChild(titleStack);
+        topBarRoot.appendChild(topBarInner);
+
+        drawerRoot.hidden = false;
+        drawerRoot.replaceChildren();
+
+        const scrim = doc.createElement("button");
+        scrim.type = "button";
+        scrim.className = "sl-native-mobile-drawer__scrim" + (state.mobileMenuOpen ? " is-open" : "");
+        scrim.setAttribute("aria-label", "メニューを閉じる");
+        scrim.hidden = !state.mobileMenuOpen;
+        scrim.onclick = function () {
+          setMobileMenuOpen(false);
+        };
+
+        const panel = doc.createElement("aside");
+        panel.className = "sl-native-mobile-drawer__panel" + (state.mobileMenuOpen ? " is-open" : "");
+        panel.setAttribute("aria-label", String((config && config.drawerLabel) || "サイトメニュー"));
+        panel.setAttribute("aria-hidden", state.mobileMenuOpen ? "false" : "true");
+
+        const panelHeader = doc.createElement("div");
+        panelHeader.className = "sl-native-mobile-drawer__header";
+
+        const panelTitle = doc.createElement("div");
+        panelTitle.className = "sl-native-mobile-drawer__title";
+        panelTitle.textContent = String((config && config.drawerLabel) || "サイトメニュー");
+
+        const panelClose = doc.createElement("button");
+        panelClose.type = "button";
+        panelClose.className = "sl-native-mobile-drawer__close";
+        panelClose.textContent = "✕";
+        panelClose.setAttribute("aria-label", "メニューを閉じる");
+        panelClose.onclick = function () {
+          setMobileMenuOpen(false);
+        };
+
+        panelHeader.appendChild(panelTitle);
+        panelHeader.appendChild(panelClose);
+
+        const panelList = doc.createElement("nav");
+        panelList.className = "sl-native-mobile-drawer__list";
+        panelList.setAttribute("aria-label", String((config && config.drawerLabel) || "サイトメニュー"));
+
+        menuItems.forEach(function (item) {
+          const isActive = !!(item && item.active);
+          const control = doc.createElement("a");
+          control.className = "sl-native-mobile-drawer__item" + (isActive ? " is-active" : "");
+          control.setAttribute("href", resolveNavigationHref(item && item.pathname));
+          control.setAttribute("aria-label", (item && item.ariaLabel) || (item && item.label) || "");
+          if (isActive) {
+            control.setAttribute("aria-current", "page");
+          }
+          control.addEventListener("click", function () {
+            state.mobileMenuOpen = false;
+          });
+
+          const icon = doc.createElement("span");
+          icon.className = "sl-native-mobile-drawer__item-icon";
+          icon.textContent = (item && item.icon) || "";
+          icon.setAttribute("aria-hidden", "true");
+
+          const label = doc.createElement("span");
+          label.className = "sl-native-mobile-drawer__item-label";
+          label.textContent = (item && item.label) || "";
+
+          control.appendChild(icon);
+          control.appendChild(label);
+          panelList.appendChild(control);
+        });
+
+        panel.appendChild(panelHeader);
+        panel.appendChild(panelList);
+        drawerRoot.appendChild(scrim);
+        drawerRoot.appendChild(panel);
+
+        doc.body.classList.add("sl-has-native-mobile-topbar");
+        doc.body.classList.toggle("sl-mobile-menu-open", !!state.mobileMenuOpen);
       }
 
       function isLocalhostHost(hostname) {
@@ -611,9 +790,24 @@ def _inject_native_shell_bootstrap() -> None:
         state.iosScrollGuardInstalled = true;
       }
 
+      function installMobileDrawerDismissHandlers() {
+        if (state.mobileDrawerDismissHandlersInstalled) {
+          return;
+        }
+        doc.addEventListener("keydown", function (event) {
+          if (event.key === "Escape" && state.mobileMenuOpen) {
+            setMobileMenuOpen(false);
+          }
+        });
+        state.mobileDrawerDismissHandlersInstalled = true;
+      }
+
       state.renderBottomNav = renderBottomNav;
+      state.renderMobileShell = renderMobileShell;
       installIOSScrollGuard();
-      renderBottomNav(state.bottomNavConfig || null);
+      installMobileDrawerDismissHandlers();
+      renderBottomNav(state.mobileNavConfig || state.bottomNavConfig || null);
+      renderMobileShell(state.mobileNavConfig || state.bottomNavConfig || null);
       chooseStaticBase(function (staticBaseUrl) {
         applyHeadEnhancements(staticBaseUrl);
         registerServiceWorker(staticBaseUrl);
@@ -681,7 +875,9 @@ def inject_app_style() -> None:
         --sl-touch-target-mobile: 48px;
         --sl-safe-top: env(safe-area-inset-top, 0px);
         --sl-safe-bottom: env(safe-area-inset-bottom, 0px);
+        --sl-mobile-topbar-height: 3.35rem;
         --sl-mobile-nav-height: 5.35rem;
+        --sl-mobile-drawer-width: min(84vw, 21rem);
         --sl-body-size: 0.95rem;
         --sl-caption-size: 0.84rem;
         --sl-mobile-gap: 0.72rem;
@@ -986,6 +1182,190 @@ def inject_app_style() -> None:
         padding: var(--sl-space-2);
         margin-top: var(--sl-space-2);
     }
+    .sl-native-mobile-topbar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 49;
+        pointer-events: none;
+    }
+    .sl-native-mobile-topbar[hidden] {
+        display: none !important;
+    }
+    .sl-native-mobile-topbar__inner {
+        display: flex;
+        align-items: center;
+        gap: 0.72rem;
+        min-height: calc(var(--sl-mobile-topbar-height) + var(--sl-safe-top));
+        padding: calc(0.28rem + var(--sl-safe-top)) 0.82rem 0.38rem;
+        background: linear-gradient(180deg, rgba(246, 248, 251, 0.96), rgba(246, 248, 251, 0.78));
+        backdrop-filter: saturate(1.8) blur(18px);
+        -webkit-backdrop-filter: saturate(1.8) blur(18px);
+        border-bottom: 1px solid rgba(188, 198, 214, 0.55);
+        pointer-events: auto;
+    }
+    .sl-native-mobile-topbar__menu-button {
+        appearance: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2.7rem;
+        min-width: 2.7rem;
+        height: 2.7rem;
+        border: 1px solid rgba(188, 198, 214, 0.78);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.9);
+        color: var(--sl-heading);
+        font: inherit;
+        font-size: 1.15rem;
+        font-weight: 700;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.1);
+        cursor: pointer;
+        transition: transform 0.08s ease-out, background-color 0.2s ease, border-color 0.2s ease;
+    }
+    .sl-native-mobile-topbar__menu-button:active {
+        transform: scale(0.96);
+        background: rgba(253, 242, 244, 0.96);
+        border-color: rgba(232, 51, 74, 0.22);
+    }
+    .sl-native-mobile-topbar__menu-button:focus-visible {
+        outline: 3px solid rgba(232, 51, 74, 0.24);
+        outline-offset: 2px;
+    }
+    .sl-native-mobile-topbar__title-stack {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+    }
+    .sl-native-mobile-topbar__title {
+        color: var(--sl-heading);
+        font-size: 0.98rem;
+        font-weight: 700;
+        line-height: 1.2;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .sl-native-mobile-topbar__subtitle {
+        color: var(--sl-muted);
+        font-size: 0.76rem;
+        line-height: 1.2;
+    }
+    .sl-native-mobile-drawer {
+        position: fixed;
+        inset: 0;
+        z-index: 52;
+        pointer-events: none;
+    }
+    .sl-native-mobile-drawer[hidden] {
+        display: none !important;
+    }
+    .sl-native-mobile-drawer__scrim {
+        appearance: none;
+        position: absolute;
+        inset: 0;
+        border: 0;
+        background: rgba(15, 23, 42, 0.38);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.22s ease;
+    }
+    .sl-native-mobile-drawer__scrim[hidden] {
+        display: none !important;
+    }
+    .sl-native-mobile-drawer__scrim.is-open {
+        opacity: 1;
+        pointer-events: auto;
+    }
+    .sl-native-mobile-drawer__panel {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: var(--sl-mobile-drawer-width);
+        max-width: 100%;
+        padding: calc(0.8rem + var(--sl-safe-top)) 0.9rem calc(1rem + var(--sl-safe-bottom));
+        background: rgba(248, 250, 252, 0.95);
+        border-right: 1px solid rgba(188, 198, 214, 0.7);
+        box-shadow: 20px 0 42px rgba(15, 23, 42, 0.18);
+        backdrop-filter: saturate(1.8) blur(18px);
+        -webkit-backdrop-filter: saturate(1.8) blur(18px);
+        transform: translateX(calc(-100% - 1rem));
+        transition: transform 0.22s ease;
+        pointer-events: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 0.9rem;
+    }
+    .sl-native-mobile-drawer__panel.is-open {
+        transform: translateX(0);
+    }
+    .sl-native-mobile-drawer__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+    }
+    .sl-native-mobile-drawer__title {
+        color: var(--sl-heading);
+        font-size: 1rem;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .sl-native-mobile-drawer__close {
+        appearance: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2.5rem;
+        min-width: 2.5rem;
+        height: 2.5rem;
+        border: 1px solid rgba(188, 198, 214, 0.78);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.88);
+        color: var(--sl-heading);
+        font: inherit;
+        font-size: 1rem;
+        font-weight: 700;
+        cursor: pointer;
+    }
+    .sl-native-mobile-drawer__close:focus-visible {
+        outline: 3px solid rgba(232, 51, 74, 0.24);
+        outline-offset: 2px;
+    }
+    .sl-native-mobile-drawer__list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.52rem;
+    }
+    .sl-native-mobile-drawer__item {
+        display: flex;
+        align-items: center;
+        gap: 0.72rem;
+        min-height: var(--sl-touch-target-mobile);
+        border: 1px solid rgba(188, 198, 214, 0.78);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.88);
+        color: var(--sl-text);
+        text-decoration: none;
+        font-weight: 650;
+        padding: 0 0.92rem;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    }
+    .sl-native-mobile-drawer__item.is-active {
+        border-color: rgba(232, 51, 74, 0.28);
+        background: rgba(255, 245, 247, 0.96);
+        color: var(--sl-heading);
+    }
+    .sl-native-mobile-drawer__item-icon {
+        font-size: 1rem;
+        line-height: 1;
+        flex-shrink: 0;
+    }
+    .sl-native-mobile-drawer__item-label {
+        min-width: 0;
+    }
     .sl-native-bottom-nav {
         position: fixed;
         left: 0.72rem;
@@ -1152,6 +1532,12 @@ def inject_app_style() -> None:
             padding-top: calc(0.35rem + var(--sl-safe-top));
             padding-right: 0.82rem;
             padding-left: 0.82rem;
+            padding-bottom: calc(1.35rem + var(--sl-safe-bottom));
+        }
+        body.sl-has-native-mobile-topbar .block-container {
+            padding-top: calc(var(--sl-mobile-topbar-height) + var(--sl-safe-top) + 0.75rem);
+        }
+        body.sl-has-native-bottom-nav .block-container {
             padding-bottom: calc(var(--sl-mobile-nav-height) + 1.35rem + var(--sl-safe-bottom));
         }
         [data-testid="stMain"],
@@ -1224,7 +1610,10 @@ def inject_app_style() -> None:
         [data-testid="stButton"] > button,
         [data-testid="stDownloadButton"] > button,
         [data-testid="stFormSubmitButton"] > button,
-        .sl-native-bottom-nav__item {
+        .sl-native-bottom-nav__item,
+        .sl-native-mobile-topbar__menu-button,
+        .sl-native-mobile-drawer__scrim,
+        .sl-native-mobile-drawer__panel {
             transition: none !important;
         }
     }

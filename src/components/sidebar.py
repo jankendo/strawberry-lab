@@ -9,7 +9,7 @@ import streamlit.components.v1 as components
 
 from src.components.tables import is_mobile_client
 from src.constants.ui import APP_NAME
-from src.services.auth_service import logout_user
+from src.services.auth_service import is_auth_cookie_sync_pending, logout_user
 
 _DESKTOP_NAV_COLLAPSED_KEY = "_desktop_nav_collapsed"
 _DESKTOP_NAV_COLLAPSED_PAGE_KEY = "_desktop_nav_collapsed_page"
@@ -30,6 +30,14 @@ _MOBILE_TAB_ITEMS: list[tuple[str, str, str, str, str]] = [
 ]
 _CORE_TAB_KEYS = {tab_key for tab_key, _, _, _, _ in _MOBILE_TAB_ITEMS if tab_key != "settings"}
 _SETTINGS_GROUP_PAGE_KEYS = {"pedigree", "settings"}
+_PAGE_PATHNAME_BY_FILE = {
+    "Home.py": "/",
+    "pages/01_varieties.py": "/varieties",
+    "pages/02_reviews.py": "/reviews",
+    "pages/03_analytics.py": "/analytics",
+    "pages/04_pedigree.py": "/pedigree",
+    "pages/07_settings.py": "/settings",
+}
 
 
 def _resolve_mobile_active_tab(active_page: str) -> str:
@@ -62,11 +70,15 @@ def _render_desktop_nav_reopen_button(*, active_page: str) -> None:
         st.rerun()
 
 
-def _render_native_mobile_nav(*, active_tab: str, visible: bool) -> None:
+def _render_native_mobile_nav(*, active_page: str, active_tab: str, visible: bool) -> None:
     nav_config = {
         "visible": visible,
         "activeKey": active_tab,
-        "items": [
+        "activePageKey": active_page,
+        "appTitle": APP_NAME,
+        "menuButtonLabel": "メニューを開く",
+        "drawerLabel": "サイトメニュー",
+        "bottomItems": [
             {
                 "key": tab_key,
                 "pathname": tab_pathname,
@@ -76,6 +88,20 @@ def _render_native_mobile_nav(*, active_tab: str, visible: bool) -> None:
             }
             for tab_key, _tab_path, tab_pathname, tab_label, tab_icon in _MOBILE_TAB_ITEMS
         ],
+        "drawerItems": [
+            {
+                "key": page_key,
+                "pathname": _PAGE_PATHNAME_BY_FILE.get(page_path, "/"),
+                "label": page_label,
+                "icon": page_icon,
+                "active": page_key == active_page,
+                "ariaLabel": f"{page_label}に移動",
+            }
+            for page_key, page_path, page_label, page_icon in _SIDEBAR_NAV_ITEMS
+            if page_path in _PAGE_PATHNAME_BY_FILE
+        ]
+        if visible
+        else [],
     }
     config_json = json.dumps(nav_config, ensure_ascii=False)
     components.html(
@@ -96,8 +122,12 @@ def _render_native_mobile_nav(*, active_tab: str, visible: bool) -> None:
           const state = parentWindow[stateKey] || {};
           parentWindow[stateKey] = state;
           state.bottomNavConfig = __NAV_CONFIG__;
+          state.mobileNavConfig = __NAV_CONFIG__;
           if (typeof state.renderBottomNav === "function") {
-            state.renderBottomNav(state.bottomNavConfig);
+            state.renderBottomNav(state.mobileNavConfig);
+          }
+          if (typeof state.renderMobileShell === "function") {
+            state.renderMobileShell(state.mobileNavConfig);
           }
         })();
         </script>
@@ -108,9 +138,13 @@ def _render_native_mobile_nav(*, active_tab: str, visible: bool) -> None:
 
 def render_primary_nav(*, active_page: str) -> None:
     """Render mobile navigation using a native-shell bottom bar."""
-    visible = bool(st.session_state.get("is_authenticated") and is_mobile_client())
+    visible = bool(
+        st.session_state.get("is_authenticated")
+        and is_mobile_client()
+        and not is_auth_cookie_sync_pending()
+    )
     active_tab = _resolve_mobile_active_tab(active_page) if visible else ""
-    _render_native_mobile_nav(active_tab=active_tab, visible=visible)
+    _render_native_mobile_nav(active_page=active_page if visible else "", active_tab=active_tab, visible=visible)
 
 
 def render_sidebar(*, active_page: str) -> None:

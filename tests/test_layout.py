@@ -53,6 +53,9 @@ def test_inject_app_style_hides_sidebar_only_for_mobile(monkeypatch) -> None:
         re.S,
     )
     assert 'body.sl-has-native-bottom-nav button[kind="headerNoPadding"]' in captured["html"]
+    assert '.sl-native-mobile-topbar' in captured["html"]
+    assert '.sl-native-mobile-drawer__panel' in captured["html"]
+    assert 'body.sl-has-native-mobile-topbar .block-container' in captured["html"]
 
 
 def test_native_shell_bootstrap_registers_service_worker_with_static_scope_only(monkeypatch) -> None:
@@ -86,9 +89,31 @@ def test_native_shell_bootstrap_caches_static_base_and_uses_direct_nav_links(mon
     assert "sessionStorage" in captured["html"]
     assert "__slNativeShellStaticBase" in captured["html"]
     assert "resolveNavigationHref" in captured["html"]
-    assert "renderBottomNav(state.bottomNavConfig || null);" in captured["html"]
+    assert "renderBottomNav(state.mobileNavConfig || state.bottomNavConfig || null);" in captured["html"]
     assert 'control.setAttribute("href", resolveNavigationHref(item && item.pathname));' in captured["html"]
     assert 'a[data-testid="stPageLink-NavLink"]' not in captured["html"]
+
+
+def test_native_shell_bootstrap_includes_mobile_drawer_renderer(monkeypatch) -> None:
+    captured: dict[str, str | None] = {"html": None}
+
+    monkeypatch.setattr(
+        layout.components,
+        "html",
+        lambda html, **_kwargs: captured.__setitem__("html", html),
+    )
+
+    layout._inject_native_shell_bootstrap()
+
+    assert captured["html"] is not None
+    assert "ensureMobileTopBarRoot" in captured["html"]
+    assert "ensureMobileDrawerRoot" in captured["html"]
+    assert "setMobileMenuOpen" in captured["html"]
+    assert "renderMobileShell" in captured["html"]
+    assert 'doc.body.classList.add("sl-has-native-mobile-topbar");' in captured["html"]
+    assert 'doc.body.classList.toggle("sl-mobile-menu-open", !!state.mobileMenuOpen);' in captured["html"]
+    assert 'scrim.onclick = function () {' in captured["html"]
+    assert 'panelClose.onclick = function () {' in captured["html"]
 
 
 def test_render_surface_does_not_mark_accent_tone_as_important(monkeypatch) -> None:

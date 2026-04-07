@@ -137,8 +137,9 @@ except ImportError:
 
 st.set_page_config(page_title="StrawberryLab", layout="wide")
 initialize_auth_state()
-restore_login_from_cookie()
-ensure_auth_cookie_persistence()
+_AUTH_RESTORE_RESULT = restore_login_from_cookie()
+if _AUTH_RESTORE_RESULT is not None or st.session_state.get("is_authenticated"):
+    ensure_auth_cookie_persistence()
 inject_app_style()
 render_primary_nav(active_page="dashboard")
 
@@ -367,6 +368,22 @@ def _render_login() -> None:
                 st.error("ログインに失敗しました。")
 
 
+def _render_auth_restore_pending() -> None:
+    mobile_client = is_mobile_client()
+    render_hero_banner(
+        "StrawberryLab",
+        "ログイン状態を復元しています。"
+        if mobile_client
+        else "保存済みのログイン情報を確認しています。少しお待ちください。",
+    )
+    render_surface(
+        "iPhone を含む一部ブラウザでは、ログイン保持クッキーの初期化に数秒かかることがあります。"
+        " 準備ができ次第、自動でワークスペースへ戻ります。",
+        title="ログイン状態を確認中",
+        tone="info",
+    )
+
+
 def _render_dashboard() -> None:
     render_sidebar(active_page="dashboard")
     mobile_client = is_mobile_client()
@@ -493,5 +510,7 @@ def _render_dashboard() -> None:
 
 if st.session_state.get("is_authenticated"):
     _render_dashboard()
+elif _AUTH_RESTORE_RESULT is None:
+    _render_auth_restore_pending()
 else:
     _render_login()
