@@ -88,6 +88,23 @@ python -m scraper.main
 - MAFF詳細画像は `variety-images` バケットへ同期され、`variety_images` テーブルへメタデータ保存されます。
 - If schema-related errors occur, re-apply `database/supabase_all_in_one.sql`.
 
+## Sync pedigree research CSV
+PowerShell:
+
+```powershell
+$env:SUPABASE_URL = "https://YOUR_PROJECT.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY = "YOUR_SERVICE_ROLE_KEY"
+$env:PEDIGREE_SOURCE_CSV_PATH = "strawberry_full_pedigree.csv"
+$env:PEDIGREE_IMPORT_CSV_PATH = "database/imports/variety_parent_links.csv"
+python -m scraper.create_placeholder_varieties_for_pedigree
+python -m scraper.build_pedigree_links_from_name_csv
+python -m scraper.import_pedigree_links
+```
+
+- `strawberry_full_pedigree.csv` を source of truth とし、既存品種で解決できない child / parent 名は `pedigree_placeholder` の仮登録品種として先に追加します。
+- オフラインで import artifact だけ再生成したい場合は `PEDIGREE_VARIETIES_CSV_PATH=varieties_rows.csv` を設定して `python -m scraper.build_pedigree_links_from_name_csv` を実行してください。
+- GitHub Actions の `import-pedigree-links` workflow も同じ順序で placeholder 作成 → UUID CSV 生成 → `variety_parent_links` import を行います。
+
 ## Pedigree configuration guide
 1. Open **品種管理** → **作成・編集** and set one or more **親品種** for each child variety.
 2. Save, then open **交配図**.

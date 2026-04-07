@@ -21,6 +21,12 @@ _REQUIRED_COLUMNS = (
 _DEFAULT_CSV_PATH = "database/imports/variety_parent_links.csv"
 _BATCH_SIZE = max(1, int(os.getenv("SUPABASE_UPSERT_BATCH_SIZE", "200")))
 _VALIDATE_ONLY = os.getenv("PEDIGREE_VALIDATE_ONLY", "0").strip().lower() in {"1", "true", "yes", "on"}
+_FAIL_ON_MISSING_IDS = os.getenv("PEDIGREE_FAIL_ON_MISSING_IDS", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
 
 
 def _chunked(items: list[str], size: int) -> Iterable[list[str]]:
@@ -163,6 +169,27 @@ def _fetch_existing_links_by_key(client, child_variety_ids: list[str]) -> dict[t
     return existing
 
 
+def _filter_valid_rows(
+    rows: list[dict],
+    existing_variety_ids: set[str],
+) -> tuple[list[dict], list[str]]:
+    valid_rows: list[dict] = []
+    missing_ids: set[str] = set()
+    for row in rows:
+        child_id = str(row["child_variety_id"])
+        parent_id = str(row["parent_variety_id"])
+        child_exists = child_id in existing_variety_ids
+        parent_exists = parent_id in existing_variety_ids
+        if child_exists and parent_exists:
+            valid_rows.append(row)
+            continue
+        if not child_exists:
+            missing_ids.add(child_id)
+        if not parent_exists:
+            missing_ids.add(parent_id)
+    return valid_rows, sorted(missing_ids)
+
+
 def _prepare_upsert_rows(rows: list[dict], existing_by_key: dict[tuple[str, str, int], str]) -> tuple[list[dict], int, int]:
     upsert_rows: list[dict] = []
     inserted = 0
@@ -203,14 +230,18 @@ def main() -> None:
         suffix = " ..." if len(missing_variety_ids) > 10 else ""
         print(f"[WARN] Missing variety IDs detected ({len(missing_variety_ids)}件): {preview}{suffix}")
 
-    valid_rows = [
-        row
-        for row in rows
-        if str(row["child_variety_id"]) in existing_variety_ids and str(row["parent_variety_id"]) in existing_variety_ids
-    ]
+    valid_rows, missing_ids = _filter_valid_rows(rows, existing_variety_ids)
     skipped_rows = len(rows) - len(valid_rows)
     if skipped_rows:
-        print(f"[WARN] Skipped {skipped_rows} rows because child/parent variety IDs do not exist.")
+        preview = ", ".join(missing_ids[:10])
+        suffix = " ..." if len(missing_ids) > 10 else ""
+        message = (
+            f"Skipped {skipped_rows} rows because child/parent variety IDs do not exist. "
+            f"missing_ids={preview}{suffix}"
+        )
+        if _FAIL_ON_MISSING_IDS:
+            raise RuntimeError(message)
+        print(f"[WARN] {message}")
     if not valid_rows:
         raise RuntimeError("インポート可能な行がありません。CSVの品種IDを確認してください。")
 

@@ -6,7 +6,11 @@ on:
     branches:
       - main
     paths:
+      - strawberry_full_pedigree.csv
       - database/imports/variety_parent_links.csv
+      - scraper/pedigree_sync.py
+      - scraper/build_pedigree_links_from_name_csv.py
+      - scraper/create_placeholder_varieties_for_pedigree.py
       - scraper/import_pedigree_links.py
       - .github/workflows/import-pedigree-links.yml
 
@@ -20,10 +24,25 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -r requirements-scraper.txt
+      - name: Create pedigree placeholder varieties
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_UPSERT_BATCH_SIZE: "200"
+          PEDIGREE_SOURCE_CSV_PATH: strawberry_full_pedigree.csv
+        run: python -m scraper.create_placeholder_varieties_for_pedigree
+      - name: Generate pedigree import CSV
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PEDIGREE_SOURCE_CSV_PATH: strawberry_full_pedigree.csv
+          PEDIGREE_IMPORT_CSV_PATH: database/imports/variety_parent_links.csv
+        run: python -m scraper.build_pedigree_links_from_name_csv
       - name: Import pedigree links
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_UPSERT_BATCH_SIZE: "200"
           PEDIGREE_CSV_PATH: database/imports/variety_parent_links.csv
+          PEDIGREE_FAIL_ON_MISSING_IDS: "1"
         run: python -m scraper.import_pedigree_links
