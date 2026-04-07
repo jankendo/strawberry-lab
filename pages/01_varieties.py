@@ -1152,11 +1152,15 @@ def _render_variety_edit_section() -> None:
         )
         images = list_images_with_signed_urls("variety_images", "variety_id", edit_id)
         render_image_gallery(images, "variety_edit")
+        primary_image_options = [""] + [img["id"] for img in images]
+        current_primary_image_id = next((str(img["id"]) for img in images if img.get("is_primary")), "")
+        primary_image_default = current_primary_image_id or (str(images[0]["id"]) if images else "")
         primary_image_id = st.selectbox(
             "メイン画像",
-            [""] + [img["id"] for img in images],
+            primary_image_options,
             format_func=lambda x: next((img["file_name"] for img in images if img["id"] == x), "未設定"),
-            key="primary_image_select",
+            index=primary_image_options.index(primary_image_default) if primary_image_default in primary_image_options else 0,
+            key=f"primary_image_select_{edit_id}",
         )
         if primary_image_id and st.button("メイン画像を設定", use_container_width=True, type="secondary"):
             set_primary_variety_image(edit_id, primary_image_id)

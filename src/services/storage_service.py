@@ -7,6 +7,8 @@ import mimetypes
 from pathlib import Path
 from uuid import uuid4
 
+from storage3.types import CreateSignedUploadUrlOptions
+
 from src.services.auth_service import get_user_client
 from src.services.cache_service import bump_cache_scopes, scoped_cache_data
 from src.utils.image_utils import ALLOWED_MIME_TYPES, MAX_LONG_EDGE, MAX_UPLOAD_BYTES, process_image, validate_image_file
@@ -170,7 +172,10 @@ def _prepare_direct_upload_targets(
             f"{base_path}/{safe_relation_id}/"
             f"{uuid4()}_{_safe_file_stem(file_name)}{file_entry['extension']}"
         )
-        signed = storage_api.create_signed_upload_url(storage_path, {"upsert": "false"})
+        signed = storage_api.create_signed_upload_url(
+            storage_path,
+            CreateSignedUploadUrlOptions(upsert="false"),
+        )
         signed_upload_url = _extract_signed_url(signed)
         if not signed_upload_url:
             client_file_id = str(file_entry.get("client_file_id") or "")
@@ -442,7 +447,10 @@ def _clear_image_cache() -> None:
 def list_images_with_signed_urls(table_name: str, relation_column: str, relation_id: str) -> list[dict]:
     """List image rows with signed URLs."""
     client = get_user_client()
-    rows = client.table(table_name).select("*").eq(relation_column, relation_id).order("created_at").execute().data or []
+    query = client.table(table_name).select("*").eq(relation_column, relation_id)
+    if table_name == "variety_images":
+        query = query.order("is_primary", desc=True)
+    rows = query.order("created_at").execute().data or []
     bucket = "variety-images" if table_name == "variety_images" else "review-images"
     enriched: list[dict] = []
     for row in rows:
@@ -482,6 +490,19 @@ def list_primary_variety_images_with_signed_urls(variety_ids: Sequence[str]) -> 
 def set_primary_variety_image(variety_id: str, image_id: str) -> None:
     """Set one primary variety image."""
     client = get_user_client()
+    image_row = (
+        client.table("variety_images")
+        .select("id,variety_id,is_primary")
+        .eq("id", image_id)
+        .eq("variety_id", variety_id)
+        .maybe_single()
+        .execute()
+        .data
+    )
+    if not image_row:
+        raise ValueError("指定した画像が見つかりません。")
+    if bool(image_row.get("is_primary")):
+        return
     client.table("variety_images").update({"is_primary": False}).eq("variety_id", variety_id).execute()
     client.table("variety_images").update({"is_primary": True}).eq("id", image_id).eq("variety_id", variety_id).execute()
     _clear_image_cache()

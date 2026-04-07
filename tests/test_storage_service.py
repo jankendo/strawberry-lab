@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from storage3.types import CreateSignedUploadUrlOptions
 
 from src.services import storage_service
 
@@ -8,12 +9,15 @@ from src.services import storage_service
 class _FakeStorageBucket:
     def __init__(self, bucket: str, *, missing_paths: set[str] | None = None) -> None:
         self.bucket = bucket
-        self.created: list[tuple[str, dict | None]] = []
+        self.created: list[tuple[str, object | None]] = []
         self.missing_paths = set(missing_paths or [])
 
-    def create_signed_upload_url(self, path: str, options: dict | None = None) -> dict:
+    def create_signed_upload_url(self, path: str, options: object | None = None) -> dict:
         self.created.append((path, options))
         return {"signed_url": f"https://example.supabase.co/storage/v1/{self.bucket}/{path}?token=abc"}
+
+    def create_signed_url(self, path: str, _expires_in: int) -> dict:
+        return {"signed_url": f"https://example.supabase.co/storage/v1/{self.bucket}/{path}?token=read"}
 
     def exists(self, path: str) -> bool:
         return path not in self.missing_paths
@@ -36,14 +40,23 @@ class _FakeTable:
         self.client = client
         self._mode = "count"
         self._insert_rows = None
+        self._update_payload = None
         self._head = False
+        self._filters: list[tuple[str, object]] = []
+        self._orders: list[tuple[str, bool]] = []
+        self._maybe_single = False
 
     def select(self, *_args, **_kwargs):
-        self._mode = "count"
+        self._mode = "count" if _kwargs.get("head") else "select"
         self._head = bool(_kwargs.get("head"))
         return self
 
-    def eq(self, *_args, **_kwargs):
+    def eq(self, column, value):
+        self._filters.append((str(column), value))
+        return self
+
+    def order(self, column, *, desc: bool = False):
+        self._orders.append((str(column), bool(desc)))
         return self
 
     def insert(self, rows):
@@ -51,16 +64,44 @@ class _FakeTable:
         self._insert_rows = rows
         return self
 
+    def update(self, payload):
+        self._mode = "update"
+        self._update_payload = dict(payload)
+        return self
+
+    def maybe_single(self):
+        self._maybe_single = True
+        return self
+
+    def _filtered_rows(self) -> list[dict]:
+        rows = [dict(row) for row in self.client.rows.get(self.name, [])]
+        for column, expected in self._filters:
+            rows = [row for row in rows if row.get(column) == expected]
+        for column, desc in reversed(self._orders):
+            rows.sort(key=lambda row: row.get(column), reverse=desc)
+        return rows
+
     def execute(self):
         if self._mode == "insert":
             payload = self._insert_rows or []
             self.client.inserted[self.name] = payload
             self.client.rows.setdefault(self.name, []).extend(payload)
             return SimpleNamespace(data=payload, count=None)
+        if self._mode == "update":
+            updated_rows: list[dict] = []
+            table_rows = self.client.rows.get(self.name, [])
+            for row in table_rows:
+                if all(row.get(column) == expected for column, expected in self._filters):
+                    row.update(self._update_payload or {})
+                    updated_rows.append(dict(row))
+            self.client.updated.setdefault(self.name, []).append(dict(self._update_payload or {}))
+            return SimpleNamespace(data=updated_rows, count=len(updated_rows))
         if not self._head:
-            payload = self.client.rows.get(self.name, [])
+            payload = self._filtered_rows()
+            if self._maybe_single:
+                return SimpleNamespace(data=(payload[0] if payload else None), count=(1 if payload else 0))
             return SimpleNamespace(data=payload, count=len(payload))
-        count = self.client.counts.get(self.name, 0)
+        count = len(self._filtered_rows()) if self.name in self.client.rows else self.client.counts.get(self.name, 0)
         return SimpleNamespace(data=[], count=count)
 
 
@@ -75,6 +116,7 @@ class _FakeClient:
         self.counts = dict(counts or {})
         self.rows = {name: [dict(row) for row in table_rows] for name, table_rows in (rows or {}).items()}
         self.inserted: dict[str, list[dict]] = {}
+        self.updated: dict[str, list[dict]] = {}
         self.storage = _FakeStorage(missing_paths=missing_paths)
 
     def table(self, name: str) -> _FakeTable:
@@ -109,6 +151,8 @@ def test_prepare_variety_image_direct_upload_targets_returns_signed_targets(monk
     assert targets[0]["storage_path"].startswith("varieties/variety-1/")
     assert "signed_upload_url" in targets[0]
     assert targets[0]["mime_type"] == "image/webp"
+    assert isinstance(client.storage.from_("variety-images").created[0][1], CreateSignedUploadUrlOptions)
+    assert client.storage.from_("variety-images").created[0][1].upsert == "false"
 
 
 def test_prepare_variety_image_direct_upload_targets_rejects_limit_overflow(monkeypatch) -> None:
@@ -271,7 +315,11 @@ def test_finalize_variety_image_direct_uploads_rejects_limit_overflow(monkeypatc
         counts={"variety_images": 5},
         rows={
             "variety_images": [
-                {"id": f"existing-{index}", "storage_path": f"varieties/variety-1/existing-{index}.webp"}
+                {
+                    "id": f"existing-{index}",
+                    "variety_id": "variety-1",
+                    "storage_path": f"varieties/variety-1/existing-{index}.webp",
+                }
                 for index in range(5)
             ]
         },
@@ -323,6 +371,7 @@ def test_finalize_variety_image_direct_uploads_skips_already_persisted_storage_p
             "variety_images": [
                 {
                     "id": "existing-row",
+                    "variety_id": "variety-1",
                     "storage_path": "varieties/variety-1/path/sample.webp",
                 }
             ]
@@ -346,3 +395,32 @@ def test_finalize_variety_image_direct_uploads_skips_already_persisted_storage_p
 
     assert inserted == []
     assert "variety_images" not in client.inserted
+
+
+def test_set_primary_variety_image_marks_selected_image(monkeypatch) -> None:
+    client = _FakeClient(
+        rows={
+            "variety_images": [
+                {"id": "image-1", "variety_id": "variety-1", "is_primary": True},
+                {"id": "image-2", "variety_id": "variety-1", "is_primary": False},
+            ]
+        }
+    )
+    cache_cleared = {"called": False}
+    monkeypatch.setattr(storage_service, "get_user_client", lambda: client)
+    monkeypatch.setattr(storage_service, "_clear_image_cache", lambda: cache_cleared.__setitem__("called", True))
+
+    storage_service.set_primary_variety_image("variety-1", "image-2")
+
+    rows = client.rows["variety_images"]
+    assert next(row for row in rows if row["id"] == "image-1")["is_primary"] is False
+    assert next(row for row in rows if row["id"] == "image-2")["is_primary"] is True
+    assert cache_cleared["called"] is True
+
+
+def test_set_primary_variety_image_rejects_unknown_image(monkeypatch) -> None:
+    client = _FakeClient(rows={"variety_images": [{"id": "image-1", "variety_id": "variety-1", "is_primary": False}]})
+    monkeypatch.setattr(storage_service, "get_user_client", lambda: client)
+
+    with pytest.raises(ValueError, match="指定した画像が見つかりません"):
+        storage_service.set_primary_variety_image("variety-1", "image-2")
