@@ -8,6 +8,8 @@ import mimetypes
 from pathlib import Path
 from uuid import uuid4
 
+from pydantic import ValidationError
+from storage3.exceptions import StorageException
 from storage3.types import CreateSignedUploadUrlOptions
 
 from src.services.auth_service import get_user_client
@@ -18,6 +20,7 @@ from src.utils.image_utils import ALLOWED_MIME_TYPES, MAX_LONG_EDGE, MAX_UPLOAD_
 _VARIETY_IMAGE_LIMIT = 5
 _REVIEW_IMAGE_LIMIT = 3
 _POSTGREST_IN_CHUNK_SIZE = 200
+_SIGNED_URL_BATCH_FALLBACK_EXCEPTIONS = (TypeError, ValidationError, StorageException)
 _MIME_EXTENSION_MAP = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -480,7 +483,7 @@ def _create_signed_urls(bucket_api, storage_paths: Sequence[str], expires_in: in
     if callable(batch_method):
         try:
             batch_payload = batch_method(normalized_paths, expires_in)
-        except TypeError:
+        except _SIGNED_URL_BATCH_FALLBACK_EXCEPTIONS:
             batch_payload = None
         else:
             signed_urls = _extract_signed_urls(batch_payload, expected_count=len(normalized_paths))

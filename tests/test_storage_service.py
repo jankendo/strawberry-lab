@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
-from storage3.types import CreateSignedUploadUrlOptions
+from storage3.types import CreateSignedUploadUrlOptions, SignedUrlsJsonResponse
 
 from src.services import storage_service
 
@@ -593,6 +593,61 @@ def test_create_signed_urls_falls_back_to_single_url_generation(monkeypatch) -> 
     images = storage_service.list_primary_variety_images_with_signed_urls(["variety-1", "variety-2"])
 
     assert bucket.batch_signed == []
+    assert bucket.signed == [
+        "varieties/variety-1/fallback-1.webp",
+        "varieties/variety-2/fallback-2.webp",
+    ]
+    assert images["variety-1"]["signed_url"].endswith("?token=read")
+    assert images["variety-2"]["signed_url"].endswith("?token=read")
+
+
+def test_create_signed_urls_falls_back_to_single_url_generation_on_validation_error(monkeypatch) -> None:
+    client = _FakeClient(
+        rows={
+            "variety_images": [
+                {
+                    "id": "image-1",
+                    "variety_id": "variety-1",
+                    "storage_path": "varieties/variety-1/fallback-1.webp",
+                    "file_name": "fallback-1.webp",
+                    "mime_type": "image/webp",
+                    "width": 1200,
+                    "height": 800,
+                    "is_primary": True,
+                    "created_at": "2026-04-07T00:00:00+00",
+                },
+                {
+                    "id": "image-2",
+                    "variety_id": "variety-2",
+                    "storage_path": "varieties/variety-2/fallback-2.webp",
+                    "file_name": "fallback-2.webp",
+                    "mime_type": "image/webp",
+                    "width": 1200,
+                    "height": 800,
+                    "is_primary": True,
+                    "created_at": "2026-04-07T00:01:00+00",
+                },
+            ]
+        }
+    )
+    bucket = client.storage.from_("variety-images")
+    attempted_batches: list[list[str]] = []
+
+    def _invalid_batch(paths: list[str], _expires_in: int) -> list[dict]:
+        attempted_batches.append(list(paths))
+        SignedUrlsJsonResponse.validate_json(b'{"error":"unsupported"}')
+        return []
+
+    monkeypatch.setattr(storage_service, "get_user_client", lambda: client)
+    monkeypatch.setattr(bucket, "create_signed_urls", _invalid_batch)
+    storage_service.list_primary_variety_images_with_signed_urls.clear()
+
+    images = storage_service.list_primary_variety_images_with_signed_urls(["variety-1", "variety-2"])
+
+    assert attempted_batches == [[
+        "varieties/variety-1/fallback-1.webp",
+        "varieties/variety-2/fallback-2.webp",
+    ]]
     assert bucket.signed == [
         "varieties/variety-1/fallback-1.webp",
         "varieties/variety-2/fallback-2.webp",
