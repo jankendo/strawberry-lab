@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from src.components.auth_cookie_bridge import render_auth_cookie_bridge_if_needed
 from src.components.layout import inject_app_style, render_page_header, render_section_title
 from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.skeletons import render_card_skeleton, render_table_skeleton
@@ -365,6 +366,10 @@ def _render_login() -> None:
         if submitted:
             try:
                 login_user(email, password)
+                if is_auth_cookie_sync_pending():
+                    st.success("ログインしました。ブラウザへログイン状態を保存しています。")
+                    render_auth_cookie_bridge_if_needed()
+                    st.stop()
                 st.success("ログインしました。")
                 st.rerun()
             except PermissionError as exc:
