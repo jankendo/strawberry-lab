@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Mapping, Sequence
 import mimetypes
 from pathlib import Path
@@ -453,6 +454,43 @@ def _extract_signed_url(payload: dict | None) -> str | None:
     return payload.get("signedURL") or payload.get("signedUrl") or payload.get("signed_url")
 
 
+def _extract_signed_urls(payload: object, *, expected_count: int) -> list[str | None] | None:
+    entries: list[object] | None = None
+    if isinstance(payload, list):
+        entries = payload
+    elif isinstance(payload, Mapping):
+        for key in ("data", "signedURLs", "signedUrls", "signed_urls"):
+            candidate = payload.get(key)
+            if isinstance(candidate, list):
+                entries = candidate
+                break
+    if entries is None or len(entries) != expected_count:
+        return None
+    normalized: list[str | None] = []
+    for entry in entries:
+        normalized.append(_extract_signed_url(dict(entry) if isinstance(entry, Mapping) else None))
+    return normalized
+
+
+def _create_signed_urls(bucket_api, storage_paths: Sequence[str], expires_in: int) -> list[str | None]:
+    normalized_paths = [str(path) for path in storage_paths if str(path).strip()]
+    if not normalized_paths:
+        return []
+    batch_method = getattr(bucket_api, "create_signed_urls", None)
+    if callable(batch_method):
+        try:
+            batch_payload = batch_method(normalized_paths, expires_in)
+        except TypeError:
+            batch_payload = None
+        else:
+            signed_urls = _extract_signed_urls(batch_payload, expected_count=len(normalized_paths))
+            if signed_urls is not None:
+                return signed_urls
+    max_workers = min(4, len(normalized_paths))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        return list(executor.map(lambda path: _extract_signed_url(bucket_api.create_signed_url(path, expires_in)), normalized_paths))
+
+
 def _clear_image_cache() -> None:
     list_images_with_signed_urls.clear()
     list_primary_variety_images_with_signed_urls.clear()
@@ -468,12 +506,9 @@ def list_images_with_signed_urls(table_name: str, relation_column: str, relation
         query = query.order("is_primary", desc=True)
     rows = query.order("created_at").execute().data or []
     bucket = "variety-images" if table_name == "variety_images" else "review-images"
-    enriched: list[dict] = []
-    for row in rows:
-        signed = client.storage.from_(bucket).create_signed_url(row["storage_path"], 3600)
-        signed_url = _extract_signed_url(signed)
-        enriched.append({**row, "signed_url": signed_url})
-    return enriched
+    bucket_api = client.storage.from_(bucket)
+    signed_urls = _create_signed_urls(bucket_api, [str(row["storage_path"]) for row in rows], 3600)
+    return [{**row, "signed_url": signed_url} for row, signed_url in zip(rows, signed_urls, strict=True)]
 
 
 @scoped_cache_data(ttl=300, scopes="storage")
@@ -483,6 +518,7 @@ def list_primary_variety_images_with_signed_urls(variety_ids: Sequence[str]) -> 
     if not ids:
         return {}
     client = get_user_client()
+    bucket_api = client.storage.from_("variety-images")
     first_images: dict[str, dict] = {}
     for id_chunk in chunked_sequence(ids, _POSTGREST_IN_CHUNK_SIZE):
         rows = (
@@ -495,12 +531,19 @@ def list_primary_variety_images_with_signed_urls(variety_ids: Sequence[str]) -> 
             .data
             or []
         )
+        representative_rows: list[dict] = []
         for row in rows:
             variety_id = str(row.get("variety_id") or "")
             if not variety_id or variety_id in first_images:
                 continue
-            signed = client.storage.from_("variety-images").create_signed_url(row["storage_path"], 3600)
-            first_images[variety_id] = {**row, "signed_url": _extract_signed_url(signed)}
+            representative_rows.append(row)
+        signed_urls = _create_signed_urls(
+            bucket_api,
+            [str(row["storage_path"]) for row in representative_rows],
+            3600,
+        )
+        for row, signed_url in zip(representative_rows, signed_urls, strict=True):
+            first_images[str(row.get("variety_id") or "")] = {**row, "signed_url": signed_url}
     return first_images
 
 

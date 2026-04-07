@@ -10,6 +10,8 @@ class _FakeStorageBucket:
     def __init__(self, bucket: str, *, missing_paths: set[str] | None = None) -> None:
         self.bucket = bucket
         self.created: list[tuple[str, object | None]] = []
+        self.signed: list[str] = []
+        self.batch_signed: list[list[str]] = []
         self.uploads: list[tuple[str, object, object | None]] = []
         self.missing_paths = set(missing_paths or [])
 
@@ -18,7 +20,15 @@ class _FakeStorageBucket:
         return {"signed_url": f"https://example.supabase.co/storage/v1/{self.bucket}/{path}?token=abc"}
 
     def create_signed_url(self, path: str, _expires_in: int) -> dict:
+        self.signed.append(path)
         return {"signed_url": f"https://example.supabase.co/storage/v1/{self.bucket}/{path}?token=read"}
+
+    def create_signed_urls(self, paths: list[str], _expires_in: int) -> list[dict]:
+        self.batch_signed.append(list(paths))
+        return [
+            {"signed_url": f"https://example.supabase.co/storage/v1/{self.bucket}/{path}?token=read"}
+            for path in paths
+        ]
 
     def upload(self, path: str, file, file_options: object | None = None) -> dict:
         self.uploads.append((path, file, file_options))
@@ -500,8 +510,95 @@ def test_list_primary_variety_images_with_signed_urls_chunks_large_id_lists(monk
     images = storage_service.list_primary_variety_images_with_signed_urls([f"variety-{index}" for index in range(205)])
 
     assert len([call for call in client.in_calls if call[0] == "variety_images"]) == 2
+    assert len(client.storage.from_("variety-images").batch_signed) == 2
+    assert client.storage.from_("variety-images").signed == []
     assert images["variety-0"]["signed_url"].endswith("?token=read")
     assert images["variety-204"]["signed_url"].endswith("?token=read")
+
+
+def test_list_images_with_signed_urls_uses_batched_signed_urls(monkeypatch) -> None:
+    client = _FakeClient(
+        rows={
+            "variety_images": [
+                {
+                    "id": "image-1",
+                    "variety_id": "variety-1",
+                    "storage_path": "varieties/variety-1/first.webp",
+                    "file_name": "first.webp",
+                    "mime_type": "image/webp",
+                    "is_primary": True,
+                    "created_at": "2026-04-07T00:00:00+00",
+                },
+                {
+                    "id": "image-2",
+                    "variety_id": "variety-1",
+                    "storage_path": "varieties/variety-1/second.webp",
+                    "file_name": "second.webp",
+                    "mime_type": "image/webp",
+                    "is_primary": False,
+                    "created_at": "2026-04-07T00:01:00+00",
+                },
+            ]
+        }
+    )
+    monkeypatch.setattr(storage_service, "get_user_client", lambda: client)
+    storage_service.list_images_with_signed_urls.clear()
+
+    rows = storage_service.list_images_with_signed_urls("variety_images", "variety_id", "variety-1")
+
+    assert [row["id"] for row in rows] == ["image-1", "image-2"]
+    assert len(client.storage.from_("variety-images").batch_signed) == 1
+    assert client.storage.from_("variety-images").signed == []
+    assert all(str(row["signed_url"]).endswith("?token=read") for row in rows)
+
+
+def test_create_signed_urls_falls_back_to_single_url_generation(monkeypatch) -> None:
+    client = _FakeClient(
+        rows={
+            "variety_images": [
+                {
+                    "id": "image-1",
+                    "variety_id": "variety-1",
+                    "storage_path": "varieties/variety-1/fallback-1.webp",
+                    "file_name": "fallback-1.webp",
+                    "mime_type": "image/webp",
+                    "width": 1200,
+                    "height": 800,
+                    "is_primary": True,
+                    "created_at": "2026-04-07T00:00:00+00",
+                },
+                {
+                    "id": "image-2",
+                    "variety_id": "variety-2",
+                    "storage_path": "varieties/variety-2/fallback-2.webp",
+                    "file_name": "fallback-2.webp",
+                    "mime_type": "image/webp",
+                    "width": 1200,
+                    "height": 800,
+                    "is_primary": True,
+                    "created_at": "2026-04-07T00:01:00+00",
+                },
+            ]
+        }
+    )
+    bucket = client.storage.from_("variety-images")
+
+    def _unsupported_batch(_paths: list[str], _expires_in: int) -> list[dict]:
+        raise TypeError("create_signed_urls is unavailable")
+
+    monkeypatch.setattr(storage_service, "get_user_client", lambda: client)
+    monkeypatch.setattr(bucket, "create_signed_urls", _unsupported_batch)
+    storage_service.list_primary_variety_images_with_signed_urls.clear()
+
+    images = storage_service.list_primary_variety_images_with_signed_urls(["variety-1", "variety-2"])
+
+    assert bucket.batch_signed == []
+    assert bucket.signed == [
+        "varieties/variety-1/fallback-1.webp",
+        "varieties/variety-2/fallback-2.webp",
+    ]
+    assert images["variety-1"]["signed_url"].endswith("?token=read")
+    assert images["variety-2"]["signed_url"].endswith("?token=read")
 
 
 def test_upload_variety_image_marks_first_uploaded_image_as_primary(monkeypatch) -> None:

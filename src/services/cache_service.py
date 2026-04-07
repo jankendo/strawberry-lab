@@ -175,7 +175,7 @@ def scoped_cache_data(
     normalized_scopes = _normalize_scopes(scopes)
 
     def decorator(func):
-        @st.cache_data(ttl=ttl)
+        @st.cache_data(ttl=ttl, show_spinner=False)
         def _cached(*args, _cache_user_scope: str, _cache_revisions: tuple[str, ...], **kwargs):
             _ = (_cache_user_scope, _cache_revisions)
             return func(*args, **kwargs)

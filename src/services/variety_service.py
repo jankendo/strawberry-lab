@@ -203,7 +203,6 @@ def list_variety_list_index_for_ids(variety_ids: Sequence[str]) -> list[dict]:
     return _annotate_variety_index_rows(rows)
 
 
-@scoped_cache_data(ttl=900, scopes=("varieties", "reviews"))
 def list_varieties_for_list_tab(
     *,
     keyword: str | None = None,
@@ -339,7 +338,6 @@ def _clear_variety_related_caches() -> None:
     list_varieties.clear()
     list_variety_list_index.clear()
     list_variety_list_index_for_ids.clear()
-    list_varieties_for_list_tab.clear()
     list_active_varieties.clear()
     get_variety_detail.clear()
     get_discovered_variety_ids.clear()

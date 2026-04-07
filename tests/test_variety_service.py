@@ -162,7 +162,6 @@ def test_list_varieties_for_list_tab_matches_hiragana_keyword_to_katakana_name(m
     monkeypatch.setattr(variety_service, "get_user_client", lambda: client)
     monkeypatch.setattr(variety_service, "get_discovered_variety_ids", lambda: [])
     variety_service.list_variety_list_index.clear()
-    variety_service.list_varieties_for_list_tab.clear()
 
     rows, total, matched_ids = variety_service.list_varieties_for_list_tab(keyword="さが")
 
@@ -199,7 +198,6 @@ def test_list_varieties_for_list_tab_filters_discovered_rows_before_paging(monke
     monkeypatch.setattr(variety_service, "get_user_client", lambda: client)
     monkeypatch.setattr(variety_service, "get_discovered_variety_ids", lambda: ["id-1", "id-3", "id-5"])
     variety_service.list_variety_list_index.clear()
-    variety_service.list_varieties_for_list_tab.clear()
 
     rows, total, matched_ids = variety_service.list_varieties_for_list_tab(
         discovery_filter="発見済み",
@@ -251,7 +249,6 @@ def test_list_varieties_for_list_tab_uses_discovered_only_index(monkeypatch) -> 
         raise AssertionError("full variety index should not be loaded for 発見済み filter")
 
     monkeypatch.setattr(variety_service, "list_variety_list_index", _unexpected_full_index)
-    variety_service.list_varieties_for_list_tab.clear()
 
     rows, total, matched_ids = variety_service.list_varieties_for_list_tab(discovery_filter="発見済み", sort_field="name", sort_desc=False)
 
