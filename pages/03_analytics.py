@@ -208,12 +208,6 @@ render_hero_banner(
     eyebrow="分析インサイト",
     chips=["条件を設定", "分析を実行", "結論を確認", "必要なチャートだけ表示"],
 )
-render_action_bar(
-    title="分析フロー",
-    description="条件設定 → 実行 → 結論確認 → チャート確認の順で進めます。",
-    actions=["フィルタ設定", "分析を実行", "結論サマリー", "チャート詳細"],
-)
-
 mobile_client = is_mobile_client()
 varieties = list_active_varieties()
 variety_ids = [str(variety["id"]) for variety in varieties]
@@ -239,7 +233,7 @@ default_varieties = [
 ]
 
 with st.container(border=True):
-    render_section_title("1) フィルタを設定", "iPhoneでも確認しやすい1カラムで条件を並べています。")
+    render_section_title("1) フィルタ")
     date_from = st.date_input("開始日", value=default_date_from)
     date_to = st.date_input("終了日", value=default_date_to)
     prefecture = st.selectbox("都道府県", prefecture_options, index=prefecture_index)
@@ -262,13 +256,12 @@ current_filters = _build_filter_state(
 )
 
 with st.container(border=True):
-    render_section_title("フィルタ状態", "入力中の条件と実行済み条件をチップで確認できます。")
-    st.caption("入力中の条件")
+    render_section_title("フィルタ状態")
     _render_filter_chips(_build_filter_chips(current_filters, variety_name_map))
 
 invalid_date_range = current_filters["date_from"] > current_filters["date_to"]
 with st.container(border=True):
-    render_section_title("2) 分析を実行", "重い集計は実行ボタンを押したタイミングだけ行います。")
+    render_section_title("2) 分析を実行")
     render_sticky_primary_action_anchor("analytics-run")
     run_col, info_col = st.columns([1, 2], gap="large")
     with run_col:
@@ -281,8 +274,6 @@ with st.container(border=True):
     with info_col:
         if invalid_date_range:
             st.error("開始日は終了日以前で指定してください。")
-        else:
-            st.caption("フィルタ変更後は「分析を実行」を押して反映してください。")
 
 analysis_payload = st.session_state.get(_ANALYTICS_PAYLOAD_KEY)
 analysis_loading_placeholder = st.empty()
@@ -322,8 +313,7 @@ if applied_filters != current_filters:
     )
 
 with st.container(border=True):
-    render_section_title("3) 結論とサマリー", "まず適用中の条件と結論を確認してからチャートを見ます。")
-    st.caption("分析に適用中の条件")
+    render_section_title("3) 結論とサマリー")
     _render_filter_chips(_build_filter_chips(applied_filters, variety_name_map))
 
 if not analysis_payload.get("has_data"):
@@ -367,19 +357,15 @@ active_chart_label = render_section_switcher(
     [label for label, _ in _CHART_SWITCHER_OPTIONS],
     key="analytics_active_chart",
     title="4) チャート詳細",
-    description="結論確認後に、必要な可視化だけを切り替えて確認します。",
+    description=None,
     mobile_label="表示チャート",
 )
 active_chart = _CHART_SWITCHER_MAP.get(active_chart_label, _CHART_SECTIONS[0])
-if mobile_client:
-    st.caption("iPhoneでは初期表示を1チャートに限定し、必要なときだけ切り替えて描画します。")
-else:
-    st.caption("表示中のチャートのみ描画して、再実行時の待ち時間を抑えます。")
 
 if active_chart == "A. 総合評価ランキング":
     ranking_rows = list(analysis_payload.get("ranking_rows") or [])
     with st.container(border=True):
-        render_section_title("A. 総合評価ランキング", "比較可能な品種が2件以上ある場合のみ表示します。")
+        render_section_title("A. 総合評価ランキング")
         if len(ranking_rows) < 2:
             render_empty_state(
                 "比較対象の品種が不足しているためランキングを省略しました。",
@@ -408,7 +394,7 @@ if active_chart == "A. 総合評価ランキング":
 elif active_chart == "B. 月次推移":
     timeseries_df = pd.DataFrame(analysis_payload.get("timeseries_rows") or [])
     with st.container(border=True):
-        render_section_title("B. 月次推移", "最低2か月の有効データがある場合に表示します。")
+        render_section_title("B. 月次推移")
         if timeseries_df.empty:
             render_empty_state(
                 "時系列データがありません。",
@@ -462,7 +448,7 @@ elif active_chart == "B. 月次推移":
 elif active_chart == "C. レーダーチャート":
     radar_df = pd.DataFrame(analysis_payload.get("radar_rows") or [])
     with st.container(border=True):
-        render_section_title("C. レーダーチャート", "2品種以上の比較データがある場合に表示します。")
+        render_section_title("C. レーダーチャート")
         if radar_df.empty or int(radar_df.get("variety_id", pd.Series(dtype="object")).nunique()) < 2:
             render_empty_state(
                 "比較対象の品種が不足しているためレーダーチャートを省略しました。",
@@ -505,7 +491,7 @@ elif active_chart == "C. レーダーチャート":
 elif active_chart == "D. 糖度と総合評価":
     scatter_rows = list(analysis_payload.get("scatter_rows") or [])
     with st.container(border=True):
-        render_section_title("D. 糖度と総合評価", "散布図は3品種以上の有効点がある場合のみ表示します。")
+        render_section_title("D. 糖度と総合評価")
         if len(scatter_rows) < 3:
             render_empty_state(
                 "有効な糖度データが不足しているため散布図を省略しました。",
@@ -532,8 +518,8 @@ elif active_chart == "D. 糖度と総合評価":
 
 elif active_chart == "E. 都道府県マップ":
     with st.container(border=True):
-        render_section_title("E. 都道府県マップ", "都道府県・タグ条件のみを適用した分布です。")
-        render_surface("※ 地図は都道府県・タグ条件のみ適用し、レビュー日付範囲は適用しません。", tone="soft")
+        render_section_title("E. 都道府県マップ")
+        st.caption("地図は都道府県・タグ条件のみを反映します。")
         map_counts = prefecture_counts(
             prefecture=applied_filters["prefecture"] or None,
             tags=applied_filters["tags"] or None,
@@ -574,7 +560,7 @@ elif active_chart == "E. 都道府県マップ":
                 st.plotly_chart(fig_map, use_container_width=True)
 
 with st.container(border=True):
-    render_section_title("分析データの出力", "レビュー原データをCSV形式でダウンロードできます。")
+    render_section_title("分析データの出力")
     if st.toggle("分析用CSVを準備する", value=False, key="analytics_prepare_export"):
         st.download_button(
             "分析用ベースデータCSV",
@@ -584,5 +570,3 @@ with st.container(border=True):
             use_container_width=True,
             type="primary",
         )
-    else:
-        st.caption("必要なときだけCSVデータを準備します。")

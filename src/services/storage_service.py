@@ -11,10 +11,12 @@ from storage3.types import CreateSignedUploadUrlOptions
 
 from src.services.auth_service import get_user_client
 from src.services.cache_service import bump_cache_scopes, scoped_cache_data
+from src.utils.batching import chunked_sequence
 from src.utils.image_utils import ALLOWED_MIME_TYPES, MAX_LONG_EDGE, MAX_UPLOAD_BYTES, process_image, validate_image_file
 
 _VARIETY_IMAGE_LIMIT = 5
 _REVIEW_IMAGE_LIMIT = 3
+_POSTGREST_IN_CHUNK_SIZE = 200
 _MIME_EXTENSION_MAP = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -481,23 +483,24 @@ def list_primary_variety_images_with_signed_urls(variety_ids: Sequence[str]) -> 
     if not ids:
         return {}
     client = get_user_client()
-    rows = (
-        client.table("variety_images")
-        .select("id,variety_id,storage_path,file_name,mime_type,width,height,is_primary,created_at")
-        .in_("variety_id", ids)
-        .order("is_primary", desc=True)
-        .order("created_at")
-        .execute()
-        .data
-        or []
-    )
     first_images: dict[str, dict] = {}
-    for row in rows:
-        variety_id = str(row.get("variety_id") or "")
-        if not variety_id or variety_id in first_images:
-            continue
-        signed = client.storage.from_("variety-images").create_signed_url(row["storage_path"], 3600)
-        first_images[variety_id] = {**row, "signed_url": _extract_signed_url(signed)}
+    for id_chunk in chunked_sequence(ids, _POSTGREST_IN_CHUNK_SIZE):
+        rows = (
+            client.table("variety_images")
+            .select("id,variety_id,storage_path,file_name,mime_type,width,height,is_primary,created_at")
+            .in_("variety_id", id_chunk)
+            .order("is_primary", desc=True)
+            .order("created_at")
+            .execute()
+            .data
+            or []
+        )
+        for row in rows:
+            variety_id = str(row.get("variety_id") or "")
+            if not variety_id or variety_id in first_images:
+                continue
+            signed = client.storage.from_("variety-images").create_signed_url(row["storage_path"], 3600)
+            first_images[variety_id] = {**row, "signed_url": _extract_signed_url(signed)}
     return first_images
 
 

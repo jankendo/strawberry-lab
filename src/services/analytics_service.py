@@ -9,9 +9,11 @@ import pandas as pd
 
 from src.services.auth_service import get_user_client
 from src.services.cache_service import scoped_cache_data
+from src.utils.batching import chunked_sequence
 
 _REVIEW_SELECT_FIELDS = "id,variety_id,tasted_date,overall,sweetness,sourness,aroma,texture,appearance"
 _VARIETY_SELECT_FIELDS = "id,name,origin_prefecture,tags,brix_min,brix_max"
+_POSTGREST_IN_CHUNK_SIZE = 200
 
 
 @scoped_cache_data(ttl=300, scopes=("analytics", "reviews", "varieties"))
@@ -29,19 +31,19 @@ def get_filtered_review_dataframe(
     normalized_tags = [str(tag).strip() for tag in (tags or []) if str(tag).strip()]
     required_tag_set = set(normalized_tags)
 
-    review_query = (
-        client.table("reviews")
-        .select(_REVIEW_SELECT_FIELDS)
-        .is_("deleted_at", "null")
-        .gte("tasted_date", str(date_from))
-        .lte("tasted_date", str(date_to))
-    )
-    if normalized_variety_ids:
-        review_query = review_query.in_("variety_id", normalized_variety_ids)
-    reviews = (
-        review_query.execute().data
-        or []
-    )
+    reviews: list[dict] = []
+    review_chunks = list(chunked_sequence(normalized_variety_ids, _POSTGREST_IN_CHUNK_SIZE)) if normalized_variety_ids else [[]]
+    for variety_id_chunk in review_chunks:
+        review_query = (
+            client.table("reviews")
+            .select(_REVIEW_SELECT_FIELDS)
+            .is_("deleted_at", "null")
+            .gte("tasted_date", str(date_from))
+            .lte("tasted_date", str(date_to))
+        )
+        if variety_id_chunk:
+            review_query = review_query.in_("variety_id", variety_id_chunk)
+        reviews.extend(review_query.execute().data or [])
     if not reviews:
         return pd.DataFrame()
 
@@ -49,17 +51,19 @@ def get_filtered_review_dataframe(
     if not review_variety_ids:
         return pd.DataFrame()
 
-    variety_query = (
-        client.table("varieties")
-        .select(_VARIETY_SELECT_FIELDS)
-        .is_("deleted_at", "null")
-        .in_("id", review_variety_ids)
-    )
-    if prefecture:
-        variety_query = variety_query.eq("origin_prefecture", prefecture)
-    if normalized_tags:
-        variety_query = variety_query.contains("tags", normalized_tags)
-    varieties = variety_query.execute().data or []
+    varieties: list[dict] = []
+    for variety_id_chunk in chunked_sequence(review_variety_ids, _POSTGREST_IN_CHUNK_SIZE):
+        variety_query = (
+            client.table("varieties")
+            .select(_VARIETY_SELECT_FIELDS)
+            .is_("deleted_at", "null")
+            .in_("id", variety_id_chunk)
+        )
+        if prefecture:
+            variety_query = variety_query.eq("origin_prefecture", prefecture)
+        if normalized_tags:
+            variety_query = variety_query.contains("tags", normalized_tags)
+        varieties.extend(variety_query.execute().data or [])
     if not varieties:
         return pd.DataFrame()
 

@@ -39,24 +39,9 @@ render_hero_banner(
     eyebrow="系統ネットワーク",
     chips=["起点品種指定", "祖先/子孫切替", "ノードクリック遷移"],
 )
-render_action_bar(
-    title="推奨ワークフロー",
-    description="親子リンクを整備したうえで、表示条件を調整し、気になるノードをクリックして詳細確認します。",
-    actions=["起点品種を選ぶ", "表示方向を切り替える", "最大深さを調整する", "ノードから詳細へ移動"],
-)
 
 mobile_client = is_mobile_client()
-
-with st.expander("交配図の使い方", expanded=False):
-    st.markdown(
-        """
-        1. まず **品種管理 > 作成・編集** で親品種リンクを登録  
-        2. 交配図で **起点品種 / 表示方向 / 最大深さ** を設定  
-        3. ノードをクリックして右パネルで詳細確認  
-        """
-    )
-
-render_section_title("表示条件", "見たい系譜だけに絞って可視化します。")
+render_section_title("表示条件")
 direction_map = {
     "祖先を表示": "ancestors",
     "子孫を表示": "descendants",
@@ -80,7 +65,6 @@ else:
         max_nodes = st.slider("最大表示ノード数", 50, 120, 80, step=10)
     with c3:
         full_canvas_mode = st.checkbox("全幅グラフ表示", value=True)
-        st.caption("全幅表示をオンにすると詳細パネルがグラフ下に移動します。")
 
 data_loading_placeholder = st.empty()
 with data_loading_placeholder.container():
@@ -109,7 +93,7 @@ root_id = st.selectbox(
     [""] + root_options,
     format_func=lambda x: "全体" if not x else name_by_id.get(x, x),
 )
-render_surface(
+st.caption(
     " / ".join(
         [
             f"起点 {'全体' if not root_id else name_by_id.get(root_id, root_id)}",
@@ -118,9 +102,7 @@ render_surface(
             f"最大ノード {max_nodes}",
             "全幅表示" if full_canvas_mode else "分割表示",
         ]
-    ),
-    title="現在の表示条件",
-    tone="soft",
+    )
 )
 
 try:
@@ -159,7 +141,7 @@ if graph.number_of_nodes() == 0:
 if graph.number_of_nodes() > max_nodes:
     ordered_nodes = [root_id] + [node for node in graph.nodes() if node != root_id] if root_id else list(graph.nodes())
     graph = graph.subgraph(ordered_nodes[:max_nodes]).copy()
-    render_surface(f"表示ノード数を {max_nodes} 件に制限しました。", title="表示上限を適用", tone="warning")
+    st.warning(f"表示ノード数を {max_nodes} 件に制限しました。")
 
 layout_loading_placeholder = st.empty()
 with layout_loading_placeholder.container():
@@ -182,10 +164,7 @@ render_kpi_cards(
     ]
 )
 
-render_section_title(
-    "交配グラフ",
-    "全幅表示では画面全体を使って可視化できます。ドラッグ移動・ホイール拡大縮小・ノード選択に対応しています。",
-)
+render_section_title("交配グラフ")
 
 
 def _apply_node_selection(events: list[dict]) -> None:
@@ -224,7 +203,7 @@ def _render_selected_node_panel() -> None:
                     st.session_state.pop("pedigree_selected_node", None)
                     st.rerun()
     else:
-        render_surface("ノードをクリックすると詳細をここに表示します。", title="ノード詳細", tone="soft")
+        st.caption("ノードをクリックすると詳細を表示します。")
 
 
 base_height = int(fig.layout.height) if fig.layout.height else 720

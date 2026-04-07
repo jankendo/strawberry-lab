@@ -12,9 +12,11 @@ from src.services.auth_service import get_user_client
 from src.services.cache_service import bump_cache_scopes, scoped_cache_data
 from src.services.export_service import clear_export_cache
 from src.services.pedigree_service import clear_pedigree_cache
+from src.utils.batching import chunked_sequence
 from src.utils.validation import validate_variety_payload
 
 LIST_TAB_FIELDS = "id,name,origin_prefecture,registration_number,application_number,description,characteristics_summary"
+_POSTGREST_IN_CHUNK_SIZE = 200
 
 
 def _apply_variety_filters(
@@ -133,20 +135,21 @@ def get_review_counts_for_varieties(variety_ids: Sequence[str]) -> dict[str, int
     if not ids:
         return {}
     client = get_user_client()
-    rows = (
-        client.table("reviews")
-        .select("variety_id")
-        .in_("variety_id", ids)
-        .is_("deleted_at", "null")
-        .execute()
-        .data
-        or []
-    )
     counts: dict[str, int] = {variety_id: 0 for variety_id in ids}
-    for row in rows:
-        variety_id = row.get("variety_id")
-        if variety_id in counts:
-            counts[variety_id] += 1
+    for id_chunk in chunked_sequence(ids, _POSTGREST_IN_CHUNK_SIZE):
+        rows = (
+            client.table("reviews")
+            .select("variety_id")
+            .in_("variety_id", id_chunk)
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+        for row in rows:
+            variety_id = row.get("variety_id")
+            if variety_id in counts:
+                counts[variety_id] += 1
     return counts
 
 
@@ -157,23 +160,24 @@ def get_latest_review_summary_for_varieties(variety_ids: Sequence[str]) -> dict[
     if not ids:
         return {}
     client = get_user_client()
-    rows = (
-        client.table("reviews")
-        .select("variety_id,tasted_date,overall,sweetness,sourness,aroma,texture,appearance,updated_at,created_at")
-        .in_("variety_id", ids)
-        .is_("deleted_at", "null")
-        .order("tasted_date", desc=True)
-        .order("updated_at", desc=True)
-        .order("created_at", desc=True)
-        .execute()
-        .data
-        or []
-    )
     latest_by_variety: dict[str, dict] = {}
-    for row in rows:
-        variety_id = str(row.get("variety_id") or "")
-        if variety_id and variety_id not in latest_by_variety:
-            latest_by_variety[variety_id] = row
+    for id_chunk in chunked_sequence(ids, _POSTGREST_IN_CHUNK_SIZE):
+        rows = (
+            client.table("reviews")
+            .select("variety_id,tasted_date,overall,sweetness,sourness,aroma,texture,appearance,updated_at,created_at")
+            .in_("variety_id", id_chunk)
+            .is_("deleted_at", "null")
+            .order("tasted_date", desc=True)
+            .order("updated_at", desc=True)
+            .order("created_at", desc=True)
+            .execute()
+            .data
+            or []
+        )
+        for row in rows:
+            variety_id = str(row.get("variety_id") or "")
+            if variety_id and variety_id not in latest_by_variety:
+                latest_by_variety[variety_id] = row
     return latest_by_variety
 
 

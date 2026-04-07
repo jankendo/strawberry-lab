@@ -1437,19 +1437,12 @@ def render_hero_banner(
     eyebrow: str | None = None,
     chips: list[str] | None = None,
 ) -> None:
-    """Render top hero block with workspace controls."""
+    """Render top hero block with only the essential title and summary."""
+    _ = eyebrow, chips
     with st.container(border=True):
         _render_workspace_meta_controls(title)
-        if eyebrow:
-            st.caption(_sanitize_text(eyebrow))
         st.markdown(f"## {_sanitize_text(title)}")
         st.write(_sanitize_text(description))
-        clean_chips = [chip for chip in (_sanitize_text(item) for item in (chips or [])) if chip]
-        if clean_chips:
-            st.markdown(
-                "".join(f'<span class="sl-context-chip">{chip}</span>' for chip in clean_chips),
-                unsafe_allow_html=True,
-            )
 
 
 def render_action_bar(
@@ -1458,23 +1451,9 @@ def render_action_bar(
     title: str | None = None,
     description: str | None = None,
 ) -> None:
-    """Render compact action summary with low visual dominance."""
-    clean_title = _sanitize_text(title)
-    clean_description = _sanitize_text(description)
-    clean_actions = [action for action in (_sanitize_text(item) for item in (actions or [])) if action]
-    if not clean_title and not clean_description and not clean_actions:
-        return
-
-    with st.container(border=True):
-        if clean_title:
-            st.markdown(f"**{clean_title}**")
-        if clean_description:
-            st.caption(clean_description)
-        if clean_actions:
-            st.markdown(
-                "".join(f'<span class="sl-context-chip">{action}</span>' for action in clean_actions),
-                unsafe_allow_html=True,
-            )
+    """Keep backward compatibility for removed page-level action summaries."""
+    _ = actions, title, description
+    return
 
 
 def render_sticky_primary_action_anchor(anchor_id: str) -> None:

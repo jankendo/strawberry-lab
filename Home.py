@@ -39,11 +39,8 @@ except ImportError:
         chips: list[str] | None = None,
     ) -> None:
         """Fallback hero renderer for partially refreshed runtimes."""
+        _ = eyebrow, chips
         render_page_header(title, description)
-        if eyebrow:
-            st.caption(eyebrow)
-        if chips:
-            st.caption(" / ".join(chips))
 
 
     def render_action_bar(
@@ -53,12 +50,7 @@ except ImportError:
         description: str | None = None,
     ) -> None:
         """Fallback action bar renderer for partially refreshed runtimes."""
-        if title:
-            st.write(f"**{title}**")
-        if description:
-            st.caption(description)
-        if actions:
-            st.caption(" / ".join(actions))
+        _ = actions, title, description
 
 
     def render_lead(text: str) -> None:
@@ -333,16 +325,7 @@ def _render_login() -> None:
         "いちご品種の研究・評価を一元管理するための管理アプリです。"
         if not mobile_client
         else "ログインして管理ワークスペースを利用します。",
-        eyebrow="管理者ワークスペース",
-        chips=["ログインが必要です", "30日ログイン保持対応"],
     )
-    if not mobile_client:
-        render_lead("品種登録情報・試食評価・分析・メモを一体運用する管理者向けワークスペースです。")
-        render_action_bar(
-            title="サインイン",
-            description="登録済み管理者アカウントでログインしてください。",
-            actions=["メールアドレス", "パスワード", "ログイン"],
-        )
     if persistence["code"] == "ready_ephemeral_secret":
         st.warning(
             f"⚠️ {persistence['message']} 恒久運用では `.streamlit/secrets.toml` に APP_COOKIE_SECRET を設定してください。"
@@ -367,17 +350,8 @@ def _render_login() -> None:
         form_container = center
 
     with form_container:
-        if mobile_client:
-            st.markdown("### ログイン")
-            st.caption("アクセス権限を持つアカウントのみ利用できます。")
-        else:
-            render_surface(
-                "アクセス権限を持つアカウントのみ利用できます。ログイン成功後はダッシュボードへ移動します。",
-                title="ログイン",
-                subtitle="管理者認証",
-                tone="soft",
-                elevated=True,
-            )
+        st.markdown("### ログイン")
+        st.caption("登録済み管理者アカウントでログインしてください。")
         with st.form("login_form"):
             email = st.text_input("メールアドレス")
             password = st.text_input("パスワード", type="password")
@@ -404,15 +378,7 @@ def _render_dashboard() -> None:
             if mobile_client
             else "今日の状況 → 今日やること → 最新ログの順で、必要な操作だけ進めます。"
         ),
-        eyebrow="今日のワークフロー",
-        chips=["優先タスク", "状況サマリー", "更新ログ"],
     )
-    if not mobile_client:
-        render_action_bar(
-            title="今日の見方",
-            description="上から順に確認すると、必要な判断と次アクションが最短で分かります。",
-            actions=["今日の状況", "今日やること", "更新ログ"],
-        )
 
     metrics_loading_placeholder = st.empty()
     with metrics_loading_placeholder.container():
@@ -450,9 +416,8 @@ def _render_dashboard() -> None:
 
     for index, (title, hint, path) in enumerate(today_tasks, start=1):
         with st.container(border=True):
-            render_status_badge(f"優先 {index}", tone="info", icon="➡️")
-            st.markdown(f"**{title}**")
-            st.caption(hint)
+            _ = hint
+            st.markdown(f"**{index}. {title}**")
             st.page_link(path, label="この作業を開く", use_container_width=True)
 
     if mobile_client:

@@ -99,10 +99,9 @@ def _render_section_switcher(*, is_mobile: bool) -> str:
         SECTION_ORDER,
         key=_SETTINGS_ACTIVE_SECTION_KEY,
         title="設定セクション",
-        description="用途ごとに表示内容を切り替え、必要な操作だけを表示します。",
+        description=None,
         mobile_label="表示セクション",
     )
-    st.caption(SECTION_HINTS.get(active_section, ""))
     return active_section
 
 
@@ -120,13 +119,6 @@ render_page_header(
     if not mobile_client
     else "必要なセクションを選んで操作できます。",
 )
-if not mobile_client:
-    render_action_bar(
-        title="設定メニュー",
-        description="目的ごとにセクションを切り替え、必要な機能だけを安全に操作してください。",
-        actions=SECTION_ORDER,
-    )
-
 with st.container(border=True):
     if mobile_client:
         render_section_title("関連ページ / アカウント")
@@ -135,7 +127,7 @@ with st.container(border=True):
             if st.button("ログアウト", use_container_width=True, type="secondary", key="settings_mobile_logout"):
                 logout_user()
     else:
-        render_section_title("その他ページ", "交配図への移動はこちらから行えます。")
+        render_section_title("関連ページ")
         st.page_link("pages/04_pedigree.py", label="🧬 交配図を開く", use_container_width=True)
 
 table_labels = {
@@ -182,7 +174,7 @@ latest_success = next(
 )
 
 if active_section == "データ出力":
-    render_section_title("データエクスポート", "一括ダウンロードと個別ダウンロードを分けて提供します。")
+    render_section_title("データエクスポート")
     if st.button("CSVデータを読み込む", key="settings_load_exports", use_container_width=True, type="primary"):
         st.session_state["settings_exports_loaded"] = True
     if st.session_state.get("settings_exports_loaded"):
@@ -217,7 +209,7 @@ if active_section == "データ出力":
                         use_container_width=True,
                     )
     else:
-        render_surface("初期表示ではCSVの生成を行いません。必要なときだけ読み込んでからダウンロードしてください。", tone="soft")
+        st.caption("必要なときだけCSVを読み込みます。")
 
 elif active_section == "実行履歴":
     if st.button("実行履歴を再読み込み", key="reload_scrape_runs", use_container_width=True, type="secondary"):
@@ -232,28 +224,6 @@ elif active_section == "実行履歴":
             ("最新成功時刻", latest_success or "-", "UTC時刻"),
         ]
     )
-
-    other_count = max(len(runs) - success_count - failed_count, 0)
-    if mobile_client:
-        render_status_badge(f"成功 {success_count}", tone="success", icon="✅")
-        render_status_badge(f"失敗 {failed_count}", tone="danger", icon="❗")
-        render_status_badge(
-            f"実行中/その他 {other_count}",
-            tone="info" if other_count else "neutral",
-            icon="⏳" if other_count else "ℹ️",
-        )
-    else:
-        badge_col_success, badge_col_failed, badge_col_other = st.columns(3, gap="small")
-        with badge_col_success:
-            render_status_badge(f"成功 {success_count}", tone="success", icon="✅")
-        with badge_col_failed:
-            render_status_badge(f"失敗 {failed_count}", tone="danger", icon="❗")
-        with badge_col_other:
-            render_status_badge(
-                f"実行中/その他 {other_count}",
-                tone="info" if other_count else "neutral",
-                icon="⏳" if other_count else "ℹ️",
-            )
 
     if runs:
         run_rows: list[dict[str, object]] = []
@@ -362,7 +332,7 @@ elif active_section == "実行履歴":
                 else:
                     render_empty_state("この実行IDに紐づくログはありません。", title="表示できるログがありません")
             else:
-                render_surface("ログ詳細は必要なときだけ読み込みます。", tone="soft")
+                st.caption("必要なときだけログ詳細を読み込みます。")
     else:
         render_empty_state(
             "表示できる取込実行履歴がありません。",
@@ -371,22 +341,14 @@ elif active_section == "実行履歴":
         )
 
 elif active_section == "ローカル実行":
-    render_section_title("ローカル高速スクレイピング", "更新処理はローカルCLI実行のみをサポートします。")
-    render_surface(
-        "長いコマンドは折りたたみ表示にしています。必要なときだけ展開してコピーしてください。",
-        tone="soft",
-    )
+    render_section_title("ローカル高速スクレイピング")
+    st.caption("必要なときだけコマンドを展開してコピーしてください。")
     with st.expander("実行コマンド（PowerShell）", expanded=False):
         st.code(scrape_command, language="powershell")
-        st.caption("コードブロック右上のコピーアイコンからそのまま利用できます。")
-    render_surface(
-        "コマンド実行後は「実行履歴」で状態・件数を確認し、必要時のみログ詳細を読み込んでください。",
-        tone="soft",
-    )
+    st.caption("実行後は「実行履歴」で状態を確認してください。")
 
 elif active_section == "診断情報":
-    render_section_title("診断情報", "現在の運用設定と接続前提条件を確認します。")
-    render_surface("定期的に接続キー状態と最終成功時刻を確認し、運用停止を早期に検知してください。", tone="soft")
+    render_section_title("診断情報")
     auth_persistence = get_auth_persistence_status()
     cache_runtime = get_cache_runtime_status()
     if auth_persistence["code"] in {"ready_ephemeral_secret", "cookie_manager_not_ready_ephemeral_secret", "missing_secret"}:

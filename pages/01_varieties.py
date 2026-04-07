@@ -735,12 +735,6 @@ render_page_header(
     if not mobile_client
     else "一覧から品種を開き、必要な更新や復元を行います。",
 )
-if not mobile_client:
-    render_action_bar(
-        title="画面の使い方",
-        description="一覧で探索、作成・編集で更新、削除済みから復元できます。",
-        actions=["一覧", "作成・編集", "削除済み"],
-    )
 pending_upload_intent_removals = [
     str(value).strip()
     for value in st.session_state.pop(_VARIETY_PENDING_UPLOAD_INTENT_REMOVALS_KEY, [])
@@ -763,7 +757,7 @@ def _render_variety_section_switcher(*, mobile_client: bool) -> str:
         _VARIETY_SECTION_ORDER,
         key="variety_active_section",
         title="表示セクション",
-        description="一覧・作成編集・削除済み復元をここで切り替えます。",
+        description=None,
         mobile_label="表示セクション",
     )
 
@@ -791,17 +785,8 @@ def _render_variety_list_empty_state(discovery_filter: str) -> None:
 
 
 def _render_variety_list_section(*, mobile_client: bool) -> None:
-    render_section_title("品種一覧", "フィルタで絞り込み、一覧から詳細へ進みます。")
+    render_section_title("品種一覧")
     keyword, prefecture, discovery_filter = _render_variety_filters(mobile_client=mobile_client)
-    render_action_bar(
-        title="現在の絞り込み",
-        description="一覧・詳細パネルはこの条件で更新されます。",
-        actions=[
-            f"キーワード {keyword or 'なし'}",
-            f"都道府県 {prefecture or 'すべて'}",
-            f"図鑑表示 {discovery_filter}",
-        ],
-    )
 
     if "variety_selected_from_list" not in st.session_state:
         st.session_state["variety_selected_from_list"] = ""
@@ -844,9 +829,6 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
         ]
     )
     st.progress(completion_ratio)
-    st.caption(
-        f"進捗: 全{progress['total_varieties']}件中、発見 {progress['discovered_count']}件 / 未発見 {progress['undiscovered_count']}件"
-    )
 
     if discovery_filter == "発見済み":
         visible_rows = [row for row in rows if review_counts.get(row["id"], 0) > 0]
@@ -881,7 +863,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
 
     if mobile_client:
         if mobile_panel == "detail" and selected_id:
-            render_section_title("品種詳細", "一覧に戻って別の品種を選択できます。")
+            render_section_title("品種詳細")
             render_view_transition_trigger(
                 "varieties-mobile-list-detail",
                 "detail-to-list",
@@ -974,12 +956,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
 
 
 def _render_variety_edit_section() -> None:
-    render_section_title("作成・編集", "品種情報と画像を登録・更新します。")
-    render_action_bar(
-        title="入力ガイド",
-        description="基本情報・味覚指標・親品種リンクを入力後、必要に応じて画像をアップロードしてください。",
-        actions=["基本情報", "味覚指標", "親品種", "画像アップロード"],
-    )
+    render_section_title("作成・編集")
 
     active = list_active_varieties()
     edit_options = [_VARIETY_NEW_TARGET] + [str(v["id"]) for v in active]
@@ -996,11 +973,7 @@ def _render_variety_edit_section() -> None:
     )
     base = get_variety_detail(edit_id) if edit_id != _VARIETY_NEW_TARGET else {}
     current_target_label = _VARIETY_NEW_TARGET if edit_id == _VARIETY_NEW_TARGET else str(base.get("name") or edit_id)
-    render_surface(
-        f"現在の対象: **{current_target_label}**\n\n図鑑に出る情報から親品種リンク、画像まで同じ画面で更新できます。",
-        title="編集対象",
-        tone="soft",
-    )
+    st.caption(f"編集中: {current_target_label}")
     pending_upload_task = _resolve_pending_variety_upload_task()
     uploader_files = []
 
@@ -1017,7 +990,6 @@ def _render_variety_edit_section() -> None:
     )
     uploader_files = _collect_variety_component_upload_files(uploader_state)
     if uploader_state.get("component_available"):
-        st.caption("画像はブラウザ側で長辺2048pxへ最適化し、保存時にSupabase Storageへ直接アップロードされます。")
         if uploader_files and not pending_upload_task:
             render_status_badge(
                 "画像は保存待ちです。下のボタンで保存するとアップロードが始まります。",
@@ -1083,7 +1055,6 @@ def _render_variety_edit_section() -> None:
         prefecture_options = [""] + PREFECTURES
         acidity_options = [x.value for x in AcidityLevel]
         st.markdown("##### 1) 基本情報")
-        st.caption("品種名・産地・開発情報など、図鑑の基礎になる情報を入力します。")
         c1, c2 = st.columns(2)
         with c1:
             name = st.text_input("品種名*", value=base.get("name", ""))
@@ -1123,7 +1094,6 @@ def _render_variety_edit_section() -> None:
                 value=int(base.get("harvest_end_month") or 12),
             )
         st.markdown("##### 2) 関連付けと説明")
-        st.caption("タグ・親品種・説明文は検索性と詳細画面の分かりやすさに影響します。")
         tags = comma_values_input("タグ (カンマ区切り)", "variety_tags_input", 20, 30)
         parent_ids = st.multiselect(
             "親品種",
@@ -1216,10 +1186,6 @@ def _render_variety_edit_section() -> None:
 
     if edit_id != _VARIETY_NEW_TARGET:
         render_section_title("画像管理")
-        render_surface(
-            "画像は最大5枚まで登録できます。メイン画像を設定すると一覧や関連画面での表示基準になります。",
-            tone="soft",
-        )
         images = list_images_with_signed_urls("variety_images", "variety_id", edit_id)
         render_image_gallery(images, "variety_edit")
         primary_image_options = [""] + [img["id"] for img in images]
@@ -1239,8 +1205,7 @@ def _render_variety_edit_section() -> None:
 
 
 def _render_variety_deleted_section() -> None:
-    render_section_title("削除済み品種", "復元対象を選択して戻せます。")
-    render_surface("誤削除した品種はここから復元できます。復元後は一覧タブですぐ確認できます。", tone="soft")
+    render_section_title("削除済み品種")
     page, page_size = render_pagination_controls("variety_deleted")
     deleted_rows, _ = list_varieties(include_deleted=True, page=page, page_size=page_size)
     deleted_rows = [row for row in deleted_rows if row.get("deleted_at")]

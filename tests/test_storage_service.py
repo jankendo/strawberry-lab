@@ -48,6 +48,7 @@ class _FakeTable:
         self._update_payload = None
         self._head = False
         self._filters: list[tuple[str, object]] = []
+        self._in_filters: list[tuple[str, list[object]]] = []
         self._orders: list[tuple[str, bool]] = []
         self._maybe_single = False
 
@@ -58,6 +59,12 @@ class _FakeTable:
 
     def eq(self, column, value):
         self._filters.append((str(column), value))
+        return self
+
+    def in_(self, column, values):
+        values_list = list(values)
+        self._in_filters.append((str(column), values_list))
+        self.client.in_calls.append((self.name, str(column), values_list))
         return self
 
     def order(self, column, *, desc: bool = False):
@@ -82,6 +89,8 @@ class _FakeTable:
         rows = [dict(row) for row in self.client.rows.get(self.name, [])]
         for column, expected in self._filters:
             rows = [row for row in rows if row.get(column) == expected]
+        for column, values in self._in_filters:
+            rows = [row for row in rows if row.get(column) in values]
         for column, desc in reversed(self._orders):
             rows.sort(key=lambda row: row.get(column), reverse=desc)
         return rows
@@ -123,6 +132,7 @@ class _FakeClient:
         self.rows = {name: [dict(row) for row in table_rows] for name, table_rows in (rows or {}).items()}
         self.inserted: dict[str, list[dict]] = {}
         self.updated: dict[str, list[dict]] = {}
+        self.in_calls: list[tuple[str, str, list[object]]] = []
         self.storage = _FakeStorage(missing_paths=missing_paths)
 
     def table(self, name: str) -> _FakeTable:
@@ -463,6 +473,35 @@ def test_set_primary_variety_image_rejects_unknown_image(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="指定した画像が見つかりません"):
         storage_service.set_primary_variety_image("variety-1", "image-2")
+
+
+def test_list_primary_variety_images_with_signed_urls_chunks_large_id_lists(monkeypatch) -> None:
+    client = _FakeClient(
+        rows={
+            "variety_images": [
+                {
+                    "id": f"image-{index}",
+                    "variety_id": f"variety-{index}",
+                    "storage_path": f"varieties/variety-{index}/sample.webp",
+                    "file_name": "sample.webp",
+                    "mime_type": "image/webp",
+                    "width": 1200,
+                    "height": 800,
+                    "is_primary": True,
+                    "created_at": f"2026-04-07T00:00:{index % 60:02d}+00",
+                }
+                for index in range(205)
+            ]
+        }
+    )
+    monkeypatch.setattr(storage_service, "get_user_client", lambda: client)
+    storage_service.list_primary_variety_images_with_signed_urls.clear()
+
+    images = storage_service.list_primary_variety_images_with_signed_urls([f"variety-{index}" for index in range(205)])
+
+    assert len([call for call in client.in_calls if call[0] == "variety_images"]) == 2
+    assert images["variety-0"]["signed_url"].endswith("?token=read")
+    assert images["variety-204"]["signed_url"].endswith("?token=read")
 
 
 def test_upload_variety_image_marks_first_uploaded_image_as_primary(monkeypatch) -> None:
