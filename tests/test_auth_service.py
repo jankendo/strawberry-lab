@@ -50,6 +50,8 @@ def test_ensure_auth_cookie_persistence_queues_set_action_when_request_cookie_is
     assert saved is False
     assert session_state[auth_service.AUTH_COOKIE_SYNC_PENDING_KEY] is True
     assert session_state[auth_service.AUTH_COOKIE_ACTION_KEY]["type"] == "set"
+    assert session_state[auth_service.AUTH_COOKIE_ACTION_KEY]["storage_key"] == auth_service.AUTH_STORAGE_KEY
+    assert session_state[auth_service.AUTH_COOKIE_ACTION_KEY]["max_age"] == auth_service.AUTH_COOKIE_TTL_SECONDS
 
 
 def test_get_pending_auth_cookie_action_clears_set_action_when_cookie_matches(monkeypatch) -> None:

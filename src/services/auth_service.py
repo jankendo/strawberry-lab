@@ -18,7 +18,9 @@ from src.core.supabase_client import get_anon_supabase_client
 
 AUTH_KEYS = ("current_user", "supabase_client_user", "is_authenticated", "access_token", "refresh_token", "admin_checked_at")
 AUTH_COOKIE_NAME = "remember_auth_v1"
+AUTH_STORAGE_KEY = "__sl_remember_auth_v1"
 AUTH_COOKIE_TTL_DAYS = 30
+AUTH_COOKIE_TTL_SECONDS = AUTH_COOKIE_TTL_DAYS * 24 * 60 * 60
 AUTH_COOKIE_VERSION = 1
 AUTH_COOKIE_SYNC_PENDING_KEY = "_auth_cookie_sync_pending"
 AUTH_COOKIE_ACTION_KEY = "_auth_cookie_action"
@@ -201,8 +203,10 @@ def _queue_auth_cookie_set(*, access_token: str, refresh_token: str) -> bool:
         "id": str(uuid4()),
         "type": "set",
         "cookie_name": AUTH_COOKIE_NAME,
+        "storage_key": AUTH_STORAGE_KEY,
         "cookie_value": cookie_value,
-        "expires_at": int(time.time()) + AUTH_COOKIE_TTL_DAYS * 24 * 60 * 60,
+        "expires_at": int(time.time()) + AUTH_COOKIE_TTL_SECONDS,
+        "max_age": AUTH_COOKIE_TTL_SECONDS,
         "attempts": 0,
     }
     _set_auth_cookie_sync_pending(True)
@@ -224,6 +228,7 @@ def _queue_auth_cookie_clear() -> None:
         "id": str(uuid4()),
         "type": "clear",
         "cookie_name": AUTH_COOKIE_NAME,
+        "storage_key": AUTH_STORAGE_KEY,
         "attempts": 0,
     }
     _set_auth_cookie_sync_error(None)

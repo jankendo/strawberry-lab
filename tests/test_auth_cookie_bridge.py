@@ -13,8 +13,10 @@ def test_render_auth_cookie_bridge_if_needed_renders_cookie_script(monkeypatch) 
             "id": "action-1",
             "type": "set",
             "cookie_name": "remember_auth_v1",
+            "storage_key": "__sl_remember_auth_v1",
             "cookie_value": "signed-cookie",
             "expires_at": 4_102_444_800,
+            "max_age": 2_592_000,
         },
     )
     monkeypatch.setattr(
@@ -31,10 +33,12 @@ def test_render_auth_cookie_bridge_if_needed_renders_cookie_script(monkeypatch) 
     auth_cookie_bridge.render_auth_cookie_bridge_if_needed()
 
     assert captured["html"] is not None
-    assert "doc.cookie" in captured["html"]
+    assert "document.cookie" in captured["html"]
     assert "location.reload" in captured["html"]
-    assert "if (false)" in captured["html"]
+    assert "should_reload: false" in captured["html"]
     assert '"type": "set"' in captured["html"]
+    assert "new parentWindow.Function" in captured["html"]
+    assert "window.localStorage.setItem" in captured["html"]
     assert rendered_ids == ["action-1"]
 
 
@@ -48,6 +52,7 @@ def test_render_auth_cookie_bridge_if_needed_keeps_reload_for_clear_actions(monk
             "id": "action-2",
             "type": "clear",
             "cookie_name": "remember_auth_v1",
+            "storage_key": "__sl_remember_auth_v1",
         },
     )
     monkeypatch.setattr(
@@ -65,8 +70,9 @@ def test_render_auth_cookie_bridge_if_needed_keeps_reload_for_clear_actions(monk
 
     assert captured["html"] is not None
     assert "location.reload" in captured["html"]
-    assert "if (true)" in captured["html"]
+    assert "should_reload: true" in captured["html"]
     assert '"type": "clear"' in captured["html"]
+    assert "window.localStorage.removeItem" in captured["html"]
     assert rendered_ids == []
 
 

@@ -36,27 +36,61 @@ def render_auth_cookie_bridge_if_needed() -> None:
           if (!parentWindow || !doc) {
             return;
           }
-          const secureAttr = parentWindow.location.protocol === "https:" ? "; Secure" : "";
-          if (action.type === "clear") {
-            doc.cookie =
-              String(action.cookie_name) +
-              "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Path=/; SameSite=Lax" +
-              secureAttr;
-          } else {
-            const expiresAt = Number(action.expires_at || 0);
-            const expiresUtc = expiresAt ? new Date(expiresAt * 1000).toUTCString() : "";
-            doc.cookie =
-              String(action.cookie_name) +
-              "=" +
-              encodeURIComponent(String(action.cookie_value || "")) +
-               "; Path=/; SameSite=Lax" +
-               secureAttr +
-               (expiresUtc ? "; Expires=" + expiresUtc : "");
+          let syncAction = null;
+          try {
+            syncAction = new parentWindow.Function(
+              "action",
+              `
+              const payload = action || {};
+              const secureAttr = window.location.protocol === "https:" ? "; Secure" : "";
+              const storageKey = String(payload.storage_key || "");
+              try {
+                if (storageKey) {
+                  if (String(payload.type || "") === "clear") {
+                    window.localStorage.removeItem(storageKey);
+                  } else {
+                    window.localStorage.setItem(storageKey, String(payload.cookie_value || ""));
+                  }
+                }
+              } catch (storageError) {
+                console.warn("[auth-cookie-bridge] Unable to sync auth storage:", storageError);
+              }
+              if (String(payload.type || "") === "clear") {
+                document.cookie =
+                  String(payload.cookie_name || "") +
+                  "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Path=/; SameSite=Lax" +
+                  secureAttr;
+              } else {
+                const expiresAt = Number(payload.expires_at || 0);
+                const maxAge = Number(payload.max_age || 0);
+                const expiresUtc = expiresAt ? new Date(expiresAt * 1000).toUTCString() : "";
+                document.cookie =
+                  String(payload.cookie_name || "") +
+                  "=" +
+                  encodeURIComponent(String(payload.cookie_value || "")) +
+                  "; Path=/; SameSite=Lax" +
+                  secureAttr +
+                  (maxAge > 0 ? "; Max-Age=" + String(maxAge) : "") +
+                  (expiresUtc ? "; Expires=" + expiresUtc : "");
+              }
+              if (payload.should_reload) {
+                window.setTimeout(function () {
+                  window.location.reload();
+                }, 0);
+              }
+              `
+            );
+          } catch (error) {
+            console.warn("[auth-cookie-bridge] Unable to create parent-context runner:", error);
+            return;
           }
-          if (__SHOULD_RELOAD__) {
-            parentWindow.setTimeout(function () {
-              parentWindow.location.reload();
-            }, 0);
+          try {
+            syncAction({
+              ...action,
+              should_reload: __SHOULD_RELOAD__,
+            });
+          } catch (error) {
+            console.warn("[auth-cookie-bridge] Unable to execute parent-context sync:", error);
           }
         })();
         </script>

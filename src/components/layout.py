@@ -13,6 +13,7 @@ import streamlit.components.v1 as components
 from src.components.auth_cookie_bridge import render_auth_cookie_bridge_if_needed
 from src.components.offline_runtime import inject_offline_runtime
 from src.components.tables import is_mobile_client
+from src.services.auth_service import AUTH_COOKIE_NAME, AUTH_COOKIE_TTL_SECONDS, AUTH_STORAGE_KEY
 
 _BADGE_TONE_ALIASES = {
     "default": "neutral",
@@ -91,6 +92,9 @@ def _should_hide_host_chrome() -> bool:
 
 def _inject_native_shell_bootstrap() -> None:
     config_json = json.dumps(_NATIVE_SHELL_CONFIG, ensure_ascii=False)
+    auth_cookie_name = json.dumps(AUTH_COOKIE_NAME, ensure_ascii=False)
+    auth_storage_key = json.dumps(AUTH_STORAGE_KEY, ensure_ascii=False)
+    auth_cookie_max_age = str(int(AUTH_COOKIE_TTL_SECONDS))
     bootstrap_script = """
     <script>
     (function () {
@@ -107,8 +111,12 @@ def _inject_native_shell_bootstrap() -> None:
         return;
       }
       const config = __CONFIG_JSON__;
+      const authCookieName = __AUTH_COOKIE_NAME__;
+      const authStorageKey = __AUTH_STORAGE_KEY__;
+      const authCookieMaxAge = __AUTH_COOKIE_MAX_AGE__;
       const stateKey = "__slNativeShellState";
       const staticBaseCacheStorageKey = "__slNativeShellStaticBase";
+      const authRestoreStorageKey = "__slAuthCookieRestoreAttempt";
       const state = parentWindow[stateKey] || {};
       parentWindow[stateKey] = state;
 
@@ -237,6 +245,106 @@ def _inject_native_shell_bootstrap() -> None:
           console.warn("[native-shell] Unable to access sessionStorage:", error);
           return null;
         }
+      }
+
+      function getLocalStorage() {
+        try {
+          return parentWindow.localStorage || null;
+        } catch (error) {
+          console.warn("[native-shell] Unable to access localStorage:", error);
+          return null;
+        }
+      }
+
+      function runInParentContext(source, args) {
+        try {
+          const runner = new parentWindow.Function("args", String(source || ""));
+          return runner(args || {});
+        } catch (error) {
+          console.warn("[native-shell] Unable to execute parent-context script:", error);
+          return false;
+        }
+      }
+
+      function hasAuthCookie() {
+        return String(doc.cookie || "").indexOf(String(authCookieName || "") + "=") !== -1;
+      }
+
+      function ensureAuthCookieFromStorage(options) {
+        const force = !!(options && options.force);
+        if (!authCookieName || !authStorageKey) {
+          return false;
+        }
+        const storage = getLocalStorage();
+        if (!storage) {
+          return false;
+        }
+        let storedValue = "";
+        try {
+          storedValue = String(storage.getItem(authStorageKey) || "").trim();
+        } catch (error) {
+          console.warn("[native-shell] Unable to read auth storage:", error);
+          return false;
+        }
+        if (!storedValue) {
+          return false;
+        }
+        if (!force && hasAuthCookie()) {
+          return false;
+        }
+        return !!runInParentContext(
+          `
+          const payload = args || {};
+          const secureAttr = window.location.protocol === "https:" ? "; Secure" : "";
+          if (!payload.cookieName || !payload.cookieValue) {
+            return false;
+          }
+          document.cookie =
+            String(payload.cookieName) +
+            "=" +
+            encodeURIComponent(String(payload.cookieValue)) +
+            "; Path=/; SameSite=Lax" +
+            secureAttr +
+            (Number(payload.maxAge || 0) > 0 ? "; Max-Age=" + String(payload.maxAge) : "");
+          return true;
+          `,
+          {
+            cookieName: authCookieName,
+            cookieValue: storedValue,
+            maxAge: authCookieMaxAge,
+          }
+        );
+      }
+
+      function installAuthCookieRecovery() {
+        const markerStorage = getSessionStorage();
+        if (hasAuthCookie()) {
+          if (markerStorage) {
+            try {
+              markerStorage.removeItem(authRestoreStorageKey);
+            } catch (error) {
+              console.warn("[native-shell] Unable to clear auth restore marker:", error);
+            }
+          }
+          return;
+        }
+        const restored = ensureAuthCookieFromStorage({ force: false });
+        if (!restored) {
+          return;
+        }
+        if (!markerStorage) {
+          parentWindow.location.reload();
+          return;
+        }
+        try {
+          if (markerStorage.getItem(authRestoreStorageKey) === "1") {
+            return;
+          }
+          markerStorage.setItem(authRestoreStorageKey, "1");
+        } catch (error) {
+          console.warn("[native-shell] Unable to persist auth restore marker:", error);
+        }
+        parentWindow.location.reload();
       }
 
       function readCachedStaticBase(candidateSignature) {
@@ -450,6 +558,9 @@ def _inject_native_shell_bootstrap() -> None:
           control.className = "sl-native-bottom-nav__item" + (isActive ? " is-active" : "");
           control.setAttribute("aria-label", (item && item.ariaLabel) || (item && item.label) || "");
           control.setAttribute("href", resolveNavigationHref(item && item.pathname));
+          control.addEventListener("click", function () {
+            ensureAuthCookieFromStorage({ force: true });
+          });
           if (isActive) {
             control.setAttribute("aria-current", "page");
           }
@@ -595,6 +706,7 @@ def _inject_native_shell_bootstrap() -> None:
             control.setAttribute("aria-current", "page");
           }
           control.addEventListener("click", function () {
+            ensureAuthCookieFromStorage({ force: true });
             state.mobileMenuOpen = false;
           });
 
@@ -807,6 +919,7 @@ def _inject_native_shell_bootstrap() -> None:
       state.renderMobileShell = renderMobileShell;
       installIOSScrollGuard();
       installMobileDrawerDismissHandlers();
+      installAuthCookieRecovery();
       renderBottomNav(state.mobileNavConfig || state.bottomNavConfig || null);
       renderMobileShell(state.mobileNavConfig || state.bottomNavConfig || null);
       chooseStaticBase(function (staticBaseUrl) {
@@ -817,7 +930,10 @@ def _inject_native_shell_bootstrap() -> None:
     </script>
     """
     components.html(
-        bootstrap_script.replace("__CONFIG_JSON__", config_json),
+        bootstrap_script.replace("__CONFIG_JSON__", config_json)
+        .replace("__AUTH_COOKIE_NAME__", auth_cookie_name)
+        .replace("__AUTH_STORAGE_KEY__", auth_storage_key)
+        .replace("__AUTH_COOKIE_MAX_AGE__", auth_cookie_max_age),
         height=0,
     )
 

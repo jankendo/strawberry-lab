@@ -95,8 +95,12 @@ def test_native_shell_bootstrap_caches_static_base_and_uses_direct_nav_links(mon
     assert "sessionStorage" in captured["html"]
     assert "__slNativeShellStaticBase" in captured["html"]
     assert "resolveNavigationHref" in captured["html"]
+    assert "ensureAuthCookieFromStorage" in captured["html"]
+    assert "__sl_remember_auth_v1" in captured["html"]
+    assert "installAuthCookieRecovery();" in captured["html"]
     assert "renderBottomNav(state.mobileNavConfig || state.bottomNavConfig || null);" in captured["html"]
     assert 'control.setAttribute("href", resolveNavigationHref(item && item.pathname));' in captured["html"]
+    assert 'ensureAuthCookieFromStorage({ force: true });' in captured["html"]
     assert 'a[data-testid="stPageLink-NavLink"]' not in captured["html"]
 
 
