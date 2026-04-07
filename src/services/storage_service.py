@@ -289,8 +289,9 @@ def _finalize_direct_uploads(
             "file_size_bytes": int(entry["file_size_bytes"]),
             "width": int(entry["width"]),
             "height": int(entry["height"]),
+            **({"is_primary": index == 0 and not existing_rows} if table == "variety_images" else {}),
         }
-        for entry in pending_inserts
+        for index, entry in enumerate(pending_inserts)
     ]
     inserted = client.table(table).insert(rows).execute().data or []
     _clear_image_cache()
@@ -312,6 +313,17 @@ def _upload_image(
     ext = Path(file_name).suffix.lower()
     processed = process_image(raw_bytes, ext)
     storage_path = f"{base_path}/{relation_id}/{uuid4()}_{_safe_file_stem(file_name)}{processed.extension}"
+    is_primary = False
+    if relation_column == "variety_id":
+        is_primary = (
+            _count_relation_images(
+                client,
+                table="variety_images",
+                relation_column="variety_id",
+                relation_id=relation_id,
+            )
+            == 0
+        )
     client.storage.from_(bucket).upload(
         path=storage_path,
         file=processed.bytes_data,
@@ -327,6 +339,8 @@ def _upload_image(
         "width": processed.width,
         "height": processed.height,
     }
+    if relation_column == "variety_id":
+        metadata["is_primary"] = is_primary
     table = "variety_images" if relation_column == "variety_id" else "review_images"
     inserted = client.table(table).insert(metadata).execute().data[0]
     _clear_image_cache()

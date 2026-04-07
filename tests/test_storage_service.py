@@ -10,6 +10,7 @@ class _FakeStorageBucket:
     def __init__(self, bucket: str, *, missing_paths: set[str] | None = None) -> None:
         self.bucket = bucket
         self.created: list[tuple[str, object | None]] = []
+        self.uploads: list[tuple[str, object, object | None]] = []
         self.missing_paths = set(missing_paths or [])
 
     def create_signed_upload_url(self, path: str, options: object | None = None) -> dict:
@@ -18,6 +19,10 @@ class _FakeStorageBucket:
 
     def create_signed_url(self, path: str, _expires_in: int) -> dict:
         return {"signed_url": f"https://example.supabase.co/storage/v1/{self.bucket}/{path}?token=read"}
+
+    def upload(self, path: str, file, file_options: object | None = None) -> dict:
+        self.uploads.append((path, file, file_options))
+        return {"path": path}
 
     def exists(self, path: str) -> bool:
         return path not in self.missing_paths
@@ -83,7 +88,8 @@ class _FakeTable:
 
     def execute(self):
         if self._mode == "insert":
-            payload = self._insert_rows or []
+            raw_payload = self._insert_rows or []
+            payload = [dict(raw_payload)] if isinstance(raw_payload, dict) else [dict(row) for row in raw_payload]
             self.client.inserted[self.name] = payload
             self.client.rows.setdefault(self.name, []).extend(payload)
             return SimpleNamespace(data=payload, count=None)
@@ -307,7 +313,40 @@ def test_finalize_variety_image_direct_uploads_deduplicates_storage_paths(monkey
 
     assert len(inserted) == 1
     assert len(client.inserted["variety_images"]) == 1
+    assert client.inserted["variety_images"][0]["is_primary"] is True
     assert cache_cleared["called"] is True
+
+
+def test_finalize_variety_image_direct_uploads_marks_only_first_image_primary_for_empty_variety(monkeypatch) -> None:
+    client = _FakeClient(counts={"variety_images": 0})
+    monkeypatch.setattr(storage_service, "get_user_client", lambda: client)
+
+    uploaded = [
+        {
+            "client_file_id": "file-1",
+            "file_name": "sample-1.webp",
+            "mime_type": "image/webp",
+            "file_size_bytes": 130_000,
+            "width": 1200,
+            "height": 800,
+            "storage_path": "varieties/variety-1/path/sample-1.webp",
+        },
+        {
+            "client_file_id": "file-2",
+            "file_name": "sample-2.webp",
+            "mime_type": "image/webp",
+            "file_size_bytes": 120_000,
+            "width": 1200,
+            "height": 800,
+            "storage_path": "varieties/variety-1/path/sample-2.webp",
+        },
+    ]
+
+    inserted = storage_service.finalize_variety_image_direct_uploads("variety-1", uploaded)
+
+    assert len(inserted) == 2
+    assert inserted[0]["is_primary"] is True
+    assert inserted[1]["is_primary"] is False
 
 
 def test_finalize_variety_image_direct_uploads_rejects_limit_overflow(monkeypatch) -> None:
@@ -424,3 +463,27 @@ def test_set_primary_variety_image_rejects_unknown_image(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="指定した画像が見つかりません"):
         storage_service.set_primary_variety_image("variety-1", "image-2")
+
+
+def test_upload_variety_image_marks_first_uploaded_image_as_primary(monkeypatch) -> None:
+    client = _FakeClient(counts={"variety_images": 0})
+    processed = SimpleNamespace(
+        bytes_data=b"processed-image",
+        mime_type="image/webp",
+        extension=".webp",
+        file_size_bytes=3456,
+        width=640,
+        height=480,
+    )
+    cache_cleared = {"called": False}
+    monkeypatch.setattr(storage_service, "get_user_client", lambda: client)
+    monkeypatch.setattr(storage_service, "validate_image_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(storage_service, "process_image", lambda *_args, **_kwargs: processed)
+    monkeypatch.setattr(storage_service, "_clear_image_cache", lambda: cache_cleared.__setitem__("called", True))
+
+    inserted = storage_service.upload_variety_image("variety-1", "sample.png", b"raw-image")
+
+    assert inserted["variety_id"] == "variety-1"
+    assert inserted["is_primary"] is True
+    assert client.storage.from_("variety-images").uploads
+    assert cache_cleared["called"] is True

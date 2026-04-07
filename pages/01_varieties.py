@@ -185,6 +185,7 @@ _VARIETY_IMAGE_UPLOAD_QUEUE_KEY = "variety-image-upload-queue"
 _VARIETY_IMAGE_UPLOAD_REPLAY_EVENT = "ichigodb:variety-image-upload-replay-request"
 _VARIETY_PENDING_UPLOAD_INTENT_REMOVALS_KEY = "variety_pending_upload_intent_removals"
 _VARIETY_EDIT_TARGET_KEY = "variety_edit_target_id"
+_VARIETY_EDIT_TARGET_REQUEST_KEY = "variety_edit_target_requested_id"
 _VARIETY_NEW_TARGET = "新規作成"
 
 
@@ -199,7 +200,7 @@ def _resolve_select_index(options: list[str], value: object, *, fallback: int = 
 
 def _set_variety_edit_target(target_id: object, *, switch_section: bool = True) -> None:
     normalized = str(target_id or "").strip()
-    st.session_state[_VARIETY_EDIT_TARGET_KEY] = normalized or _VARIETY_NEW_TARGET
+    st.session_state[_VARIETY_EDIT_TARGET_REQUEST_KEY] = normalized or _VARIETY_NEW_TARGET
     if normalized:
         st.session_state["variety_selected_from_list"] = normalized
     if switch_section:
@@ -982,7 +983,11 @@ def _render_variety_edit_section() -> None:
 
     active = list_active_varieties()
     edit_options = [_VARIETY_NEW_TARGET] + [str(v["id"]) for v in active]
-    st.session_state[_VARIETY_EDIT_TARGET_KEY] = _resolve_variety_edit_target(active)
+    requested_edit_target = str(st.session_state.pop(_VARIETY_EDIT_TARGET_REQUEST_KEY, "") or "").strip()
+    if requested_edit_target in edit_options:
+        st.session_state[_VARIETY_EDIT_TARGET_KEY] = requested_edit_target
+    elif str(st.session_state.get(_VARIETY_EDIT_TARGET_KEY) or "").strip() not in edit_options:
+        st.session_state[_VARIETY_EDIT_TARGET_KEY] = _resolve_variety_edit_target(active)
     edit_id = st.selectbox(
         "編集対象",
         edit_options,
