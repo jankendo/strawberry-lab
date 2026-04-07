@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from uuid import uuid4
@@ -23,7 +24,9 @@ LIST_TAB_FIELDS = (
 LIST_TAB_SORT_FIELDS = "id,name,origin_prefecture,updated_at,created_at,registered_year,registration_date"
 LIST_TAB_LOCKED_FIELDS = "id,registration_number,application_number"
 _POSTGREST_IN_CHUNK_SIZE = 200
-_LIST_TAB_INDEX_BATCH_SIZE = 1000
+_LIST_TAB_INDEX_BATCH_SIZE = 5000
+_VARIETY_ID_FETCH_CHUNK_SIZE = 400
+_DISCOVERED_DIRECT_QUERY_LIMIT = 400
 
 
 def _apply_variety_filters(
@@ -85,6 +88,33 @@ def _sort_variety_rows(rows: Sequence[dict], *, sort_field: str, sort_desc: bool
 def _ordered_variety_rows_by_ids(rows: Sequence[dict], ordered_ids: Sequence[str]) -> list[dict]:
     row_by_id = {str(row.get("id") or ""): dict(row) for row in rows if row.get("id")}
     return [row_by_id[variety_id] for variety_id in ordered_ids if variety_id in row_by_id]
+
+
+def _fetch_variety_rows_by_ids(fields: str, variety_ids: Sequence[str]) -> list[dict]:
+    ids = [str(variety_id) for variety_id in dict.fromkeys(variety_ids) if str(variety_id).strip()]
+    if not ids:
+        return []
+    id_chunks = list(chunked_sequence(ids, _VARIETY_ID_FETCH_CHUNK_SIZE))
+
+    def _fetch_chunk(id_chunk: Sequence[str]) -> list[dict]:
+        client = get_user_client()
+        return (
+            client.table("varieties")
+            .select(fields)
+            .in_("id", list(id_chunk))
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+
+    if len(id_chunks) == 1:
+        rows = _fetch_chunk(id_chunks[0])
+    else:
+        with ThreadPoolExecutor(max_workers=min(4, len(id_chunks))) as executor:
+            rows = [row for chunk_rows in executor.map(_fetch_chunk, id_chunks) for row in chunk_rows]
+    rows.sort(key=lambda row: normalize_search_text(str(row.get("id") or "")))
+    return [dict(row) for row in rows]
 
 
 def _row_matches_variety_list_filters(
@@ -251,70 +281,19 @@ def get_discovered_variety_ids() -> list[str]:
 @scoped_cache_data(ttl=900, scopes=("varieties", "reviews"))
 def list_variety_list_index_for_ids(variety_ids: Sequence[str]) -> list[dict]:
     """Return a cached lightweight index for a specific variety ID set."""
-    ids = [str(variety_id) for variety_id in dict.fromkeys(variety_ids) if str(variety_id).strip()]
-    if not ids:
-        return []
-    client = get_user_client()
-    rows: list[dict] = []
-    for id_chunk in chunked_sequence(ids, _POSTGREST_IN_CHUNK_SIZE):
-        chunk = (
-            client.table("varieties")
-            .select(LIST_TAB_FIELDS)
-            .in_("id", id_chunk)
-            .is_("deleted_at", "null")
-            .execute()
-            .data
-            or []
-        )
-        rows.extend(chunk)
-    rows.sort(key=lambda row: normalize_search_text(str(row.get("id") or "")))
-    return _annotate_variety_index_rows(rows)
+    return _annotate_variety_index_rows(_fetch_variety_rows_by_ids(LIST_TAB_FIELDS, variety_ids))
 
 
 @scoped_cache_data(ttl=900, scopes="varieties")
 def list_variety_locked_index_for_ids(variety_ids: Sequence[str]) -> list[dict]:
     """Return a minimal locked-data index for a specific variety ID set."""
-    ids = [str(variety_id) for variety_id in dict.fromkeys(variety_ids) if str(variety_id).strip()]
-    if not ids:
-        return []
-    client = get_user_client()
-    rows: list[dict] = []
-    for id_chunk in chunked_sequence(ids, _POSTGREST_IN_CHUNK_SIZE):
-        chunk = (
-            client.table("varieties")
-            .select(LIST_TAB_LOCKED_FIELDS)
-            .in_("id", id_chunk)
-            .is_("deleted_at", "null")
-            .execute()
-            .data
-            or []
-        )
-        rows.extend(dict(row) for row in chunk)
-    rows.sort(key=lambda row: normalize_search_text(str(row.get("id") or "")))
-    return rows
+    return _fetch_variety_rows_by_ids(LIST_TAB_LOCKED_FIELDS, variety_ids)
 
 
 @scoped_cache_data(ttl=900, scopes="varieties")
 def list_variety_sort_index_for_ids(variety_ids: Sequence[str]) -> list[dict]:
     """Return a cached lightweight sort/filter index for a specific variety ID set."""
-    ids = [str(variety_id) for variety_id in dict.fromkeys(variety_ids) if str(variety_id).strip()]
-    if not ids:
-        return []
-    client = get_user_client()
-    rows: list[dict] = []
-    for id_chunk in chunked_sequence(ids, _POSTGREST_IN_CHUNK_SIZE):
-        chunk = (
-            client.table("varieties")
-            .select(LIST_TAB_SORT_FIELDS)
-            .in_("id", id_chunk)
-            .is_("deleted_at", "null")
-            .execute()
-            .data
-            or []
-        )
-        rows.extend(dict(row) for row in chunk)
-    rows.sort(key=lambda row: normalize_search_text(str(row.get("id") or "")))
-    return rows
+    return _fetch_variety_rows_by_ids(LIST_TAB_SORT_FIELDS, variety_ids)
 
 
 def get_variety_list_page_ids(
@@ -355,6 +334,28 @@ def get_variety_list_page_ids(
             return page_ids, total, True
         selected_rows = list_variety_sort_index_for_ids([normalized_selected_id])
         return page_ids, total, bool(selected_rows)
+    if (
+        not normalized_keyword
+        and discovery_filter == "発見済み"
+        and not prefecture
+        and 0 < len(discovered_ids) <= _DISCOVERED_DIRECT_QUERY_LIMIT
+    ):
+        client = get_user_client()
+        page_rows = (
+            client.table("varieties")
+            .select("id")
+            .in_("id", discovered_ids)
+            .is_("deleted_at", "null")
+            .order(sort_field, desc=sort_desc)
+            .range((normalized_page - 1) * normalized_page_size, normalized_page * normalized_page_size - 1)
+            .execute()
+            .data
+            or []
+        )
+        page_ids = [str(row.get("id") or "") for row in page_rows if row.get("id")]
+        if not normalized_selected_id:
+            return page_ids, len(discovered_ids), True
+        return page_ids, len(discovered_ids), normalized_selected_id in discovered_id_set
     if normalized_keyword:
         source_rows = (
             [dict(row) for row in list_variety_list_index_for_ids(discovered_ids)]

@@ -214,6 +214,7 @@ def test_list_varieties_for_list_tab_filters_discovered_rows_before_paging(monke
 
 
 def test_list_varieties_for_list_tab_uses_discovered_only_index(monkeypatch) -> None:
+    monkeypatch.setattr(variety_service, "_DISCOVERED_DIRECT_QUERY_LIMIT", 0)
     monkeypatch.setattr(variety_service, "get_discovered_variety_ids", lambda: ["id-3", "id-5"])
     monkeypatch.setattr(
         variety_service,
@@ -309,6 +310,52 @@ def test_get_variety_list_page_ids_uses_direct_page_query_for_default_view(monke
     monkeypatch.setattr(variety_service, "list_variety_sort_index", _unexpected_search_index)
 
     page_ids, total, selected_matches = variety_service.get_variety_list_page_ids(selected_id="id-4")
+
+    assert page_ids == ["id-2", "id-4"]
+    assert total == 2
+    assert selected_matches is True
+
+
+def test_get_variety_list_page_ids_uses_direct_page_query_for_discovered_default_view(monkeypatch) -> None:
+    client = _ChunkingClient(
+        {
+            "varieties": [
+                {
+                    "id": "id-2",
+                    "name": "品種2",
+                    "origin_prefecture": "佐賀県",
+                    "updated_at": "2026-04-03",
+                    "created_at": "2026-04-03",
+                    "registered_year": 2026,
+                    "registration_date": "2026-04-03",
+                    "deleted_at": None,
+                },
+                {
+                    "id": "id-4",
+                    "name": "品種4",
+                    "origin_prefecture": "佐賀県",
+                    "updated_at": "2026-04-01",
+                    "created_at": "2026-04-01",
+                    "registered_year": 2026,
+                    "registration_date": "2026-04-01",
+                    "deleted_at": None,
+                },
+            ]
+        }
+    )
+    monkeypatch.setattr(variety_service, "get_user_client", lambda: client)
+    monkeypatch.setattr(variety_service, "get_discovered_variety_ids", lambda: ["id-2", "id-4"])
+
+    def _unexpected_index():
+        raise AssertionError("discovered default view should not build a full sort/search index")
+
+    monkeypatch.setattr(variety_service, "list_variety_sort_index_for_ids", _unexpected_index)
+    monkeypatch.setattr(variety_service, "list_variety_list_index_for_ids", _unexpected_index)
+
+    page_ids, total, selected_matches = variety_service.get_variety_list_page_ids(
+        discovery_filter="発見済み",
+        selected_id="id-4",
+    )
 
     assert page_ids == ["id-2", "id-4"]
     assert total == 2
