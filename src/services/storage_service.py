@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Mapping, Sequence
 import mimetypes
 from pathlib import Path
@@ -20,7 +19,7 @@ from src.utils.image_utils import ALLOWED_MIME_TYPES, MAX_LONG_EDGE, MAX_UPLOAD_
 _VARIETY_IMAGE_LIMIT = 5
 _REVIEW_IMAGE_LIMIT = 3
 _POSTGREST_IN_CHUNK_SIZE = 200
-_SIGNED_URL_BATCH_FALLBACK_EXCEPTIONS = (TypeError, ValidationError, StorageException)
+_SIGNED_URL_FALLBACK_EXCEPTIONS = (TypeError, ValidationError, StorageException)
 _MIME_EXTENSION_MAP = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -475,6 +474,13 @@ def _extract_signed_urls(payload: object, *, expected_count: int) -> list[str | 
     return normalized
 
 
+def _create_signed_url_or_none(bucket_api, storage_path: str, expires_in: int) -> str | None:
+    try:
+        return _extract_signed_url(bucket_api.create_signed_url(storage_path, expires_in))
+    except _SIGNED_URL_FALLBACK_EXCEPTIONS:
+        return None
+
+
 def _create_signed_urls(bucket_api, storage_paths: Sequence[str], expires_in: int) -> list[str | None]:
     normalized_paths = [str(path) for path in storage_paths if str(path).strip()]
     if not normalized_paths:
@@ -483,15 +489,13 @@ def _create_signed_urls(bucket_api, storage_paths: Sequence[str], expires_in: in
     if callable(batch_method):
         try:
             batch_payload = batch_method(normalized_paths, expires_in)
-        except _SIGNED_URL_BATCH_FALLBACK_EXCEPTIONS:
+        except _SIGNED_URL_FALLBACK_EXCEPTIONS:
             batch_payload = None
         else:
             signed_urls = _extract_signed_urls(batch_payload, expected_count=len(normalized_paths))
             if signed_urls is not None:
                 return signed_urls
-    max_workers = min(4, len(normalized_paths))
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        return list(executor.map(lambda path: _extract_signed_url(bucket_api.create_signed_url(path, expires_in)), normalized_paths))
+    return [_create_signed_url_or_none(bucket_api, path, expires_in) for path in normalized_paths]
 
 
 def _clear_image_cache() -> None:

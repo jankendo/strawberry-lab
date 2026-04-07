@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from storage3.exceptions import StorageApiError
 from storage3.types import CreateSignedUploadUrlOptions, SignedUrlsJsonResponse
 
 from src.services import storage_service
@@ -654,6 +655,66 @@ def test_create_signed_urls_falls_back_to_single_url_generation_on_validation_er
     ]
     assert images["variety-1"]["signed_url"].endswith("?token=read")
     assert images["variety-2"]["signed_url"].endswith("?token=read")
+
+
+def test_create_signed_urls_returns_none_when_storage_access_is_denied(monkeypatch) -> None:
+    client = _FakeClient(
+        rows={
+            "variety_images": [
+                {
+                    "id": "image-1",
+                    "variety_id": "variety-1",
+                    "storage_path": "varieties/variety-1/fallback-1.webp",
+                    "file_name": "fallback-1.webp",
+                    "mime_type": "image/webp",
+                    "width": 1200,
+                    "height": 800,
+                    "is_primary": True,
+                    "created_at": "2026-04-07T00:00:00+00",
+                },
+                {
+                    "id": "image-2",
+                    "variety_id": "variety-2",
+                    "storage_path": "varieties/variety-2/fallback-2.webp",
+                    "file_name": "fallback-2.webp",
+                    "mime_type": "image/webp",
+                    "width": 1200,
+                    "height": 800,
+                    "is_primary": True,
+                    "created_at": "2026-04-07T00:01:00+00",
+                },
+            ]
+        }
+    )
+    bucket = client.storage.from_("variety-images")
+    batch_attempts: list[list[str]] = []
+    single_attempts: list[str] = []
+
+    def _denied_batch(paths: list[str], _expires_in: int) -> list[dict]:
+        batch_attempts.append(list(paths))
+        raise StorageApiError("denied", "AccessDenied", 403)
+
+    def _denied_single(path: str, _expires_in: int) -> dict:
+        single_attempts.append(path)
+        raise StorageApiError("denied", "AccessDenied", 403)
+
+    monkeypatch.setattr(storage_service, "get_user_client", lambda: client)
+    monkeypatch.setattr(bucket, "create_signed_urls", _denied_batch)
+    monkeypatch.setattr(bucket, "create_signed_url", _denied_single)
+    storage_service.list_primary_variety_images_with_signed_urls.clear()
+
+    images = storage_service.list_primary_variety_images_with_signed_urls(["variety-1", "variety-2"])
+
+    assert batch_attempts == [[
+        "varieties/variety-1/fallback-1.webp",
+        "varieties/variety-2/fallback-2.webp",
+    ]]
+    assert single_attempts == [
+        "varieties/variety-1/fallback-1.webp",
+        "varieties/variety-2/fallback-2.webp",
+    ]
+    assert images["variety-1"]["signed_url"] is None
+    assert images["variety-2"]["signed_url"] is None
 
 
 def test_upload_variety_image_marks_first_uploaded_image_as_primary(monkeypatch) -> None:

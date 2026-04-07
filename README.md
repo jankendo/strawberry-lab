@@ -57,8 +57,8 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 
 ## Access mode
 - This app now runs in **public mode** by default and no longer requires an interactive login step.
-- To keep behavior equivalent to the former admin-login flow, apply the updated `database/004_rls.sql` (or `database/supabase_all_in_one.sql`) so the anon role can access the application tables.
-- The settings page now includes a **全テーブル接続チェック** panel to confirm runtime access for every table used by the app.
+- To keep behavior equivalent to the former admin-login flow, apply the updated `database/004_rls.sql` **and** `database/005_storage.sql` (or `database/supabase_all_in_one.sql`) so the anon role can access both the application tables and image storage.
+- The settings page now includes **全テーブル接続チェック** and **画像ストレージ接続チェック** panels to confirm runtime access for both tables and image storage.
 
 ## Cache invalidation / scale behavior
 - Data caches are partitioned by authenticated user scope and revision tokens.

@@ -44,6 +44,10 @@ TABLE_ACCESS_CHECKS = [
     "variety_scrape_runs",
     "variety_scrape_logs",
 ]
+STORAGE_ACCESS_CHECKS = [
+    {"bucket": "variety-images", "table": "variety_images", "label": "品種画像"},
+    {"bucket": "review-images", "table": "review_images", "label": "レビュー画像"},
+]
 
 
 @st.cache_data(ttl=60)
@@ -67,6 +71,54 @@ def _get_table_access_diagnostics() -> list[dict[str, str]]:
                     "テーブル": table_name,
                     "状態": "NG",
                     "件数": "-",
+                    "詳細": f"{type(exc).__name__}: {exc}",
+                }
+            )
+    return rows
+
+
+@st.cache_data(ttl=60)
+def _get_storage_access_diagnostics() -> list[dict[str, str]]:
+    client = get_user_client()
+    rows: list[dict[str, str]] = []
+    for check in STORAGE_ACCESS_CHECKS:
+        bucket_name = str(check["bucket"])
+        table_name = str(check["table"])
+        label = str(check["label"])
+        try:
+            response = client.table(table_name).select("storage_path").limit(1).execute()
+            data = response.data if isinstance(response.data, list) else []
+            sample_path = next(
+                (str(row.get("storage_path") or "").strip() for row in data if isinstance(row, dict)),
+                "",
+            )
+            if not sample_path:
+                rows.append(
+                    {
+                        "対象": label,
+                        "状態": "OK",
+                        "詳細": "対象データなし",
+                    }
+                )
+                continue
+            signed = client.storage.from_(bucket_name).create_signed_url(sample_path, 60)
+            signed_url = (
+                signed.get("signedURL") or signed.get("signedUrl") or signed.get("signed_url")
+                if isinstance(signed, dict)
+                else None
+            )
+            rows.append(
+                {
+                    "対象": label,
+                    "状態": "OK" if signed_url else "NG",
+                    "詳細": "署名URL生成可" if signed_url else "署名URLが空です",
+                }
+            )
+        except Exception as exc:
+            rows.append(
+                {
+                    "対象": label,
+                    "状態": "NG",
                     "詳細": f"{type(exc).__name__}: {exc}",
                 }
             )
@@ -437,6 +489,16 @@ elif active_section == "診断情報":
             mobile_title_key="テーブル",
             mobile_subtitle_key="状態",
             mobile_metadata_keys=["件数", "詳細"],
+        )
+
+    with st.container(border=True):
+        render_section_title("画像ストレージ接続チェック")
+        st.caption("現在の公開モード client で画像バケットの署名URLを生成できるかを確認します。")
+        render_table(
+            _get_storage_access_diagnostics(),
+            mobile_title_key="対象",
+            mobile_subtitle_key="状態",
+            mobile_metadata_keys=["詳細"],
         )
 
     if st.toggle("詳細スナップショット(JSON)を読み込む", value=False, key="settings_show_diagnostic_snapshot"):
