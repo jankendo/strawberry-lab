@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import streamlit as st
 
-from src.core.supabase_client import get_anon_supabase_client, get_app_supabase_client
+from src.core.supabase_client import get_anon_supabase_client
 
 
 AUTH_KEYS = ("current_user", "supabase_client_user", "is_authenticated", "access_token", "refresh_token", "admin_checked_at")
@@ -54,7 +54,7 @@ def ensure_public_access_session() -> None:
     initialize_auth_state()
     client = st.session_state.get("supabase_client_user")
     if client is None:
-        st.session_state["supabase_client_user"] = get_app_supabase_client()
+        st.session_state["supabase_client_user"] = get_anon_supabase_client()
     st.session_state["current_user"] = dict(PUBLIC_ACCESS_USER)
     st.session_state["is_authenticated"] = True
     st.session_state["access_token"] = None
@@ -310,16 +310,10 @@ def _set_authenticated_state(*, client, user, access_token: str, refresh_token: 
 
 def get_auth_persistence_status() -> dict[str, str | bool]:
     """Return public-access status information for diagnostics pages."""
-    if get_app_supabase_client() is not None:
-        return {
-            "available": True,
-            "code": "public_access",
-            "message": "公開モードが有効です。ログインなしで利用できます。",
-        }
     return {
-        "available": False,
-        "code": "public_access_unavailable",
-        "message": "公開モード client を初期化できませんでした。",
+        "available": True,
+        "code": "public_access",
+        "message": "公開モードが有効です。ログインなしで利用できます。",
     }
 
 

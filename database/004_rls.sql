@@ -39,3 +39,22 @@ drop policy if exists admin_all_variety_scrape_runs on public.variety_scrape_run
 create policy admin_all_variety_scrape_runs on public.variety_scrape_runs for all to authenticated using (public.is_admin()) with check (public.is_admin());
 drop policy if exists admin_all_variety_scrape_logs on public.variety_scrape_logs;
 create policy admin_all_variety_scrape_logs on public.variety_scrape_logs for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists public_all_app_users on public.app_users;
+create policy public_all_app_users on public.app_users for all to anon using (true) with check (true);
+drop policy if exists public_all_varieties on public.varieties;
+create policy public_all_varieties on public.varieties for all to anon using (true) with check (true);
+drop policy if exists public_all_variety_parent_links on public.variety_parent_links;
+create policy public_all_variety_parent_links on public.variety_parent_links for all to anon using (true) with check (true);
+drop policy if exists public_all_reviews on public.reviews;
+create policy public_all_reviews on public.reviews for all to anon using (true) with check (true);
+drop policy if exists public_all_variety_images on public.variety_images;
+create policy public_all_variety_images on public.variety_images for all to anon using (true) with check (true);
+drop policy if exists public_all_review_images on public.review_images;
+create policy public_all_review_images on public.review_images for all to anon using (true) with check (true);
+drop policy if exists public_all_notes on public.notes;
+create policy public_all_notes on public.notes for all to anon using (true) with check (true);
+drop policy if exists public_all_variety_scrape_runs on public.variety_scrape_runs;
+create policy public_all_variety_scrape_runs on public.variety_scrape_runs for all to anon using (true) with check (true);
+drop policy if exists public_all_variety_scrape_logs on public.variety_scrape_logs;
+create policy public_all_variety_scrape_logs on public.variety_scrape_logs for all to anon using (true) with check (true);

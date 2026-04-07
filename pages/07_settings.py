@@ -23,7 +23,7 @@ from src.components.layout import (
 from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.tables import is_mobile_client, render_table
 from src.config import get_config
-from src.services.auth_service import get_auth_persistence_status, require_admin_session
+from src.services.auth_service import get_auth_persistence_status, get_user_client, require_admin_session
 from src.services.cache_service import get_cache_runtime_status
 from src.services.export_service import export_table_csv
 from src.services.scrape_service import (
@@ -33,6 +33,44 @@ from src.services.scrape_service import (
 )
 
 SECTION_ORDER = ["データ出力", "実行履歴", "ローカル実行", "診断情報"]
+TABLE_ACCESS_CHECKS = [
+    "app_users",
+    "varieties",
+    "variety_parent_links",
+    "reviews",
+    "variety_images",
+    "review_images",
+    "notes",
+    "variety_scrape_runs",
+    "variety_scrape_logs",
+]
+
+
+@st.cache_data(ttl=60)
+def _get_table_access_diagnostics() -> list[dict[str, str]]:
+    client = get_user_client()
+    rows: list[dict[str, str]] = []
+    for table_name in TABLE_ACCESS_CHECKS:
+        try:
+            response = client.table(table_name).select("*", count="exact").limit(1).execute()
+            rows.append(
+                {
+                    "テーブル": table_name,
+                    "状態": "OK",
+                    "件数": str(int(response.count or 0)),
+                    "詳細": "読込可",
+                }
+            )
+        except Exception as exc:
+            rows.append(
+                {
+                    "テーブル": table_name,
+                    "状態": "NG",
+                    "件数": "-",
+                    "詳細": f"{type(exc).__name__}: {exc}",
+                }
+            )
+    return rows
 SECTION_HINTS = {
     "データ出力": "バックアップ・共有用のCSVを取得します。",
     "実行履歴": "取得ジョブの状態とログを確認します。",
@@ -371,7 +409,7 @@ elif active_section == "診断情報":
             icon="🔐",
         )
         render_status_badge(
-            "認証保持は利用可能" if auth_persistence["available"] else "認証保持に制限あり",
+            "公開モード: 有効" if auth_persistence["available"] else "公開モード: 制限あり",
             tone="success" if auth_persistence["available"] else "warning",
             icon="🪪",
         )
@@ -389,6 +427,16 @@ elif active_section == "診断情報":
             "セッション固定を想定" if cache_runtime["sticky_sessions_expected"] else "セッション固定なしでも運用可",
             tone="warning" if cache_runtime["sticky_sessions_expected"] else "neutral",
             icon="🧭",
+        )
+
+    with st.container(border=True):
+        render_section_title("全テーブル接続チェック")
+        st.caption("現在の公開モード client で各テーブルを 1 件ずつ読めるかを確認します。")
+        render_table(
+            _get_table_access_diagnostics(),
+            mobile_title_key="テーブル",
+            mobile_subtitle_key="状態",
+            mobile_metadata_keys=["件数", "詳細"],
         )
 
     if st.toggle("詳細スナップショット(JSON)を読み込む", value=False, key="settings_show_diagnostic_snapshot"):

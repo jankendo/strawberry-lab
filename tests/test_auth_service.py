@@ -190,7 +190,7 @@ def test_ensure_public_access_session_seeds_public_client(monkeypatch) -> None:
     fake_client = SimpleNamespace(name="public-client")
     session_state: dict[str, object] = {}
     monkeypatch.setattr(auth_service.st, "session_state", session_state)
-    monkeypatch.setattr(auth_service, "get_app_supabase_client", lambda: fake_client)
+    monkeypatch.setattr(auth_service, "get_anon_supabase_client", lambda: fake_client)
 
     auth_service.ensure_public_access_session()
 
@@ -203,7 +203,7 @@ def test_get_user_client_falls_back_to_public_client(monkeypatch) -> None:
     fake_client = SimpleNamespace(name="public-client")
     session_state: dict[str, object] = {}
     monkeypatch.setattr(auth_service.st, "session_state", session_state)
-    monkeypatch.setattr(auth_service, "get_app_supabase_client", lambda: fake_client)
+    monkeypatch.setattr(auth_service, "get_anon_supabase_client", lambda: fake_client)
 
     client = auth_service.get_user_client()
 
@@ -215,7 +215,7 @@ def test_require_admin_session_keeps_public_mode_active(monkeypatch) -> None:
     fake_client = SimpleNamespace(name="public-client")
     session_state: dict[str, object] = {}
     monkeypatch.setattr(auth_service.st, "session_state", session_state)
-    monkeypatch.setattr(auth_service, "get_app_supabase_client", lambda: fake_client)
+    monkeypatch.setattr(auth_service, "get_anon_supabase_client", lambda: fake_client)
 
     auth_service.require_admin_session()
 

@@ -13,7 +13,6 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
    - `pip install -r requirements-scraper.txt`
    - `pip install -r requirements-dev.txt`
 2. Copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml` and set real values.
-    - `SUPABASE_SERVICE_ROLE_KEY` を設定すると、公開モードでもアプリから全管理機能へアクセスできます。
     - `APP_HIDE_HOST_CHROME` を `true` にすると、Streamlitホスト由来の上部ツールUIを非表示にします（既定値は `true`）。
    - マルチインスタンス運用でキャッシュ無効化を共有したい場合は `CACHE_REDIS_URL`（任意で `CACHE_NAMESPACE`）を設定してください。
    - Redis未設定時はプロセスローカル無効化で動作します。必要に応じて `APP_EXPECT_STICKY_SESSIONS=true` の前提で同一ユーザーを同一インスタンスへ固定してください。
@@ -58,8 +57,8 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 
 ## Access mode
 - This app now runs in **public mode** by default and no longer requires an interactive login step.
-- For full read/write access under the existing RLS rules, set `SUPABASE_SERVICE_ROLE_KEY` in `.streamlit/secrets.toml`.
-- If `SUPABASE_SERVICE_ROLE_KEY` is not configured, the app falls back to the anon key and available operations depend on your Supabase policies.
+- To keep behavior equivalent to the former admin-login flow, apply the updated `database/004_rls.sql` (or `database/supabase_all_in_one.sql`) so the anon role can access the application tables.
+- The settings page now includes a **全テーブル接続チェック** panel to confirm runtime access for every table used by the app.
 
 ## Cache invalidation / scale behavior
 - Data caches are partitioned by authenticated user scope and revision tokens.
