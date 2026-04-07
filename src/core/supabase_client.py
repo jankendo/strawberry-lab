@@ -15,6 +15,20 @@ def get_anon_supabase_client() -> Client:
     return create_client(cfg.supabase_url, cfg.supabase_anon_key)
 
 
+@st.cache_resource
+def get_service_role_supabase_client() -> Client | None:
+    """Create a Supabase client with the service-role key when configured."""
+    cfg = get_config()
+    if not cfg.supabase_service_role_key:
+        return None
+    return create_client(cfg.supabase_url, cfg.supabase_service_role_key)
+
+
+def get_app_supabase_client() -> Client:
+    """Return the best available app client for public-mode access."""
+    return get_service_role_supabase_client() or get_anon_supabase_client()
+
+
 def get_session_supabase_client(access_token: str, refresh_token: str) -> Client:
     """Create a user-authenticated Supabase client from session tokens."""
     client = get_anon_supabase_client()

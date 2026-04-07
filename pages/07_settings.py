@@ -23,7 +23,7 @@ from src.components.layout import (
 from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.tables import is_mobile_client, render_table
 from src.config import get_config
-from src.services.auth_service import get_auth_persistence_status, logout_user, require_admin_session
+from src.services.auth_service import get_auth_persistence_status, require_admin_session
 from src.services.cache_service import get_cache_runtime_status
 from src.services.export_service import export_table_csv
 from src.services.scrape_service import (
@@ -121,11 +121,9 @@ render_page_header(
 )
 with st.container(border=True):
     if mobile_client:
-        render_section_title("関連ページ / アカウント")
+        render_section_title("関連ページ")
         with st.expander("移動メニューを開く", expanded=False):
             st.page_link("pages/04_pedigree.py", label="🧬 交配図を開く", use_container_width=True)
-            if st.button("ログアウト", use_container_width=True, type="secondary", key="settings_mobile_logout"):
-                logout_user()
     else:
         render_section_title("関連ページ")
         st.page_link("pages/04_pedigree.py", label="🧬 交配図を開く", use_container_width=True)
@@ -351,9 +349,11 @@ elif active_section == "診断情報":
     render_section_title("診断情報")
     auth_persistence = get_auth_persistence_status()
     cache_runtime = get_cache_runtime_status()
-    if auth_persistence["code"] in {"ready_ephemeral_secret", "missing_secret"}:
-        st.warning(auth_persistence["message"])
+    if auth_persistence["code"] == "public_access":
+        st.success(auth_persistence["message"])
     elif not auth_persistence["available"]:
+        st.warning(auth_persistence["message"])
+    else:
         st.info(auth_persistence["message"])
     if cache_runtime["mode"] == "local" and cache_runtime["sticky_sessions_expected"]:
         st.info(str(cache_runtime["summary"]))

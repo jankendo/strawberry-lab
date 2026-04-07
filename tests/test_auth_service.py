@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 from src.services import auth_service
 
 
@@ -188,17 +186,39 @@ def test_logout_user_queues_cookie_clear_before_switch_page(monkeypatch) -> None
     assert "current_user" not in session_state
 
 
-def test_require_admin_session_redirects_when_restore_fails(monkeypatch) -> None:
-    class _StopCalled(Exception):
-        pass
+def test_ensure_public_access_session_seeds_public_client(monkeypatch) -> None:
+    fake_client = SimpleNamespace(name="public-client")
+    session_state: dict[str, object] = {}
+    monkeypatch.setattr(auth_service.st, "session_state", session_state)
+    monkeypatch.setattr(auth_service, "get_app_supabase_client", lambda: fake_client)
 
-    switch_calls: list[str] = []
-    monkeypatch.setattr(auth_service.st, "session_state", {"is_authenticated": False, "current_user": None})
-    monkeypatch.setattr(auth_service, "restore_login_from_cookie", lambda: False)
-    monkeypatch.setattr(auth_service.st, "switch_page", lambda page: switch_calls.append(page))
-    monkeypatch.setattr(auth_service.st, "stop", lambda: (_ for _ in ()).throw(_StopCalled()))
+    auth_service.ensure_public_access_session()
 
-    with pytest.raises(_StopCalled):
-        auth_service.require_admin_session()
+    assert session_state["is_authenticated"] is True
+    assert session_state["current_user"] == auth_service.PUBLIC_ACCESS_USER
+    assert session_state["supabase_client_user"] is fake_client
 
-    assert switch_calls == ["Home.py"]
+
+def test_get_user_client_falls_back_to_public_client(monkeypatch) -> None:
+    fake_client = SimpleNamespace(name="public-client")
+    session_state: dict[str, object] = {}
+    monkeypatch.setattr(auth_service.st, "session_state", session_state)
+    monkeypatch.setattr(auth_service, "get_app_supabase_client", lambda: fake_client)
+
+    client = auth_service.get_user_client()
+
+    assert client is fake_client
+    assert session_state["current_user"] == auth_service.PUBLIC_ACCESS_USER
+
+
+def test_require_admin_session_keeps_public_mode_active(monkeypatch) -> None:
+    fake_client = SimpleNamespace(name="public-client")
+    session_state: dict[str, object] = {}
+    monkeypatch.setattr(auth_service.st, "session_state", session_state)
+    monkeypatch.setattr(auth_service, "get_app_supabase_client", lambda: fake_client)
+
+    auth_service.require_admin_session()
+
+    assert session_state["is_authenticated"] is True
+    assert session_state["current_user"] == auth_service.PUBLIC_ACCESS_USER
+    assert session_state["supabase_client_user"] is fake_client

@@ -9,13 +9,9 @@ from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.skeletons import render_card_skeleton, render_table_skeleton
 from src.components.tables import is_mobile_client, render_table
 from src.services.auth_service import (
-    ensure_auth_cookie_persistence,
-    get_auth_cookie_sync_error,
-    get_auth_persistence_status,
+    ensure_public_access_session,
     get_user_client,
     initialize_auth_state,
-    login_user,
-    restore_login_from_cookie,
 )
 from src.services.cache_service import scoped_cache_data
 
@@ -138,9 +134,7 @@ except ImportError:
 
 st.set_page_config(page_title="StrawberryLab", layout="wide")
 initialize_auth_state()
-_AUTH_RESTORE_RESULT = restore_login_from_cookie()
-if _AUTH_RESTORE_RESULT is not None or st.session_state.get("is_authenticated"):
-    ensure_auth_cookie_persistence()
+ensure_public_access_session()
 inject_app_style()
 render_primary_nav(active_page="dashboard")
 
@@ -320,33 +314,17 @@ def _render_dashboard_loading_skeleton(*, is_mobile: bool, include_feed: bool) -
 
 
 def _render_login() -> None:
-    persistence = get_auth_persistence_status()
-    sync_error = get_auth_cookie_sync_error()
     mobile_client = is_mobile_client()
     render_hero_banner(
         "StrawberryLab",
-        "いちご品種の研究・評価を一元管理するための管理アプリです。"
+        "いちご品種の研究・評価を一元管理するための公開ワークスペースです。"
         if not mobile_client
-        else "ログインして管理ワークスペースを利用します。",
+        else "ログインなしでそのまま利用できます。",
     )
-    if persistence["code"] == "ready_ephemeral_secret":
-        st.warning(
-            f"⚠️ {persistence['message']} 恒久運用では `.streamlit/secrets.toml` に APP_COOKIE_SECRET を設定してください。"
-        )
-    elif persistence["available"]:
-        if mobile_client:
-            render_status_badge("30日ログイン保持: 有効", tone="success", icon="✅")
-        else:
-            st.caption("✅ 30日ログイン保持: 有効")
-    elif persistence["code"] == "missing_secret":
-        st.warning(f"⚠️ {persistence['message']} `.streamlit/secrets.toml` を確認してください。")
+    if mobile_client:
+        render_status_badge("公開モード", tone="success", icon="✅")
     else:
-        if mobile_client:
-            render_status_badge(persistence["message"], tone="info", icon="ℹ️")
-        else:
-            st.caption(f"ℹ️ {persistence['message']}")
-    if sync_error:
-        st.warning(f"⚠️ {sync_error}")
+        st.caption("✅ 公開モード: ログイン不要")
 
     if mobile_client:
         form_container = st.container()
@@ -355,21 +333,11 @@ def _render_login() -> None:
         form_container = center
 
     with form_container:
-        st.markdown("### ログイン")
-        st.caption("登録済み管理者アカウントでログインしてください。")
-        with st.form("login_form"):
-            email = st.text_input("メールアドレス")
-            password = st.text_input("パスワード", type="password")
-            submitted = st.form_submit_button("ログイン", use_container_width=True)
-        if submitted:
-            try:
-                login_user(email, password)
-                st.success("ログインしました。")
-                st.rerun()
-            except PermissionError as exc:
-                st.error(str(exc))
-            except Exception:
-                st.error("ログインに失敗しました。")
+        render_surface(
+            "すべての管理ページをそのまま開けます。左上メニューまたは下部ナビゲーションから目的の画面へ移動してください。",
+            title="利用を開始できます",
+            tone="info",
+        )
 
 
 def _render_auth_restore_pending() -> None:
@@ -528,9 +496,4 @@ def _render_dashboard() -> None:
             )
 
 
-if st.session_state.get("is_authenticated"):
-    _render_dashboard()
-elif _AUTH_RESTORE_RESULT is None:
-    _render_auth_restore_pending()
-else:
-    _render_login()
+_render_dashboard()

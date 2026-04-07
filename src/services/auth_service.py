@@ -13,10 +13,11 @@ from uuid import uuid4
 
 import streamlit as st
 
-from src.core.supabase_client import get_anon_supabase_client
+from src.core.supabase_client import get_anon_supabase_client, get_app_supabase_client
 
 
 AUTH_KEYS = ("current_user", "supabase_client_user", "is_authenticated", "access_token", "refresh_token", "admin_checked_at")
+PUBLIC_ACCESS_USER = {"id": "public-access", "email": "公開モード"}
 AUTH_COOKIE_NAME = "remember_auth_v1"
 AUTH_STORAGE_KEY = "__sl_remember_auth_v1"
 AUTH_COOKIE_TTL_DAYS = 30
@@ -46,6 +47,19 @@ def initialize_auth_state() -> None:
         st.session_state[AUTH_COOKIE_ACTION_KEY] = None
     if AUTH_COOKIE_SYNC_ERROR_KEY not in st.session_state:
         st.session_state[AUTH_COOKIE_SYNC_ERROR_KEY] = None
+
+
+def ensure_public_access_session() -> None:
+    """Seed a stable public-mode session so the app can be used without login."""
+    initialize_auth_state()
+    client = st.session_state.get("supabase_client_user")
+    if client is None:
+        st.session_state["supabase_client_user"] = get_app_supabase_client()
+    st.session_state["current_user"] = dict(PUBLIC_ACCESS_USER)
+    st.session_state["is_authenticated"] = True
+    st.session_state["access_token"] = None
+    st.session_state["refresh_token"] = None
+    st.session_state["admin_checked_at"] = int(time.time())
 
 
 def _get_process_ephemeral_cookie_secret() -> str | None:
@@ -295,24 +309,17 @@ def _set_authenticated_state(*, client, user, access_token: str, refresh_token: 
 
 
 def get_auth_persistence_status() -> dict[str, str | bool]:
-    """Return availability information for first-party auth-cookie persistence."""
-    secret, is_ephemeral = _get_cookie_secret()
-    if secret and not is_ephemeral:
+    """Return public-access status information for diagnostics pages."""
+    if get_app_supabase_client() is not None:
         return {
             "available": True,
-            "code": AUTH_PERSISTENCE_READY,
-            "message": "30日ログイン保持は有効です。",
-        }
-    if secret and is_ephemeral:
-        return {
-            "available": True,
-            "code": AUTH_PERSISTENCE_READY_EPHEMERAL_SECRET,
-            "message": "APP_COOKIE_SECRET が未設定のため、一時ランダム秘密鍵でログイン保持を継続中です。再起動/再デプロイ時に保持がリセットされる場合があります。",
+            "code": "public_access",
+            "message": "公開モードが有効です。ログインなしで利用できます。",
         }
     return {
         "available": False,
-        "code": AUTH_PERSISTENCE_MISSING_SECRET,
-        "message": "APP_COOKIE_SECRET が未設定で、一時秘密鍵の生成にも失敗したため、30日ログイン保持は無効です。",
+        "code": "public_access_unavailable",
+        "message": "公開モード client を初期化できませんでした。",
     }
 
 
@@ -431,40 +438,10 @@ def logout_user() -> None:
 
 def get_user_client():
     """Return authenticated user client from session."""
+    ensure_public_access_session()
     return st.session_state.get("supabase_client_user")
 
 
 def require_admin_session() -> None:
-    """Guard protected pages and redirect to Home.py when unauthorized."""
-    initialize_auth_state()
-    if not st.session_state.get("is_authenticated") or not st.session_state.get("current_user"):
-        restored = restore_login_from_cookie()
-        if restored is None:
-            st.info("ログイン状態を復元しています。数秒後に自動で続行します。")
-            st.stop()
-        if not restored:
-            st.switch_page("Home.py")
-            st.stop()
-    if not st.session_state.get("is_authenticated") or not st.session_state.get("current_user"):
-        st.switch_page("Home.py")
-        st.stop()
-    checked_at = int(st.session_state.get("admin_checked_at") or 0)
-    if checked_at and int(time.time()) - checked_at <= 60:
-        ensure_auth_cookie_persistence()
-        return
-    client = get_user_client()
-    user_id = st.session_state["current_user"]["id"]
-    admin = (
-        client.table("app_users")
-        .select("user_id")
-        .eq("user_id", user_id)
-        .eq("role", "admin")
-        .maybe_single()
-        .execute()
-    )
-    if not admin.data:
-        logout_user()
-        st.error("管理者権限がありません。")
-        st.stop()
-    st.session_state["admin_checked_at"] = int(time.time())
-    ensure_auth_cookie_persistence()
+    """Keep pages usable in public mode without an interactive login step."""
+    ensure_public_access_session()

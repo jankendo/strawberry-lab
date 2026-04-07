@@ -15,6 +15,7 @@ class AppConfig:
 
     supabase_url: str
     supabase_anon_key: str
+    supabase_service_role_key: str | None
     github_token: str | None
     github_owner: str | None
     github_repo: str | None
@@ -38,6 +39,7 @@ def get_config() -> AppConfig:
     return AppConfig(
         supabase_url=supabase_url,
         supabase_anon_key=supabase_anon_key,
+        supabase_service_role_key=_get_setting("SUPABASE_SERVICE_ROLE_KEY"),
         github_token=_get_setting("GITHUB_TOKEN"),
         github_owner=_get_setting("GITHUB_OWNER"),
         github_repo=_get_setting("GITHUB_REPO"),

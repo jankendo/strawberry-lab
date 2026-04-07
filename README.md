@@ -13,7 +13,7 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
    - `pip install -r requirements-scraper.txt`
    - `pip install -r requirements-dev.txt`
 2. Copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml` and set real values.
-    - `APP_COOKIE_SECRET` を設定すると、first-party の署名付き auth cookie でログイン状態を30日安定して保持できます（未設定時は一時ランダム秘密鍵へフォールバックし、再起動/再デプロイで保持がリセットされる場合があります）。
+    - `SUPABASE_SERVICE_ROLE_KEY` を設定すると、公開モードでもアプリから全管理機能へアクセスできます。
     - `APP_HIDE_HOST_CHROME` を `true` にすると、Streamlitホスト由来の上部ツールUIを非表示にします（既定値は `true`）。
    - マルチインスタンス運用でキャッシュ無効化を共有したい場合は `CACHE_REDIS_URL`（任意で `CACHE_NAMESPACE`）を設定してください。
    - Redis未設定時はプロセスローカル無効化で動作します。必要に応じて `APP_EXPECT_STICKY_SESSIONS=true` の前提で同一ユーザーを同一インスタンスへ固定してください。
@@ -56,12 +56,10 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 - **Direct upload flow**: review/variety pages now use signed upload URLs and browser-to-Supabase direct PUT, then finalize metadata rows in `variety_images` / `review_images`.
 - **Retry-aware UX**: upload results are tracked in component state, with replay-event retry hooks for transient network failures.
 
-## Login persistence (30 days)
-- This app supports login skip on revisit by storing signed first-party auth session cookies that are read server-side through `st.context.cookies`.
-- For stable persistence across restarts, set:
-  - `APP_COOKIE_SECRET` in `.streamlit/secrets.toml` (long random string)
-- If `APP_COOKIE_SECRET` is missing, the app falls back to a process-local temporary random secret and shows a UI warning/diagnostic. Persistence can reset on app restart/redeploy.
-- Logout always clears the persisted cookie.
+## Access mode
+- This app now runs in **public mode** by default and no longer requires an interactive login step.
+- For full read/write access under the existing RLS rules, set `SUPABASE_SERVICE_ROLE_KEY` in `.streamlit/secrets.toml`.
+- If `SUPABASE_SERVICE_ROLE_KEY` is not configured, the app falls back to the anon key and available operations depend on your Supabase policies.
 
 ## Cache invalidation / scale behavior
 - Data caches are partitioned by authenticated user scope and revision tokens.

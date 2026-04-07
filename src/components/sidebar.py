@@ -9,8 +9,6 @@ import streamlit.components.v1 as components
 
 from src.components.tables import is_mobile_client
 from src.constants.ui import APP_NAME
-from src.services.auth_service import logout_user
-
 _DESKTOP_NAV_COLLAPSED_KEY = "_desktop_nav_collapsed"
 _DESKTOP_NAV_COLLAPSED_PAGE_KEY = "_desktop_nav_collapsed_page"
 _SIDEBAR_NAV_ITEMS: list[tuple[str, str, str, str]] = [
@@ -185,9 +183,7 @@ def render_sidebar(*, active_page: str) -> None:
 
         with st.container(border=True):
             user = st.session_state.get("current_user")
-            st.caption(f"ログイン中: {(user or {}).get('email', '-')}")
-            if st.button("ログアウト", use_container_width=True, type="secondary", key="sidebar_logout"):
-                logout_user()
+            st.caption(f"アクセス: {(user or {}).get('email', '公開モード')}")
         if st.button("← メニューを閉じる", use_container_width=True, type="secondary", key=f"desktop_nav_close_{active_page}"):
             _set_desktop_nav_collapsed(True, active_page=active_page)
             st.rerun()
