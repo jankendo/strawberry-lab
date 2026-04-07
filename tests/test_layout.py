@@ -91,6 +91,7 @@ def test_render_surface_does_not_mark_accent_tone_as_important(monkeypatch) -> N
 def test_render_section_switcher_renders_active_desktop_pill(monkeypatch) -> None:
     markdown_calls: list[str] = []
     button_calls: list[str] = []
+    button_keys: list[str] = []
 
     class _DummyColumn:
         def __enter__(self) -> None:
@@ -112,7 +113,7 @@ def test_render_section_switcher_renders_active_desktop_pill(monkeypatch) -> Non
     monkeypatch.setattr(
         layout.st,
         "button",
-        lambda label, **_kwargs: button_calls.append(label) or False,
+        lambda label, **kwargs: button_calls.append(label) or button_keys.append(str(kwargs.get("key"))) or False,
     )
 
     selected = layout.render_section_switcher(["一覧", "作成・編集"], key="section_key")
@@ -120,3 +121,35 @@ def test_render_section_switcher_renders_active_desktop_pill(monkeypatch) -> Non
     assert selected == "一覧"
     assert any("sl-segmented-control-active" in html for html in markdown_calls)
     assert button_calls == ["作成・編集"]
+    assert button_keys == ["section_key__option__1"]
+
+
+def test_render_section_switcher_uses_unique_keys_for_non_ascii_options(monkeypatch) -> None:
+    button_keys: list[str] = []
+
+    class _DummyColumn:
+        def __enter__(self) -> None:
+            return None
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+    monkeypatch.setattr(layout.st, "session_state", {"section_key": "一覧"})
+    monkeypatch.setattr(layout, "is_mobile_client", lambda: False)
+    monkeypatch.setattr(layout.st, "container", lambda **_kwargs: nullcontext())
+    monkeypatch.setattr(layout, "render_section_title", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        layout.st,
+        "columns",
+        lambda count, gap=None: [_DummyColumn() for _ in range(count)],
+    )
+    monkeypatch.setattr(layout.st, "markdown", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        layout.st,
+        "button",
+        lambda _label, **kwargs: button_keys.append(str(kwargs.get("key"))) or False,
+    )
+
+    layout.render_section_switcher(["一覧", "作成・編集", "削除済み"], key="section_key")
+
+    assert button_keys == ["section_key__option__1", "section_key__option__2"]

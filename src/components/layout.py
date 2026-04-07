@@ -1303,7 +1303,7 @@ def render_section_switcher(
             )
 
         columns = st.columns(len(options), gap="small")
-        for column, option in zip(columns, options, strict=True):
+        for option_index, (column, option) in enumerate(zip(columns, options, strict=True)):
             clean_option = _sanitize_text(option)
             with column:
                 if option == active_value:
@@ -1314,7 +1314,7 @@ def render_section_switcher(
                     continue
                 if st.button(
                     clean_option,
-                    key=f"{key}_{_keyify(option)}",
+                    key=f"{key}__option__{option_index}",
                     use_container_width=True,
                     type="secondary",
                 ):
