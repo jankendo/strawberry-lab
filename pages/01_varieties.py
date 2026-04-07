@@ -38,6 +38,7 @@ from src.services.storage_service import (
 )
 from src.services.variety_service import (
     create_variety,
+    get_discovered_variety_ids,
     get_variety_list_page_ids,
     get_variety_list_rows,
     get_variety_locked_detail,
@@ -45,6 +46,7 @@ from src.services.variety_service import (
     get_pokedex_progress,
     get_review_counts_for_varieties,
     get_variety_detail,
+    get_total_variety_count,
     list_active_varieties,
     list_varieties,
     restore_variety,
@@ -268,6 +270,26 @@ def _variety_list_loading_step_one_label(*, keyword: str, discovery_filter: str)
     if discovery_filter == "未発見":
         return "未発見品種の候補を準備しています"
     return "品種一覧の並び順を準備しています"
+
+
+def _variety_list_loading_discovery_label(*, discovery_filter: str) -> str:
+    if discovery_filter == "発見済み":
+        return "発見済み品種を集計しています"
+    if discovery_filter == "未発見":
+        return "発見状況を集計しています"
+    return "品種一覧を集計しています"
+
+
+def _build_pokedex_progress_from_discovered_ids(discovered_ids: Sequence[str]) -> dict[str, int]:
+    discovered_count = len({str(variety_id).strip() for variety_id in discovered_ids if str(variety_id).strip()})
+    total_varieties = int(get_total_variety_count())
+    completion_rate = int((discovered_count / total_varieties) * 100) if total_varieties else 0
+    return {
+        "total_varieties": total_varieties,
+        "discovered_count": discovered_count,
+        "undiscovered_count": max(0, total_varieties - discovered_count),
+        "completion_rate": completion_rate,
+    }
 
 
 def _load_safe_pokedex_progress() -> dict[str, int]:
@@ -965,10 +987,24 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
         )
 
     selected_id = st.session_state.get("variety_selected_from_list", "")
-    loading_status.update(
-        step=1,
-        label=_variety_list_loading_step_one_label(keyword=keyword, discovery_filter=discovery_filter),
-    )
+    discovered_ids: list[str] | None = None
+    if discovery_filter in {"発見済み", "未発見"}:
+        loading_status.update(
+            step=1,
+            label=_variety_list_loading_discovery_label(discovery_filter=discovery_filter),
+        )
+        discovered_ids = get_discovered_variety_ids()
+        loading_status.update(
+            step=1,
+            label=_variety_list_loading_step_one_label(keyword=keyword, discovery_filter=discovery_filter),
+            loaded_count=min(len(discovered_ids), page * page_size) if discovery_filter == "発見済み" else None,
+            total_count=len(discovered_ids) if discovery_filter == "発見済み" else None,
+        )
+    else:
+        loading_status.update(
+            step=1,
+            label=_variety_list_loading_step_one_label(keyword=keyword, discovery_filter=discovery_filter),
+        )
     page_ids, total, selected_matches = get_variety_list_page_ids(
         keyword=keyword or None,
         prefecture=prefecture or None,
@@ -976,6 +1012,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
         page=page,
         page_size=page_size,
         selected_id=selected_id or None,
+        discovered_ids=discovered_ids,
     )
     if total > 0 and (page - 1) * page_size >= total:
         st.session_state["variety_list_page"] = 1
@@ -991,7 +1028,11 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
     if selected_id and selected_id not in count_targets:
         count_targets.append(selected_id)
     review_counts = get_review_counts_for_varieties(count_targets)
-    progress = _load_safe_pokedex_progress()
+    progress = (
+        _build_pokedex_progress_from_discovered_ids(discovered_ids)
+        if discovered_ids is not None
+        else _load_safe_pokedex_progress()
+    )
     completion_ratio = (float(progress["completion_rate"]) / 100) if progress["total_varieties"] else 0.0
 
     lightweight_page_ids = [variety_id for variety_id in page_ids if int(review_counts.get(variety_id, 0)) <= 0]

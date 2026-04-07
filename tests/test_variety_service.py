@@ -218,8 +218,8 @@ def test_list_varieties_for_list_tab_uses_discovered_only_index(monkeypatch) -> 
     monkeypatch.setattr(variety_service, "get_discovered_variety_ids", lambda: ["id-3", "id-5"])
     monkeypatch.setattr(
         variety_service,
-        "list_variety_sort_index_for_ids",
-        lambda ids: [
+        "list_discovered_variety_sort_index",
+        lambda prefecture=None: [
             {
                 "id": "id-3",
                 "name": "サガホノカ",
@@ -238,9 +238,7 @@ def test_list_varieties_for_list_tab_uses_discovered_only_index(monkeypatch) -> 
                 "registered_year": 2026,
                 "registration_date": "2026-04-01",
             },
-        ]
-        if list(ids) == ["id-3", "id-5"]
-        else [],
+        ],
     )
     monkeypatch.setattr(
         variety_service,
@@ -278,6 +276,7 @@ def test_list_varieties_for_list_tab_uses_discovered_only_index(monkeypatch) -> 
 
     monkeypatch.setattr(variety_service, "list_variety_list_index", _unexpected_full_index)
     monkeypatch.setattr(variety_service, "list_variety_sort_index", _unexpected_full_index)
+    monkeypatch.setattr(variety_service, "list_variety_sort_index_for_ids", _unexpected_full_index)
 
     rows, total, selected_matches = variety_service.list_varieties_for_list_tab(
         discovery_filter="発見済み",
@@ -288,6 +287,98 @@ def test_list_varieties_for_list_tab_uses_discovered_only_index(monkeypatch) -> 
 
     assert total == 2
     assert [row["id"] for row in rows] == ["id-3", "id-5"]
+    assert selected_matches is True
+
+
+def test_get_variety_list_page_ids_uses_cached_discovered_sort_index_when_over_limit(monkeypatch) -> None:
+    monkeypatch.setattr(variety_service, "_DISCOVERED_DIRECT_QUERY_LIMIT", 1)
+    monkeypatch.setattr(variety_service, "get_discovered_variety_ids", lambda: ["id-2", "id-4"])
+    monkeypatch.setattr(
+        variety_service,
+        "list_discovered_variety_sort_index",
+        lambda prefecture=None: [
+            {
+                "id": "id-2",
+                "name": "品種2",
+                "origin_prefecture": "佐賀県",
+                "updated_at": "2026-04-03",
+                "created_at": "2026-04-03",
+                "registered_year": 2026,
+                "registration_date": "2026-04-03",
+            },
+            {
+                "id": "id-4",
+                "name": "品種4",
+                "origin_prefecture": "佐賀県",
+                "updated_at": "2026-04-01",
+                "created_at": "2026-04-01",
+                "registered_year": 2026,
+                "registration_date": "2026-04-01",
+            },
+        ],
+    )
+
+    def _unexpected_index(*_args, **_kwargs):
+        raise AssertionError("over-limit discovered view should reuse cached discovered sort index")
+
+    monkeypatch.setattr(variety_service, "list_variety_sort_index_for_ids", _unexpected_index)
+    monkeypatch.setattr(variety_service, "list_variety_list_index_for_ids", _unexpected_index)
+
+    page_ids, total, selected_matches = variety_service.get_variety_list_page_ids(
+        discovery_filter="発見済み",
+        selected_id="id-4",
+    )
+
+    assert page_ids == ["id-2", "id-4"]
+    assert total == 2
+    assert selected_matches is True
+
+
+def test_get_variety_list_page_ids_uses_cached_discovered_search_index_for_keyword(monkeypatch) -> None:
+    monkeypatch.setattr(variety_service, "get_discovered_variety_ids", lambda: ["id-2", "id-4"])
+    monkeypatch.setattr(
+        variety_service,
+        "list_discovered_variety_list_index",
+        lambda prefecture=None: [
+            {
+                "id": "id-2",
+                "name": "サガホノカ",
+                "alias_names": [],
+                "_search_key": "さがほのか サガホノカ",
+                "origin_prefecture": "佐賀県",
+                "updated_at": "2026-04-03",
+                "created_at": "2026-04-03",
+                "registered_year": 2026,
+                "registration_date": "2026-04-03",
+            },
+            {
+                "id": "id-4",
+                "name": "ベニホッペ",
+                "alias_names": [],
+                "_search_key": "べにほっぺ ベニホッペ",
+                "origin_prefecture": "静岡県",
+                "updated_at": "2026-04-01",
+                "created_at": "2026-04-01",
+                "registered_year": 2026,
+                "registration_date": "2026-04-01",
+            },
+        ],
+    )
+
+    def _unexpected_index(*_args, **_kwargs):
+        raise AssertionError("keyword discovered view should reuse cached discovered search index")
+
+    monkeypatch.setattr(variety_service, "list_variety_list_index_for_ids", _unexpected_index)
+    monkeypatch.setattr(variety_service, "list_variety_sort_index_for_ids", _unexpected_index)
+
+    page_ids, total, selected_matches = variety_service.get_variety_list_page_ids(
+        discovery_filter="発見済み",
+        keyword="さが",
+        selected_id="id-2",
+    )
+
+    assert page_ids == ["id-2"]
+    assert total == 1
     assert selected_matches is True
 
 

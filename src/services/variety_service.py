@@ -91,6 +91,16 @@ def _ordered_variety_rows_by_ids(rows: Sequence[dict], ordered_ids: Sequence[str
 
 
 def _fetch_variety_rows_by_ids(fields: str, variety_ids: Sequence[str]) -> list[dict]:
+    return _fetch_filtered_variety_rows_by_ids(fields, variety_ids)
+
+
+def _fetch_filtered_variety_rows_by_ids(
+    fields: str,
+    variety_ids: Sequence[str],
+    *,
+    prefecture: str | None = None,
+    parallel: bool = True,
+) -> list[dict]:
     ids = [str(variety_id) for variety_id in dict.fromkeys(variety_ids) if str(variety_id).strip()]
     if not ids:
         return []
@@ -98,18 +108,22 @@ def _fetch_variety_rows_by_ids(fields: str, variety_ids: Sequence[str]) -> list[
 
     def _fetch_chunk(id_chunk: Sequence[str]) -> list[dict]:
         client = get_user_client()
-        return (
-            client.table("varieties")
-            .select(fields)
-            .in_("id", list(id_chunk))
-            .is_("deleted_at", "null")
-            .execute()
-            .data
-            or []
-        )
+        query = client.table("varieties").select(fields).in_("id", list(id_chunk)).is_("deleted_at", "null")
+        if prefecture:
+            query = query.eq("origin_prefecture", prefecture)
+        return query.execute().data or []
 
-    if len(id_chunks) == 1:
-        rows = _fetch_chunk(id_chunks[0])
+    if len(id_chunks) == 1 or not parallel:
+        rows: list[dict] = []
+        if parallel:
+            rows.extend(_fetch_chunk(id_chunks[0]))
+        else:
+            client = get_user_client()
+            for id_chunk in id_chunks:
+                query = client.table("varieties").select(fields).in_("id", list(id_chunk)).is_("deleted_at", "null")
+                if prefecture:
+                    query = query.eq("origin_prefecture", prefecture)
+                rows.extend(query.execute().data or [])
     else:
         with ThreadPoolExecutor(max_workers=min(4, len(id_chunks))) as executor:
             rows = [row for chunk_rows in executor.map(_fetch_chunk, id_chunks) for row in chunk_rows]
@@ -241,7 +255,7 @@ def list_variety_sort_index() -> list[dict]:
     return rows
 
 
-@scoped_cache_data(ttl=180, scopes=("varieties", "reviews"))
+@scoped_cache_data(ttl=900, scopes=("varieties", "reviews"))
 def get_discovered_variety_ids() -> list[str]:
     """Return IDs of varieties that have at least one active review."""
     client = get_user_client()
@@ -279,6 +293,36 @@ def get_discovered_variety_ids() -> list[str]:
 
 
 @scoped_cache_data(ttl=900, scopes=("varieties", "reviews"))
+def list_discovered_variety_list_index(*, prefecture: str | None = None) -> list[dict]:
+    """Return a cached lightweight index for discovered varieties only."""
+    discovered_ids = get_discovered_variety_ids()
+    if not discovered_ids:
+        return []
+    return _annotate_variety_index_rows(
+        _fetch_filtered_variety_rows_by_ids(
+            LIST_TAB_FIELDS,
+            discovered_ids,
+            prefecture=prefecture,
+            parallel=False,
+        )
+    )
+
+
+@scoped_cache_data(ttl=900, scopes=("varieties", "reviews"))
+def list_discovered_variety_sort_index(*, prefecture: str | None = None) -> list[dict]:
+    """Return a cached lightweight sort index for discovered varieties only."""
+    discovered_ids = get_discovered_variety_ids()
+    if not discovered_ids:
+        return []
+    return _fetch_filtered_variety_rows_by_ids(
+        LIST_TAB_SORT_FIELDS,
+        discovered_ids,
+        prefecture=prefecture,
+        parallel=False,
+    )
+
+
+@scoped_cache_data(ttl=900, scopes=("varieties", "reviews"))
 def list_variety_list_index_for_ids(variety_ids: Sequence[str]) -> list[dict]:
     """Return a cached lightweight index for a specific variety ID set."""
     return _annotate_variety_index_rows(_fetch_variety_rows_by_ids(LIST_TAB_FIELDS, variety_ids))
@@ -306,6 +350,7 @@ def get_variety_list_page_ids(
     page: int = 1,
     page_size: int = 50,
     selected_id: str | None = None,
+    discovered_ids: Sequence[str] | None = None,
 ) -> tuple[list[str], int, bool]:
     """Return ordered page IDs, total matches, and whether the selected row still matches filters."""
     allowed_sort = {"name", "updated_at", "registered_year", "created_at", "registration_date"}
@@ -315,11 +360,18 @@ def get_variety_list_page_ids(
     normalized_selected_id = str(selected_id or "").strip()
     normalized_page = max(int(page), 1)
     normalized_page_size = max(int(page_size), 1)
-    discovered_ids: list[str] = []
+    resolved_discovered_ids: list[str] = []
     discovered_id_set: set[str] = set()
     if discovery_filter in {"発見済み", "未発見"}:
-        discovered_ids = get_discovered_variety_ids()
-        discovered_id_set = set(discovered_ids)
+        if discovered_ids is None:
+            resolved_discovered_ids = get_discovered_variety_ids()
+        else:
+            resolved_discovered_ids = [
+                str(variety_id)
+                for variety_id in dict.fromkeys(discovered_ids)
+                if str(variety_id).strip()
+            ]
+        discovered_id_set = set(resolved_discovered_ids)
     if not normalized_keyword and discovery_filter == "すべて" and not prefecture:
         page_rows, total = list_varieties(
             include_deleted=False,
@@ -338,13 +390,13 @@ def get_variety_list_page_ids(
         not normalized_keyword
         and discovery_filter == "発見済み"
         and not prefecture
-        and 0 < len(discovered_ids) <= _DISCOVERED_DIRECT_QUERY_LIMIT
+        and 0 < len(resolved_discovered_ids) <= _DISCOVERED_DIRECT_QUERY_LIMIT
     ):
         client = get_user_client()
         page_rows = (
             client.table("varieties")
             .select("id")
-            .in_("id", discovered_ids)
+            .in_("id", resolved_discovered_ids)
             .is_("deleted_at", "null")
             .order(sort_field, desc=sort_desc)
             .range((normalized_page - 1) * normalized_page_size, normalized_page * normalized_page_size - 1)
@@ -354,17 +406,17 @@ def get_variety_list_page_ids(
         )
         page_ids = [str(row.get("id") or "") for row in page_rows if row.get("id")]
         if not normalized_selected_id:
-            return page_ids, len(discovered_ids), True
-        return page_ids, len(discovered_ids), normalized_selected_id in discovered_id_set
+            return page_ids, len(resolved_discovered_ids), True
+        return page_ids, len(resolved_discovered_ids), normalized_selected_id in discovered_id_set
     if normalized_keyword:
         source_rows = (
-            [dict(row) for row in list_variety_list_index_for_ids(discovered_ids)]
+            [dict(row) for row in list_discovered_variety_list_index(prefecture=prefecture or None)]
             if discovery_filter == "発見済み"
             else [dict(row) for row in list_variety_list_index()]
         )
     else:
         source_rows = (
-            [dict(row) for row in list_variety_sort_index_for_ids(discovered_ids)]
+            [dict(row) for row in list_discovered_variety_sort_index(prefecture=prefecture or None)]
             if discovery_filter == "発見済み"
             else [dict(row) for row in list_variety_sort_index()]
         )
@@ -518,11 +570,11 @@ def get_latest_review_summary_for_varieties(variety_ids: Sequence[str]) -> dict[
     return latest_by_variety
 
 
-@scoped_cache_data(ttl=180, scopes=("varieties", "reviews"))
-def get_pokedex_progress() -> dict[str, int]:
-    """Return encyclopedia progress counts based on review registration."""
+@scoped_cache_data(ttl=300, scopes="varieties")
+def get_total_variety_count() -> int:
+    """Return the total count of active varieties."""
     client = get_user_client()
-    total_varieties = (
+    return int(
         client.table("varieties")
         .select("id", count="exact", head=True)
         .is_("deleted_at", "null")
@@ -530,27 +582,40 @@ def get_pokedex_progress() -> dict[str, int]:
         .count
         or 0
     )
-    discovered_ids = set(get_discovered_variety_ids())
-    discovered_count = len(discovered_ids)
+
+
+def _build_pokedex_progress_payload(*, total_varieties: int, discovered_count: int) -> dict[str, int]:
     completion_rate = int((discovered_count / total_varieties) * 100) if total_varieties else 0
     return {
         "total_varieties": int(total_varieties),
-        "discovered_count": discovered_count,
+        "discovered_count": int(discovered_count),
         "undiscovered_count": max(0, int(total_varieties) - discovered_count),
         "completion_rate": completion_rate,
     }
+
+
+@scoped_cache_data(ttl=180, scopes=("varieties", "reviews"))
+def get_pokedex_progress() -> dict[str, int]:
+    """Return encyclopedia progress counts based on review registration."""
+    return _build_pokedex_progress_payload(
+        total_varieties=get_total_variety_count(),
+        discovered_count=len(set(get_discovered_variety_ids())),
+    )
 
 
 def _clear_variety_related_caches() -> None:
     list_varieties.clear()
     list_variety_list_index.clear()
     list_variety_sort_index.clear()
+    list_discovered_variety_list_index.clear()
+    list_discovered_variety_sort_index.clear()
     list_variety_list_index_for_ids.clear()
     list_variety_locked_index_for_ids.clear()
     list_variety_sort_index_for_ids.clear()
     list_active_varieties.clear()
     get_variety_detail.clear()
     get_discovered_variety_ids.clear()
+    get_total_variety_count.clear()
     get_pokedex_progress.clear()
     get_review_counts_for_varieties.clear()
     get_latest_review_summary_for_varieties.clear()
