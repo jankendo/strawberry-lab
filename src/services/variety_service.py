@@ -20,6 +20,7 @@ LIST_TAB_FIELDS = (
     "id,name,alias_names,japanese_name,origin_prefecture,registration_number,application_number,"
     "description,characteristics_summary,developer,updated_at,created_at,registered_year,registration_date"
 )
+LIST_TAB_SORT_FIELDS = "id,name,origin_prefecture,updated_at,created_at,registered_year,registration_date"
 _POSTGREST_IN_CHUNK_SIZE = 200
 _LIST_TAB_INDEX_BATCH_SIZE = 1000
 
@@ -71,6 +72,40 @@ def _coerce_variety_sort_value(value: object) -> object:
 
 def _annotate_variety_index_rows(rows: Sequence[dict]) -> list[dict]:
     return [{**row, "_search_key": _build_variety_search_key(row)} for row in rows]
+
+
+def _sort_variety_rows(rows: Sequence[dict], *, sort_field: str, sort_desc: bool) -> list[dict]:
+    sorted_rows = [dict(row) for row in rows]
+    sorted_rows.sort(key=lambda row: _coerce_variety_sort_value(row.get(sort_field)), reverse=sort_desc)
+    sorted_rows.sort(key=lambda row: row.get(sort_field) in {None, ""})
+    return sorted_rows
+
+
+def _ordered_variety_rows_by_ids(rows: Sequence[dict], ordered_ids: Sequence[str]) -> list[dict]:
+    row_by_id = {str(row.get("id") or ""): dict(row) for row in rows if row.get("id")}
+    return [row_by_id[variety_id] for variety_id in ordered_ids if variety_id in row_by_id]
+
+
+def _row_matches_variety_list_filters(
+    row: dict,
+    *,
+    normalized_keyword: str,
+    prefecture: str | None,
+    discovery_filter: str,
+    discovered_id_set: set[str],
+) -> bool:
+    row_id = str(row.get("id") or "").strip()
+    if not row_id:
+        return False
+    if normalized_keyword and normalized_keyword not in str(row.get("_search_key") or _build_variety_search_key(row)):
+        return False
+    if prefecture and str(row.get("origin_prefecture") or "") != prefecture:
+        return False
+    if discovery_filter == "発見済み" and row_id not in discovered_id_set:
+        return False
+    if discovery_filter == "未発見" and row_id in discovered_id_set:
+        return False
+    return True
 
 
 @scoped_cache_data(ttl=300, scopes="varieties")
@@ -143,6 +178,38 @@ def list_variety_list_index() -> list[dict]:
     return rows
 
 
+@scoped_cache_data(ttl=900, scopes="varieties")
+def list_variety_sort_index() -> list[dict]:
+    """Return a cached lightweight sort/filter index for the varieties list tab."""
+    client = get_user_client()
+    rows: list[dict] = []
+    start = 0
+    seen_batch_ids: set[tuple[str, ...]] = set()
+    while True:
+        chunk = (
+            client.table("varieties")
+            .select(LIST_TAB_SORT_FIELDS)
+            .is_("deleted_at", "null")
+            .order("id")
+            .range(start, start + _LIST_TAB_INDEX_BATCH_SIZE - 1)
+            .execute()
+            .data
+            or []
+        )
+        if not chunk:
+            break
+        batch_ids = tuple(str(row.get("id") or "") for row in chunk if row.get("id"))
+        if batch_ids and batch_ids in seen_batch_ids:
+            break
+        if batch_ids:
+            seen_batch_ids.add(batch_ids)
+        rows.extend(dict(row) for row in chunk)
+        if len(chunk) < _LIST_TAB_INDEX_BATCH_SIZE:
+            break
+        start += len(chunk)
+    return rows
+
+
 @scoped_cache_data(ttl=180, scopes=("varieties", "reviews"))
 def get_discovered_variety_ids() -> list[str]:
     """Return IDs of varieties that have at least one active review."""
@@ -203,6 +270,122 @@ def list_variety_list_index_for_ids(variety_ids: Sequence[str]) -> list[dict]:
     return _annotate_variety_index_rows(rows)
 
 
+@scoped_cache_data(ttl=900, scopes="varieties")
+def list_variety_sort_index_for_ids(variety_ids: Sequence[str]) -> list[dict]:
+    """Return a cached lightweight sort/filter index for a specific variety ID set."""
+    ids = [str(variety_id) for variety_id in dict.fromkeys(variety_ids) if str(variety_id).strip()]
+    if not ids:
+        return []
+    client = get_user_client()
+    rows: list[dict] = []
+    for id_chunk in chunked_sequence(ids, _POSTGREST_IN_CHUNK_SIZE):
+        chunk = (
+            client.table("varieties")
+            .select(LIST_TAB_SORT_FIELDS)
+            .in_("id", id_chunk)
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+        rows.extend(dict(row) for row in chunk)
+    rows.sort(key=lambda row: normalize_search_text(str(row.get("id") or "")))
+    return rows
+
+
+def get_variety_list_page_ids(
+    *,
+    keyword: str | None = None,
+    prefecture: str | None = None,
+    discovery_filter: str = "すべて",
+    sort_field: str = "updated_at",
+    sort_desc: bool = True,
+    page: int = 1,
+    page_size: int = 50,
+    selected_id: str | None = None,
+) -> tuple[list[str], int, bool]:
+    """Return ordered page IDs, total matches, and whether the selected row still matches filters."""
+    allowed_sort = {"name", "updated_at", "registered_year", "created_at", "registration_date"}
+    if sort_field not in allowed_sort:
+        sort_field = "updated_at"
+    normalized_keyword = normalize_search_text(keyword or "")
+    normalized_selected_id = str(selected_id or "").strip()
+    normalized_page = max(int(page), 1)
+    normalized_page_size = max(int(page_size), 1)
+    discovered_ids: list[str] = []
+    discovered_id_set: set[str] = set()
+    if discovery_filter in {"発見済み", "未発見"}:
+        discovered_ids = get_discovered_variety_ids()
+        discovered_id_set = set(discovered_ids)
+    if not normalized_keyword and discovery_filter == "すべて" and not prefecture:
+        page_rows, total = list_varieties(
+            include_deleted=False,
+            sort_field=sort_field,
+            sort_desc=sort_desc,
+            page=normalized_page,
+            page_size=normalized_page_size,
+            fields="id",
+        )
+        page_ids = [str(row.get("id") or "") for row in page_rows if row.get("id")]
+        if not normalized_selected_id:
+            return page_ids, total, True
+        selected_rows = list_variety_sort_index_for_ids([normalized_selected_id])
+        return page_ids, total, bool(selected_rows)
+    if normalized_keyword:
+        source_rows = (
+            [dict(row) for row in list_variety_list_index_for_ids(discovered_ids)]
+            if discovery_filter == "発見済み"
+            else [dict(row) for row in list_variety_list_index()]
+        )
+    else:
+        source_rows = (
+            [dict(row) for row in list_variety_sort_index_for_ids(discovered_ids)]
+            if discovery_filter == "発見済み"
+            else [dict(row) for row in list_variety_sort_index()]
+        )
+    filtered_rows = [
+        row
+        for row in source_rows
+        if _row_matches_variety_list_filters(
+            row,
+            normalized_keyword=normalized_keyword,
+            prefecture=prefecture or None,
+            discovery_filter=discovery_filter,
+            discovered_id_set=discovered_id_set,
+        )
+    ]
+    ordered_rows = _sort_variety_rows(filtered_rows, sort_field=sort_field, sort_desc=sort_desc)
+    total = len(ordered_rows)
+    page_start = (normalized_page - 1) * normalized_page_size
+    page_ids = [str(row.get("id") or "") for row in ordered_rows[page_start : page_start + normalized_page_size] if row.get("id")]
+    if not normalized_selected_id:
+        return page_ids, total, True
+    if any(str(row.get("id") or "") == normalized_selected_id for row in ordered_rows):
+        return page_ids, total, True
+    selected_rows = list_variety_list_index_for_ids([normalized_selected_id]) if normalized_keyword else list_variety_sort_index_for_ids([normalized_selected_id])
+    if not selected_rows:
+        return page_ids, total, False
+    return (
+        page_ids,
+        total,
+        _row_matches_variety_list_filters(
+            dict(selected_rows[0]),
+            normalized_keyword=normalized_keyword,
+            prefecture=prefecture or None,
+            discovery_filter=discovery_filter,
+            discovered_id_set=discovered_id_set,
+        ),
+    )
+
+
+def get_variety_list_rows(variety_ids: Sequence[str]) -> list[dict]:
+    """Return ordered list-tab rows for the provided page IDs."""
+    ids = [str(variety_id) for variety_id in variety_ids if str(variety_id).strip()]
+    if not ids:
+        return []
+    return _ordered_variety_rows_by_ids(list_variety_list_index_for_ids(ids), ids)
+
+
 def list_varieties_for_list_tab(
     *,
     keyword: str | None = None,
@@ -212,34 +395,20 @@ def list_varieties_for_list_tab(
     sort_desc: bool = True,
     page: int = 1,
     page_size: int = 50,
-) -> tuple[list[dict], int, list[str]]:
+    selected_id: str | None = None,
+) -> tuple[list[dict], int, bool]:
     """List active varieties for the list tab using cached local filtering."""
-    allowed_sort = {"name", "updated_at", "registered_year", "created_at", "registration_date"}
-    if sort_field not in allowed_sort:
-        sort_field = "updated_at"
-    normalized_keyword = normalize_search_text(keyword or "")
-    discovered_ids = get_discovered_variety_ids()
-    discovered_id_set = set(discovered_ids)
-    if discovery_filter == "発見済み":
-        rows = [dict(row) for row in list_variety_list_index_for_ids(discovered_ids)]
-    else:
-        rows = [dict(row) for row in list_variety_list_index()]
-    if normalized_keyword:
-        rows = [row for row in rows if normalized_keyword in str(row.get("_search_key") or "")]
-    if prefecture:
-        rows = [row for row in rows if str(row.get("origin_prefecture") or "") == prefecture]
-    if discovery_filter == "未発見":
-        rows = [row for row in rows if str(row.get("id") or "") not in discovered_id_set]
-
-    rows.sort(key=lambda row: _coerce_variety_sort_value(row.get(sort_field)), reverse=sort_desc)
-    rows.sort(key=lambda row: row.get(sort_field) in {None, ""})
-    matched_ids = [str(row["id"]) for row in rows if row.get("id")]
-    total = len(rows)
-    normalized_page = max(int(page), 1)
-    normalized_page_size = max(int(page_size), 1)
-    page_start = (normalized_page - 1) * normalized_page_size
-    paged_rows = rows[page_start : page_start + normalized_page_size]
-    return paged_rows, total, matched_ids
+    page_ids, total, selected_matches = get_variety_list_page_ids(
+        keyword=keyword,
+        prefecture=prefecture,
+        discovery_filter=discovery_filter,
+        sort_field=sort_field,
+        sort_desc=sort_desc,
+        page=page,
+        page_size=page_size,
+        selected_id=selected_id,
+    )
+    return get_variety_list_rows(page_ids), total, selected_matches
 
 
 @scoped_cache_data(ttl=120, scopes="varieties")
@@ -337,7 +506,9 @@ def get_pokedex_progress() -> dict[str, int]:
 def _clear_variety_related_caches() -> None:
     list_varieties.clear()
     list_variety_list_index.clear()
+    list_variety_sort_index.clear()
     list_variety_list_index_for_ids.clear()
+    list_variety_sort_index_for_ids.clear()
     list_active_varieties.clear()
     get_variety_detail.clear()
     get_discovered_variety_ids.clear()

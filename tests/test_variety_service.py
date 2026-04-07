@@ -163,11 +163,11 @@ def test_list_varieties_for_list_tab_matches_hiragana_keyword_to_katakana_name(m
     monkeypatch.setattr(variety_service, "get_discovered_variety_ids", lambda: [])
     variety_service.list_variety_list_index.clear()
 
-    rows, total, matched_ids = variety_service.list_varieties_for_list_tab(keyword="さが")
+    rows, total, selected_matches = variety_service.list_varieties_for_list_tab(keyword="さが", selected_id="id-1")
 
     assert total == 1
     assert [row["id"] for row in rows] == ["id-1"]
-    assert matched_ids == ["id-1"]
+    assert selected_matches is True
 
 
 def test_list_varieties_for_list_tab_filters_discovered_rows_before_paging(monkeypatch) -> None:
@@ -199,21 +199,48 @@ def test_list_varieties_for_list_tab_filters_discovered_rows_before_paging(monke
     monkeypatch.setattr(variety_service, "get_discovered_variety_ids", lambda: ["id-1", "id-3", "id-5"])
     variety_service.list_variety_list_index.clear()
 
-    rows, total, matched_ids = variety_service.list_varieties_for_list_tab(
+    rows, total, selected_matches = variety_service.list_varieties_for_list_tab(
         discovery_filter="発見済み",
         sort_field="name",
         sort_desc=False,
         page=1,
         page_size=2,
+        selected_id="id-5",
     )
 
     assert total == 3
-    assert matched_ids == ["id-1", "id-3", "id-5"]
     assert [row["id"] for row in rows] == ["id-1", "id-3"]
+    assert selected_matches is True
 
 
 def test_list_varieties_for_list_tab_uses_discovered_only_index(monkeypatch) -> None:
     monkeypatch.setattr(variety_service, "get_discovered_variety_ids", lambda: ["id-3", "id-5"])
+    monkeypatch.setattr(
+        variety_service,
+        "list_variety_sort_index_for_ids",
+        lambda ids: [
+            {
+                "id": "id-3",
+                "name": "サガホノカ",
+                "origin_prefecture": "佐賀県",
+                "updated_at": "2026-04-01",
+                "created_at": "2026-04-01",
+                "registered_year": 2026,
+                "registration_date": "2026-04-01",
+            },
+            {
+                "id": "id-5",
+                "name": "ベニホッペ",
+                "origin_prefecture": "静岡県",
+                "updated_at": "2026-04-01",
+                "created_at": "2026-04-01",
+                "registered_year": 2026,
+                "registration_date": "2026-04-01",
+            },
+        ]
+        if list(ids) == ["id-3", "id-5"]
+        else [],
+    )
     monkeypatch.setattr(
         variety_service,
         "list_variety_list_index_for_ids",
@@ -249,12 +276,43 @@ def test_list_varieties_for_list_tab_uses_discovered_only_index(monkeypatch) -> 
         raise AssertionError("full variety index should not be loaded for 発見済み filter")
 
     monkeypatch.setattr(variety_service, "list_variety_list_index", _unexpected_full_index)
+    monkeypatch.setattr(variety_service, "list_variety_sort_index", _unexpected_full_index)
 
-    rows, total, matched_ids = variety_service.list_varieties_for_list_tab(discovery_filter="発見済み", sort_field="name", sort_desc=False)
+    rows, total, selected_matches = variety_service.list_varieties_for_list_tab(
+        discovery_filter="発見済み",
+        sort_field="name",
+        sort_desc=False,
+        selected_id="id-5",
+    )
 
     assert total == 2
-    assert matched_ids == ["id-3", "id-5"]
     assert [row["id"] for row in rows] == ["id-3", "id-5"]
+    assert selected_matches is True
+
+
+def test_get_variety_list_page_ids_uses_direct_page_query_for_default_view(monkeypatch) -> None:
+    monkeypatch.setattr(
+        variety_service,
+        "list_varieties",
+        lambda **kwargs: ([{"id": "id-2"}, {"id": "id-4"}], 2),
+    )
+    monkeypatch.setattr(
+        variety_service,
+        "list_variety_sort_index_for_ids",
+        lambda ids: [{"id": "id-4"}] if list(ids) == ["id-4"] else [],
+    )
+
+    def _unexpected_search_index():
+        raise AssertionError("search indexes should not be loaded for default no-keyword view")
+
+    monkeypatch.setattr(variety_service, "list_variety_list_index", _unexpected_search_index)
+    monkeypatch.setattr(variety_service, "list_variety_sort_index", _unexpected_search_index)
+
+    page_ids, total, selected_matches = variety_service.get_variety_list_page_ids(selected_id="id-4")
+
+    assert page_ids == ["id-2", "id-4"]
+    assert total == 2
+    assert selected_matches is True
 
 
 def test_list_variety_list_index_breaks_when_range_does_not_advance(monkeypatch) -> None:

@@ -38,13 +38,14 @@ from src.services.storage_service import (
 )
 from src.services.variety_service import (
     create_variety,
+    get_variety_list_page_ids,
+    get_variety_list_rows,
     get_latest_review_summary_for_varieties,
     get_pokedex_progress,
     get_review_counts_for_varieties,
     get_variety_detail,
     list_active_varieties,
     list_varieties,
-    list_varieties_for_list_tab,
     restore_variety,
     soft_delete_variety,
     update_variety,
@@ -190,7 +191,7 @@ _VARIETY_EDIT_TARGET_KEY = "variety_edit_target_id"
 _VARIETY_EDIT_TARGET_REQUEST_KEY = "variety_edit_target_requested_id"
 _VARIETY_NEW_TARGET = "新規作成"
 _VARIETY_LIST_DEFAULT_PAGE_SIZE = 50
-_VARIETY_LIST_LOADING_STEPS = 3
+_VARIETY_LIST_LOADING_STEPS = 4
 _VARIETY_LIST_LOADING_SIGNATURE_KEY = "variety_list_loading_signature"
 
 
@@ -215,21 +216,23 @@ class _VarietyListLoadingStatus:
         *,
         step: int,
         label: str,
-        loaded_count: int,
-        total_count: int | None,
+        loaded_count: int | None = None,
+        total_count: int | None = None,
     ) -> None:
         if not self._enabled or self._placeholder is None:
             return
         normalized_step = min(max(step, 1), _VARIETY_LIST_LOADING_STEPS)
         ratio = normalized_step / _VARIETY_LIST_LOADING_STEPS
-        current_count = max(0, loaded_count)
-        if total_count is None:
-            count_text = f"{current_count} / ?件"
-        else:
-            count_text = f"{min(current_count, max(total_count, 0))} / {max(total_count, 0)}件"
+        progress_text = label
+        if loaded_count is not None:
+            current_count = max(0, loaded_count)
+            if total_count is None:
+                progress_text = f"{label} ({current_count} / ?件)"
+            else:
+                progress_text = f"{label} ({min(current_count, max(total_count, 0))} / {max(total_count, 0)}件)"
         with self._placeholder.container():
             st.caption(f"品種一覧を読み込み中 {normalized_step} / {_VARIETY_LIST_LOADING_STEPS}")
-            st.progress(ratio, text=f"{label} ({count_text})")
+            st.progress(ratio, text=progress_text)
 
     def clear(self) -> None:
         if self._placeholder is not None:
@@ -253,6 +256,17 @@ def _build_variety_list_loading_signature(
         max(int(page_size), 1),
         bool(mobile_client),
     )
+
+
+def _variety_list_loading_step_one_label(*, keyword: str, discovery_filter: str) -> str:
+    normalized_keyword = normalize_search_text(keyword)
+    if normalized_keyword:
+        return "かな検索インデックスを準備しています"
+    if discovery_filter == "発見済み":
+        return "発見済み品種の並び順を準備しています"
+    if discovery_filter == "未発見":
+        return "未発見品種の候補を準備しています"
+    return "品種一覧の並び順を準備しています"
 
 
 def _set_variety_edit_target(target_id: object, *, switch_section: bool = True) -> None:
@@ -913,33 +927,39 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
             mobile_only=True,
         )
 
+    selected_id = st.session_state.get("variety_selected_from_list", "")
     loading_status.update(
         step=1,
-        label="条件に一致する品種を取得しています",
-        loaded_count=0,
-        total_count=None,
+        label=_variety_list_loading_step_one_label(keyword=keyword, discovery_filter=discovery_filter),
     )
-    rows, total, matched_ids = list_varieties_for_list_tab(
+    page_ids, total, selected_matches = get_variety_list_page_ids(
         keyword=keyword or None,
         prefecture=prefecture or None,
         discovery_filter=discovery_filter,
         page=page,
         page_size=page_size,
+        selected_id=selected_id or None,
     )
     if total > 0 and (page - 1) * page_size >= total:
         st.session_state["variety_list_page"] = 1
         st.rerun()
 
-    selected_id = st.session_state.get("variety_selected_from_list", "")
-    matched_id_set = set(matched_ids)
-    if selected_id and selected_id not in matched_id_set:
-        selected_id = matched_ids[0] if matched_ids else ""
+    loading_status.update(
+        step=2,
+        label="表示対象の品種情報を取得しています",
+        loaded_count=len(page_ids),
+        total_count=total,
+    )
+    rows = get_variety_list_rows(page_ids)
+
+    if selected_id and not selected_matches:
+        selected_id = rows[0]["id"] if rows else ""
         st.session_state["variety_selected_from_list"] = selected_id
         if mobile_client and not selected_id:
             st.session_state["variety_mobile_panel"] = "list"
 
     loading_status.update(
-        step=2,
+        step=3,
         label="レビュー件数と図鑑進捗を取得しています",
         loaded_count=len(rows),
         total_count=total,
@@ -970,7 +990,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
         if selected_id and int(review_counts.get(selected_id, 0)) > 0 and selected_id not in discovered_targets:
             discovered_targets.append(selected_id)
     loading_status.update(
-        step=3,
+        step=4,
         label="画像と最新レビューを取得しています",
         loaded_count=len(visible_rows),
         total_count=total,
