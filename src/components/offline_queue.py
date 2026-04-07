@@ -81,8 +81,30 @@ def _build_script(config_json: str) -> str:
     const runtime = parentWindow[runtimeKey] || {};
     parentWindow[runtimeKey] = runtime;
     runtime.instances = runtime.instances || {};
+    runtime.operationChains = runtime.operationChains || {};
     runtime.memoryQueues = runtime.memoryQueues || {};
     runtime.storageProbe = runtime.storageProbe || { checked: false, available: null };
+
+    function queueRuntimeOperation(targetQueueKey, operation) {
+      const normalizedQueueKey = String(targetQueueKey || "").trim();
+      if (!normalizedQueueKey || typeof operation !== "function") {
+        return Promise.resolve(null);
+      }
+      const previous = runtime.operationChains[normalizedQueueKey] || Promise.resolve();
+      const current = Promise.resolve(previous)
+        .catch(function () {
+          return null;
+        })
+        .then(function () {
+          return operation();
+        });
+      runtime.operationChains[normalizedQueueKey] = current;
+      return current.finally(function () {
+        if (runtime.operationChains[normalizedQueueKey] === current) {
+          delete runtime.operationChains[normalizedQueueKey];
+        }
+      });
+    }
 
     function safeParse(rawValue, fallback) {
       if (rawValue === null || rawValue === undefined || rawValue === "") {
@@ -758,7 +780,7 @@ def _build_script(config_json: str) -> str:
           if (detailQueueKey && detailQueueKey !== instance.queueKey) {
             return;
           }
-          Promise.resolve().then(async function () {
+          queueRuntimeOperation(instance.queueKey, async function () {
             const processedIds = Array.isArray(detail.processedIds)
               ? detail.processedIds
                   .map(function (value) {
@@ -828,78 +850,79 @@ def _build_script(config_json: str) -> str:
       showWhenEmpty: config.showWhenEmpty === true,
     };
 
-    if (mode === "bridge") {
-      const instance = ensureBridge(queueKey, bridgeOptions);
-      await refreshInstance(instance, "bridge");
-      return;
-    }
-
-    if (mode === "enqueue") {
-      await enqueueIntent(queueKey, config.intent);
-      const instance = runtime.instances[queueKey];
-      if (instance) {
-        await refreshInstance(instance, "enqueue");
+    return await queueRuntimeOperation(queueKey, async function () {
+      if (mode === "bridge") {
+        const instance = ensureBridge(queueKey, bridgeOptions);
+        await refreshInstance(instance, "bridge");
+        return;
       }
-      return;
-    }
 
-    if (mode === "remove") {
-      await removeIntent(queueKey, config.intentId);
-      const instance = runtime.instances[queueKey];
-      if (instance) {
-        await refreshInstance(instance, "remove");
-        if (config.notifyMessage) {
-          setFlash(instance, String(config.notifyMessage), "replayed", 3600);
-          renderNotice(instance);
+      if (mode === "enqueue") {
+        await enqueueIntent(queueKey, config.intent);
+        const instance = runtime.instances[queueKey];
+        if (instance) {
+          await refreshInstance(instance, "enqueue");
         }
+        return;
       }
-      return;
-    }
 
-    if (mode === "clear") {
-      await clearQueue(queueKey);
-      const instance = runtime.instances[queueKey];
-      if (instance) {
-        await refreshInstance(instance, "clear");
-        if (config.notifyMessage) {
-          setFlash(instance, String(config.notifyMessage), "replayed", 3600);
-          renderNotice(instance);
+      if (mode === "remove") {
+        await removeIntent(queueKey, config.intentId);
+        const instance = runtime.instances[queueKey];
+        if (instance) {
+          await refreshInstance(instance, "remove");
+          if (config.notifyMessage) {
+            setFlash(instance, String(config.notifyMessage), "replayed", 3600);
+            renderNotice(instance);
+          }
         }
+        return;
       }
-      return;
-    }
 
-    if (mode === "status") {
-      const instance = ensureBridge(queueKey, bridgeOptions);
-      await refreshInstance(instance, "status");
-      return;
-    }
+      if (mode === "clear") {
+        await clearQueue(queueKey);
+        const instance = runtime.instances[queueKey];
+        if (instance) {
+          await refreshInstance(instance, "clear");
+          if (config.notifyMessage) {
+            setFlash(instance, String(config.notifyMessage), "replayed", 3600);
+            renderNotice(instance);
+          }
+        }
+        return;
+      }
 
-    if (mode === "request_replay") {
-      const instance = ensureBridge(queueKey, bridgeOptions);
-      await requestReplay(instance, String(config.reason || "manual"));
-      return;
-    }
+      if (mode === "status") {
+        const instance = ensureBridge(queueKey, bridgeOptions);
+        await refreshInstance(instance, "status");
+        return;
+      }
 
-    if (mode === "notify_replayed") {
-      const processedIds = Array.isArray(config.processedIds)
-        ? config.processedIds
-            .map(function (value) {
-              return String(value || "").trim();
-            })
-            .filter(function (value) {
-              return !!value;
-            })
-        : [];
-      dispatchCustomEvent(replayAckEventName, {
-        queueKey: queueKey,
-        processedIds: processedIds,
-        clearAll: !!config.clearAll,
-        replayedCount: Number(config.replayedCount || 0),
-        message: config.message ? String(config.message) : "",
-      });
-      return;
-    }
+      if (mode === "request_replay") {
+        const instance = ensureBridge(queueKey, bridgeOptions);
+        await requestReplay(instance, String(config.reason || "manual"));
+        return;
+      }
+
+      if (mode === "notify_replayed") {
+        const processedIds = Array.isArray(config.processedIds)
+          ? config.processedIds
+              .map(function (value) {
+                return String(value || "").trim();
+              })
+              .filter(function (value) {
+                return !!value;
+              })
+          : [];
+        dispatchCustomEvent(replayAckEventName, {
+          queueKey: queueKey,
+          processedIds: processedIds,
+          clearAll: !!config.clearAll,
+          replayedCount: Number(config.replayedCount || 0),
+          message: config.message ? String(config.message) : "",
+        });
+      }
+    });
   } catch (error) {
     // keep bridge resilient even if browser APIs fail
   }

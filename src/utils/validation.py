@@ -1,4 +1,4 @@
-"""Validation utilities for varieties, reviews, notes, and uploads."""
+"""Validation utilities for varieties, reviews, and uploads."""
 
 from __future__ import annotations
 
@@ -104,12 +104,3 @@ def validate_review_payload(payload: dict) -> dict:
     return payload
 
 
-def validate_note_payload(payload: dict) -> dict:
-    """Validate note payload."""
-    payload["title"] = normalize_text(payload.get("title", ""))
-    payload["body"] = normalize_text(payload.get("body", ""))
-    if not (1 <= len(payload["title"]) <= 200):
-        raise ValueError("タイトルは1〜200文字です。")
-    if not (1 <= len(payload["body"]) <= 10000):
-        raise ValueError("本文は1〜10000文字です。")
-    return payload

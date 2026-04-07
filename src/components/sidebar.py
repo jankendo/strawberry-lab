@@ -19,7 +19,6 @@ _SIDEBAR_NAV_ITEMS: list[tuple[str, str, str, str]] = [
     ("reviews", "pages/02_reviews.py", "試食評価", "📝"),
     ("analytics", "pages/03_analytics.py", "分析", "📊"),
     ("pedigree", "pages/04_pedigree.py", "交配図", "🧬"),
-    ("notes", "pages/06_notes.py", "研究メモ", "📓"),
     ("settings", "pages/07_settings.py", "設定", "⚙️"),
 ]
 _MOBILE_TAB_ITEMS: list[tuple[str, str, str, str, str]] = [
@@ -30,7 +29,7 @@ _MOBILE_TAB_ITEMS: list[tuple[str, str, str, str, str]] = [
     ("settings", "pages/07_settings.py", "/settings", "設定", "⚙️"),
 ]
 _CORE_TAB_KEYS = {tab_key for tab_key, _, _, _, _ in _MOBILE_TAB_ITEMS if tab_key != "settings"}
-_SETTINGS_GROUP_PAGE_KEYS = {"pedigree", "notes", "settings"}
+_SETTINGS_GROUP_PAGE_KEYS = {"pedigree", "settings"}
 
 
 def _resolve_mobile_active_tab(active_page: str) -> str:

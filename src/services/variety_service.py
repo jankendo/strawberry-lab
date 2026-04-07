@@ -299,12 +299,9 @@ def would_create_cycle(parent_variety_id: str, child_variety_id: str) -> bool:
 
 
 def get_variety_stats(variety_id: str) -> dict:
-    """Fetch linked reviews and notes counts."""
+    """Fetch linked review counts."""
     client = get_user_client()
     review_count = (
         client.table("reviews").select("id", count="exact", head=True).eq("variety_id", variety_id).is_("deleted_at", "null").execute()
     )
-    note_count = (
-        client.table("notes").select("id", count="exact", head=True).eq("variety_id", variety_id).is_("deleted_at", "null").execute()
-    )
-    return {"review_count": int(review_count.count or 0), "note_count": int(note_count.count or 0), "as_of": date.today().isoformat()}
+    return {"review_count": int(review_count.count or 0), "as_of": date.today().isoformat()}

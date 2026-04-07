@@ -132,22 +132,16 @@ with st.container(border=True):
         render_section_title("関連ページ / アカウント")
         with st.expander("移動メニューを開く", expanded=False):
             st.page_link("pages/04_pedigree.py", label="🧬 交配図を開く", use_container_width=True)
-            st.page_link("pages/06_notes.py", label="📓 研究メモを開く", use_container_width=True)
             if st.button("ログアウト", use_container_width=True, type="secondary", key="settings_mobile_logout"):
                 logout_user()
     else:
-        render_section_title("その他ページ", "交配図・研究メモへの移動はこちらから行えます。")
-        nav_col_left, nav_col_right = st.columns(2, gap="small")
-        with nav_col_left:
-            st.page_link("pages/04_pedigree.py", label="🧬 交配図を開く", use_container_width=True)
-        with nav_col_right:
-            st.page_link("pages/06_notes.py", label="📓 研究メモを開く", use_container_width=True)
+        render_section_title("その他ページ", "交配図への移動はこちらから行えます。")
+        st.page_link("pages/04_pedigree.py", label="🧬 交配図を開く", use_container_width=True)
 
 table_labels = {
     "varieties": "品種マスタ",
     "variety_parent_links": "親子リンク",
     "reviews": "試食レビュー",
-    "notes": "研究メモ",
     "variety_scrape_runs": "品種取得実行履歴",
     "variety_scrape_logs": "品種取得ログ",
 }
@@ -155,7 +149,6 @@ export_tables = [
     "varieties",
     "variety_parent_links",
     "reviews",
-    "notes",
     "variety_scrape_runs",
     "variety_scrape_logs",
 ]

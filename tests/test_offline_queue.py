@@ -1,9 +1,11 @@
+from pathlib import Path
+
 from src.components import offline_queue
 from src.components.offline_queue import _normalize_event_name, _normalize_intent_id, _normalize_queue_key
 
 
 def test_normalize_queue_key_sanitizes_and_falls_back() -> None:
-    assert _normalize_queue_key(" notes/save queue ") == "notes-save-queue"
+    assert _normalize_queue_key(" varieties/image upload queue ") == "varieties-image-upload-queue"
     assert _normalize_queue_key("   ", fallback="fallback-queue") == "fallback-queue"
 
 
@@ -12,7 +14,7 @@ def test_normalize_intent_id_uses_fallback_when_input_invalid() -> None:
 
 
 def test_normalize_event_name_preserves_supported_separators() -> None:
-    assert _normalize_event_name("ichigodb:notes/save replay") == "ichigodb:notes-save-replay"
+    assert _normalize_event_name("ichigodb:varieties/image replay") == "ichigodb:varieties-image-replay"
 
 
 def test_render_offline_intent_queue_bridge_normalizes_replay_event_and_ack(monkeypatch) -> None:
@@ -68,3 +70,12 @@ def test_notify_offline_intent_replayed_normalizes_processed_ids(monkeypatch) ->
     assert captured["replayedCount"] == 2
     assert captured["clearAll"] is True
     assert captured["message"] == "replayed"
+
+
+def test_offline_queue_script_serializes_same_queue_operations() -> None:
+    source = Path("src/components/offline_queue.py").read_text(encoding="utf-8")
+
+    assert "runtime.operationChains = runtime.operationChains || {};" in source
+    assert "function queueRuntimeOperation(targetQueueKey, operation)" in source
+    assert "queueRuntimeOperation(instance.queueKey, async function () {" in source
+    assert "return await queueRuntimeOperation(queueKey, async function () {" in source

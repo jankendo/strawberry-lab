@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from src.utils.validation import validate_note_payload, validate_review_payload, validate_variety_payload
+from src.utils.validation import validate_review_payload, validate_variety_payload
 
 
 def _review_payload(tasted_date) -> dict:
@@ -47,9 +47,3 @@ def test_validate_review_payload_normalizes_tasted_date(input_date, expected: st
     payload = _review_payload(input_date)
     validated = validate_review_payload(payload)
     assert validated["tasted_date"] == expected
-
-
-def test_validate_note_payload_limits_title_length() -> None:
-    payload = {"title": "x" * 201, "body": "body"}
-    with pytest.raises(ValueError):
-        validate_note_payload(payload)

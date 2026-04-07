@@ -1,6 +1,6 @@
 # StrawberryLab
 
-Private single-user Streamlit app for strawberry variety research, tasting reviews, analytics, pedigree visualization, notes, and MAFF variety-registry ingestion.
+Private single-user Streamlit app for strawberry variety research, tasting reviews, analytics, pedigree visualization, and MAFF variety-registry ingestion.
 
 ## Stack
 - Python 3.12
@@ -34,17 +34,17 @@ Private single-user Streamlit app for strawberry variety research, tasting revie
 ## v4 updates (UI / behavior)
 - **Review save stability**: fixed a crash path when creating a review if the insert response does not return row data.
 - **Sidebar navigation cleanup**: removed Streamlit's default multipage sidebar menu (`showSidebarNavigation = false`) to avoid duplicate navigation entries.
-- **All-page UI refresh**: Home / 品種管理 / 試食評価 / 分析 / 交配図 / 研究メモ / 設定 now share upgraded header, card, and section styling for a more consistent experience.
+- **All-page UI refresh**: Home / 品種管理 / 試食評価 / 分析 / 交配図 / 設定 now share upgraded header, card, and section styling for a more consistent experience.
 
 ## v7 updates (UX / behavior)
 - **Quick actions on Home**: dashboard now highlights one-click page shortcuts and follow-up links for review/log operations.
-- **Consistent empty states**: Home / 品種管理 / 試食評価 / 分析 / 交配図 / 研究メモ / 設定 show guided empty-state cards with next steps.
+- **Consistent empty states**: Home / 品種管理 / 試食評価 / 分析 / 交配図 / 設定 show guided empty-state cards with next steps.
 - **Pedigree graph readability**: denser lineage graphs use improved layout spacing, viewport sizing, and click navigation reliability.
 
 ## v8 updates (UI redesign)
 - **Neutral-first design system**: default input/background now uses neutral colors, with strawberry accent reserved for primary actions and focus states.
 - **Sidebar hierarchy refresh**: active page is highlighted, and account actions (設定/ログアウト) are grouped in the user area.
-- **Information architecture updates**: Home / 品種管理 / 試食評価 / 分析 / 交配図 / 研究メモ / 設定 were reorganized for stronger action priority, clearer empty states, and improved table readability.
+- **Information architecture updates**: Home / 品種管理 / 試食評価 / 分析 / 交配図 / 設定 were reorganized for stronger action priority, clearer empty states, and improved table readability.
 
 ## v9 updates (native shell / PWA)
 - **Progressive native shell enhancement**: `inject_app_style()` now injects head metadata (manifest/theme/iOS web-app tags), touch icons, and guarded iOS scroll behavior.

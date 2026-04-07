@@ -22,7 +22,7 @@ There is no dedicated lint command configured in this repository.
 
 1. **Streamlit app shell + page entrypoints**
    - `Home.py` is the auth/bootstrap and dashboard entrypoint.
-   - Feature pages live in `pages/01_varieties.py`, `02_reviews.py`, `03_analytics.py`, `04_pedigree.py`, `06_notes.py`, `07_settings.py`.
+   - Feature pages live in `pages/01_varieties.py`, `02_reviews.py`, `03_analytics.py`, `04_pedigree.py`, `07_settings.py`.
    - Shared UI primitives (hero, badges, empty states, mobile behavior, styling) are centralized in `src/components/layout.py` and `src/components/sidebar.py`.
 
 2. **Service layer for business/data operations**
@@ -56,11 +56,11 @@ There is no dedicated lint command configured in this repository.
    - Keep CRUD and rules in `src/services/*`, not scattered in pages.
 
 3. **Soft-delete is the default data lifecycle**
-   - `varieties`, `reviews`, and `notes` use `deleted_at` for archive/restore flows.
+   - `varieties` and `reviews` use `deleted_at` for archive/restore flows.
    - Active-query paths consistently filter with `.is_("deleted_at", "null")`.
 
 4. **Validate payloads before writes**
-   - Use `validate_variety_payload`, `validate_review_payload`, `validate_note_payload` in `src/utils/validation.py` before insert/update logic.
+   - Use `validate_variety_payload` and `validate_review_payload` in `src/utils/validation.py` before insert/update logic.
 
 5. **Cache invalidation is mandatory for mutations**
    - When adding/changing mutating service functions, clear related cached functions and bump relevant scopes.
@@ -74,9 +74,9 @@ There is no dedicated lint command configured in this repository.
    - Upload paths should use validation + processing helpers (`validate_image_file`, `process_image`).
    - Respect enforced limits (variety images: 5, review images: 3).
 
-8. **Reviews and notes pages include offline intent queue + draft buffering**
+8. **Review save flow includes offline intent queue + draft buffering**
    - `src/components/offline_queue.py` and `draft_buffer.py` patterns are intentionally used for resilient saves.
-   - Preserve these flows when modifying save UX on `pages/02_reviews.py` and `pages/06_notes.py`.
+   - Preserve these flows when modifying save UX on `pages/02_reviews.py`.
 
 9. **UI/navigation is intentionally custom**
    - `.streamlit/config.toml` sets `showSidebarNavigation = false`.

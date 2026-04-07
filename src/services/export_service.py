@@ -14,7 +14,6 @@ EXPORT_TABLES = {
     "varieties": "varieties",
     "variety_parent_links": "variety_parent_links",
     "reviews": "reviews",
-    "notes": "notes",
     "variety_scrape_runs": "variety_scrape_runs",
     "variety_scrape_logs": "variety_scrape_logs",
 }
@@ -23,7 +22,6 @@ ORDER_COLUMNS = {
     "varieties": "created_at",
     "variety_parent_links": "created_at",
     "reviews": "created_at",
-    "notes": "created_at",
     "variety_scrape_runs": "started_at",
     "variety_scrape_logs": "created_at",
 }
