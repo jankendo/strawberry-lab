@@ -13,10 +13,15 @@ from src.services.cache_service import bump_cache_scopes, scoped_cache_data
 from src.services.export_service import clear_export_cache
 from src.services.pedigree_service import clear_pedigree_cache
 from src.utils.batching import chunked_sequence
+from src.utils.text_utils import build_search_key, normalize_search_text
 from src.utils.validation import validate_variety_payload
 
-LIST_TAB_FIELDS = "id,name,origin_prefecture,registration_number,application_number,description,characteristics_summary"
+LIST_TAB_FIELDS = (
+    "id,name,alias_names,japanese_name,origin_prefecture,registration_number,application_number,"
+    "description,characteristics_summary,developer,updated_at,created_at,registered_year,registration_date"
+)
 _POSTGREST_IN_CHUNK_SIZE = 200
+_LIST_TAB_INDEX_BATCH_SIZE = 1000
 
 
 def _apply_variety_filters(
@@ -39,6 +44,29 @@ def _apply_variety_filters(
     if tags:
         query = query.contains("tags", list(tags))
     return query
+
+
+def _build_variety_search_key(row: dict) -> str:
+    return build_search_key(
+        [
+            row.get("name"),
+            row.get("alias_names") or [],
+            row.get("japanese_name"),
+            row.get("registration_number"),
+            row.get("application_number"),
+            row.get("developer"),
+            row.get("description"),
+            row.get("characteristics_summary"),
+        ]
+    )
+
+
+def _coerce_variety_sort_value(value: object) -> object:
+    if value in {None, ""}:
+        return ""
+    if isinstance(value, (int, float)):
+        return value
+    return normalize_search_text(str(value))
 
 
 @scoped_cache_data(ttl=300, scopes="varieties")
@@ -80,36 +108,78 @@ def list_varieties(
 
 
 @scoped_cache_data(ttl=900, scopes="varieties")
+def list_variety_list_index() -> list[dict]:
+    """Return a cached lightweight index for the varieties list tab."""
+    client = get_user_client()
+    rows: list[dict] = []
+    start = 0
+    while True:
+        chunk = (
+            client.table("varieties")
+            .select(LIST_TAB_FIELDS)
+            .is_("deleted_at", "null")
+            .range(start, start + _LIST_TAB_INDEX_BATCH_SIZE - 1)
+            .execute()
+            .data
+            or []
+        )
+        rows.extend({**row, "_search_key": _build_variety_search_key(row)} for row in chunk)
+        if len(chunk) < _LIST_TAB_INDEX_BATCH_SIZE:
+            break
+        start += _LIST_TAB_INDEX_BATCH_SIZE
+    return rows
+
+
+@scoped_cache_data(ttl=180, scopes=("varieties", "reviews"))
+def get_discovered_variety_ids() -> list[str]:
+    """Return IDs of varieties that have at least one active review."""
+    client = get_user_client()
+    reviewed_rows = client.table("reviews").select("variety_id").is_("deleted_at", "null").execute().data or []
+    return list(
+        dict.fromkeys(
+            str(row.get("variety_id"))
+            for row in reviewed_rows
+            if row.get("variety_id")
+        )
+    )
+
+
+@scoped_cache_data(ttl=900, scopes=("varieties", "reviews"))
 def list_varieties_for_list_tab(
     *,
     keyword: str | None = None,
     prefecture: str | None = None,
+    discovery_filter: str = "すべて",
     sort_field: str = "updated_at",
     sort_desc: bool = True,
-) -> tuple[list[dict], int]:
-    """List all active varieties for list tab filtering."""
-    client = get_user_client()
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[dict], int, list[str]]:
+    """List active varieties for the list tab using cached local filtering."""
     allowed_sort = {"name", "updated_at", "registered_year", "created_at", "registration_date"}
     if sort_field not in allowed_sort:
         sort_field = "updated_at"
+    normalized_keyword = normalize_search_text(keyword or "")
+    discovered_ids = set(get_discovered_variety_ids())
+    rows = [dict(row) for row in list_variety_list_index()]
+    if normalized_keyword:
+        rows = [row for row in rows if normalized_keyword in str(row.get("_search_key") or "")]
+    if prefecture:
+        rows = [row for row in rows if str(row.get("origin_prefecture") or "") == prefecture]
+    if discovery_filter == "発見済み":
+        rows = [row for row in rows if str(row.get("id") or "") in discovered_ids]
+    elif discovery_filter == "未発見":
+        rows = [row for row in rows if str(row.get("id") or "") not in discovered_ids]
 
-    batch_size = 500
-    rows: list[dict] = []
-    start = 0
-    while True:
-        query = _apply_variety_filters(
-            client.table("varieties").select(LIST_TAB_FIELDS),
-            include_deleted=False,
-            keyword=keyword,
-            prefecture=prefecture,
-            tags=None,
-        )
-        chunk = query.order(sort_field, desc=sort_desc).range(start, start + batch_size - 1).execute().data or []
-        rows.extend(chunk)
-        if len(chunk) < batch_size:
-            break
-        start += batch_size
-    return rows, len(rows)
+    rows.sort(key=lambda row: _coerce_variety_sort_value(row.get(sort_field)), reverse=sort_desc)
+    rows.sort(key=lambda row: row.get(sort_field) in {None, ""})
+    matched_ids = [str(row["id"]) for row in rows if row.get("id")]
+    total = len(rows)
+    normalized_page = max(int(page), 1)
+    normalized_page_size = max(int(page_size), 1)
+    page_start = (normalized_page - 1) * normalized_page_size
+    paged_rows = rows[page_start : page_start + normalized_page_size]
+    return paged_rows, total, matched_ids
 
 
 @scoped_cache_data(ttl=120, scopes="varieties")
@@ -193,8 +263,7 @@ def get_pokedex_progress() -> dict[str, int]:
         .count
         or 0
     )
-    reviewed_rows = client.table("reviews").select("variety_id").is_("deleted_at", "null").execute().data or []
-    discovered_ids = {row.get("variety_id") for row in reviewed_rows if row.get("variety_id")}
+    discovered_ids = set(get_discovered_variety_ids())
     discovered_count = len(discovered_ids)
     completion_rate = int((discovered_count / total_varieties) * 100) if total_varieties else 0
     return {
@@ -207,9 +276,11 @@ def get_pokedex_progress() -> dict[str, int]:
 
 def _clear_variety_related_caches() -> None:
     list_varieties.clear()
+    list_variety_list_index.clear()
     list_varieties_for_list_tab.clear()
     list_active_varieties.clear()
     get_variety_detail.clear()
+    get_discovered_variety_ids.clear()
     get_pokedex_progress.clear()
     get_review_counts_for_varieties.clear()
     get_latest_review_summary_for_varieties.clear()

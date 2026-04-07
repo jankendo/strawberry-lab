@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import uuid4
 
 import streamlit as st
@@ -49,6 +50,7 @@ from src.services.variety_service import (
     update_variety,
 )
 from src.utils.navigation import build_review_variety_query_params, resolve_selected_variety_query_param
+from src.utils.text_utils import build_search_key, normalize_search_text
 
 try:
     from src.components.layout import (
@@ -187,6 +189,7 @@ _VARIETY_PENDING_UPLOAD_INTENT_REMOVALS_KEY = "variety_pending_upload_intent_rem
 _VARIETY_EDIT_TARGET_KEY = "variety_edit_target_id"
 _VARIETY_EDIT_TARGET_REQUEST_KEY = "variety_edit_target_requested_id"
 _VARIETY_NEW_TARGET = "新規作成"
+_VARIETY_LIST_DEFAULT_PAGE_SIZE = 50
 
 
 def _resolve_select_index(options: list[str], value: object, *, fallback: int = 0) -> int:
@@ -216,6 +219,41 @@ def _resolve_variety_edit_target(active_varieties: list[dict]) -> str:
     if selected_from_list in options:
         return selected_from_list
     return _VARIETY_NEW_TARGET
+
+
+def _reset_variety_list_page() -> None:
+    st.session_state["variety_list_page"] = 1
+
+
+def _ensure_variety_list_pagination_defaults() -> None:
+    if "variety_list_page_size" not in st.session_state:
+        st.session_state["variety_list_page_size"] = _VARIETY_LIST_DEFAULT_PAGE_SIZE
+    if "variety_list_page" not in st.session_state:
+        st.session_state["variety_list_page"] = 1
+
+
+def _build_variety_option_search_key(variety: dict) -> str:
+    return build_search_key([variety.get("name"), variety.get("alias_names") or []])
+
+
+def _filter_variety_selection_options(
+    varieties: Sequence[dict],
+    keyword: str,
+    *,
+    include_ids: Sequence[str] = (),
+) -> list[dict]:
+    normalized_keyword = normalize_search_text(keyword or "")
+    forced_ids = {str(value) for value in include_ids if str(value).strip()}
+    filtered: list[dict] = []
+    seen_ids: set[str] = set()
+    for variety in varieties:
+        variety_id = str(variety.get("id") or "").strip()
+        if not variety_id or variety_id in seen_ids:
+            continue
+        if variety_id in forced_ids or not normalized_keyword or normalized_keyword in _build_variety_option_search_key(variety):
+            filtered.append(variety)
+            seen_ids.add(variety_id)
+    return filtered
 
 
 def _resolve_pending_variety_upload_task() -> dict | None:
@@ -416,25 +454,27 @@ def _render_variety_filters(*, mobile_client: bool) -> tuple[str, str, str]:
     with st.container(border=True):
         render_section_title("フィルタ", "条件を指定して表示対象を絞り込みます。")
         if mobile_client:
-            keyword = st.text_input("キーワード", key="variety_keyword")
-            prefecture = st.selectbox("都道府県", [""] + PREFECTURES, key="variety_pref_filter")
+            keyword = st.text_input("キーワード", key="variety_keyword", on_change=_reset_variety_list_page)
+            prefecture = st.selectbox("都道府県", [""] + PREFECTURES, key="variety_pref_filter", on_change=_reset_variety_list_page)
             discovery_filter = st.radio(
                 "開示モード",
                 _DISCOVERY_FILTER_OPTIONS,
                 key="variety_discovery_filter",
+                on_change=_reset_variety_list_page,
             )
         else:
             f1, f2, f3 = st.columns([2, 1, 1.4], gap="medium")
             with f1:
-                keyword = st.text_input("キーワード", key="variety_keyword")
+                keyword = st.text_input("キーワード", key="variety_keyword", on_change=_reset_variety_list_page)
             with f2:
-                prefecture = st.selectbox("都道府県", [""] + PREFECTURES, key="variety_pref_filter")
+                prefecture = st.selectbox("都道府県", [""] + PREFECTURES, key="variety_pref_filter", on_change=_reset_variety_list_page)
             with f3:
                 discovery_filter = st.radio(
                     "開示モード",
                     _DISCOVERY_FILTER_OPTIONS,
                     horizontal=True,
                     key="variety_discovery_filter",
+                    on_change=_reset_variety_list_page,
                 )
     return keyword, prefecture, discovery_filter
 
@@ -786,7 +826,9 @@ def _render_variety_list_empty_state(discovery_filter: str) -> None:
 
 def _render_variety_list_section(*, mobile_client: bool) -> None:
     render_section_title("品種一覧")
+    _ensure_variety_list_pagination_defaults()
     keyword, prefecture, discovery_filter = _render_variety_filters(mobile_client=mobile_client)
+    page, page_size = render_pagination_controls("variety_list")
 
     if "variety_selected_from_list" not in st.session_state:
         st.session_state["variety_selected_from_list"] = ""
@@ -807,12 +849,25 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
             mobile_only=True,
         )
 
-    rows, total = list_varieties_for_list_tab(
+    rows, total, matched_ids = list_varieties_for_list_tab(
         keyword=keyword or None,
         prefecture=prefecture or None,
+        discovery_filter=discovery_filter,
+        page=page,
+        page_size=page_size,
     )
+    if total > 0 and (page - 1) * page_size >= total:
+        st.session_state["variety_list_page"] = 1
+        st.rerun()
 
     selected_id = st.session_state.get("variety_selected_from_list", "")
+    matched_id_set = set(matched_ids)
+    if selected_id and selected_id not in matched_id_set:
+        selected_id = matched_ids[0] if matched_ids else ""
+        st.session_state["variety_selected_from_list"] = selected_id
+        if mobile_client and not selected_id:
+            st.session_state["variety_mobile_panel"] = "list"
+
     count_targets = [row["id"] for row in rows]
     if selected_id and selected_id not in count_targets:
         count_targets.append(selected_id)
@@ -829,19 +884,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
         ]
     )
     st.progress(completion_ratio)
-
-    if discovery_filter == "発見済み":
-        visible_rows = [row for row in rows if review_counts.get(row["id"], 0) > 0]
-    elif discovery_filter == "未発見":
-        visible_rows = [row for row in rows if review_counts.get(row["id"], 0) == 0]
-    else:
-        visible_rows = rows
-
-    if selected_id and not any(row["id"] == selected_id for row in visible_rows):
-        selected_id = visible_rows[0]["id"] if visible_rows else ""
-        st.session_state["variety_selected_from_list"] = selected_id
-        if mobile_client and not selected_id:
-            st.session_state["variety_mobile_panel"] = "list"
+    visible_rows = rows
 
     mobile_panel = st.session_state.get("variety_mobile_panel", "list") if mobile_client else "split"
     if mobile_client and mobile_panel == "detail" and selected_id:
@@ -884,18 +927,27 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
             )
         else:
             st.session_state["variety_mobile_panel"] = "list"
-            render_section_title("一覧", f"表示件数: {len(visible_rows)}件 / 全体: {total}件")
+            render_section_title("一覧", f"表示件数: {len(visible_rows)}件 / 条件一致: {total}件")
             if visible_rows:
-                discovered_rows = [row for row in visible_rows if int(review_counts.get(row["id"], 0)) > 0]
-                if discovered_rows:
-                    quick_jump_options = [""] + [str(row["id"]) for row in discovered_rows[:50]]
+                quick_jump_search = st.text_input(
+                    "クイックジャンプ検索",
+                    key="variety_mobile_quick_jump_keyword",
+                    placeholder="ひらがな・カタカナで検索",
+                )
+                jump_varieties = _filter_variety_selection_options(
+                    list_active_varieties(),
+                    quick_jump_search,
+                    include_ids=(str(st.session_state.get("variety_mobile_quick_jump") or ""),),
+                )
+                if jump_varieties:
+                    quick_jump_options = [""] + [str(row["id"]) for row in jump_varieties[:50]]
                     quick_jump_id = st.selectbox(
-                        "図鑑クイックジャンプ（発見済み）",
+                        "図鑑クイックジャンプ",
                         quick_jump_options,
                         format_func=lambda x: (
                             "選択してください"
                             if not x
-                            else _clean_text(next((row.get("name") for row in discovered_rows if str(row["id"]) == str(x)), "")) or str(x)
+                            else _clean_text(next((row.get("name") for row in jump_varieties if str(row["id"]) == str(x)), "")) or str(x)
                         ),
                         key="variety_mobile_quick_jump",
                     )
@@ -924,7 +976,7 @@ def _render_variety_list_section(*, mobile_client: bool) -> None:
     else:
         list_col, detail_col = st.columns([1.4, 1], gap="large")
         with list_col:
-            render_section_title("一覧", f"表示件数: {len(visible_rows)}件 / 全体: {total}件")
+            render_section_title("一覧", f"表示件数: {len(visible_rows)}件 / 条件一致: {total}件")
             if visible_rows:
                 for row in visible_rows:
                     review_count = int(review_counts.get(row["id"], 0))
@@ -959,8 +1011,19 @@ def _render_variety_edit_section() -> None:
     render_section_title("作成・編集")
 
     active = list_active_varieties()
-    edit_options = [_VARIETY_NEW_TARGET] + [str(v["id"]) for v in active]
     requested_edit_target = str(st.session_state.pop(_VARIETY_EDIT_TARGET_REQUEST_KEY, "") or "").strip()
+    current_edit_target = str(st.session_state.get(_VARIETY_EDIT_TARGET_KEY) or "").strip()
+    edit_search = st.text_input(
+        "編集対象を絞り込む",
+        key="variety_edit_target_keyword",
+        placeholder="ひらがな・カタカナで検索",
+    )
+    filtered_active = _filter_variety_selection_options(
+        active,
+        edit_search,
+        include_ids=(requested_edit_target, current_edit_target),
+    )
+    edit_options = [_VARIETY_NEW_TARGET] + [str(v["id"]) for v in filtered_active]
     if requested_edit_target in edit_options:
         st.session_state[_VARIETY_EDIT_TARGET_KEY] = requested_edit_target
     elif str(st.session_state.get(_VARIETY_EDIT_TARGET_KEY) or "").strip() not in edit_options:

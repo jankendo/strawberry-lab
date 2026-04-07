@@ -9,6 +9,7 @@ class _ChunkingTable:
         self.client = client
         self._filters: list[tuple[str, str, object]] = []
         self._orders: list[tuple[str, bool]] = []
+        self._range: tuple[int, int] | None = None
 
     def select(self, *_args, **_kwargs):
         return self
@@ -27,6 +28,10 @@ class _ChunkingTable:
         self._orders.append((column, bool(desc)))
         return self
 
+    def range(self, start: int, end: int):
+        self._range = (int(start), int(end))
+        return self
+
     def execute(self):
         rows = [dict(row) for row in self.client.rows.get(self.name, [])]
         for mode, column, value in self._filters:
@@ -39,6 +44,9 @@ class _ChunkingTable:
                     rows = [row for row in rows if row.get(column) is value]
         for column, desc in reversed(self._orders):
             rows.sort(key=lambda row: row.get(column), reverse=desc)
+        if self._range is not None:
+            start, end = self._range
+            rows = rows[start : end + 1]
         return SimpleNamespace(data=rows, count=len(rows))
 
 
@@ -84,3 +92,99 @@ def test_get_latest_review_summary_for_varieties_chunks_large_id_lists(monkeypat
     assert len([call for call in client.in_calls if call[0] == "reviews"]) == 2
     assert latest["id-0"]["variety_id"] == "id-0"
     assert latest["id-204"]["variety_id"] == "id-204"
+
+
+def test_list_varieties_for_list_tab_matches_hiragana_keyword_to_katakana_name(monkeypatch) -> None:
+    client = _ChunkingClient(
+        {
+            "varieties": [
+                {
+                    "id": "id-1",
+                    "name": "サガホノカ",
+                    "alias_names": [],
+                    "japanese_name": None,
+                    "origin_prefecture": "佐賀県",
+                    "registration_number": "111",
+                    "application_number": "A-1",
+                    "description": "甘い品種",
+                    "characteristics_summary": "香りが良い",
+                    "developer": "佐賀",
+                    "updated_at": "2026-04-07T00:00:00+00",
+                    "created_at": "2026-04-06T00:00:00+00",
+                    "registered_year": 2026,
+                    "registration_date": "2026-04-01",
+                    "deleted_at": None,
+                },
+                {
+                    "id": "id-2",
+                    "name": "ベニホッペ",
+                    "alias_names": [],
+                    "japanese_name": None,
+                    "origin_prefecture": "静岡県",
+                    "registration_number": "222",
+                    "application_number": "A-2",
+                    "description": "酸味あり",
+                    "characteristics_summary": "果肉がしっかり",
+                    "developer": "静岡",
+                    "updated_at": "2026-04-06T00:00:00+00",
+                    "created_at": "2026-04-05T00:00:00+00",
+                    "registered_year": 2025,
+                    "registration_date": "2025-04-01",
+                    "deleted_at": None,
+                },
+            ]
+        }
+    )
+    monkeypatch.setattr(variety_service, "get_user_client", lambda: client)
+    monkeypatch.setattr(variety_service, "get_discovered_variety_ids", lambda: [])
+    variety_service.list_variety_list_index.clear()
+    variety_service.list_varieties_for_list_tab.clear()
+
+    rows, total, matched_ids = variety_service.list_varieties_for_list_tab(keyword="さが")
+
+    assert total == 1
+    assert [row["id"] for row in rows] == ["id-1"]
+    assert matched_ids == ["id-1"]
+
+
+def test_list_varieties_for_list_tab_filters_discovered_rows_before_paging(monkeypatch) -> None:
+    client = _ChunkingClient(
+        {
+            "varieties": [
+                {
+                    "id": f"id-{index}",
+                    "name": f"品種{index}",
+                    "alias_names": [],
+                    "japanese_name": None,
+                    "origin_prefecture": "佐賀県",
+                    "registration_number": str(index),
+                    "application_number": f"A-{index}",
+                    "description": "",
+                    "characteristics_summary": "",
+                    "developer": "",
+                    "updated_at": f"2026-04-{(index % 9) + 1:02d}T00:00:00+00",
+                    "created_at": f"2026-03-{(index % 9) + 1:02d}T00:00:00+00",
+                    "registered_year": 2026,
+                    "registration_date": f"2026-04-{(index % 9) + 1:02d}",
+                    "deleted_at": None,
+                }
+                for index in range(6)
+            ]
+        }
+    )
+    monkeypatch.setattr(variety_service, "get_user_client", lambda: client)
+    monkeypatch.setattr(variety_service, "get_discovered_variety_ids", lambda: ["id-1", "id-3", "id-5"])
+    variety_service.list_variety_list_index.clear()
+    variety_service.list_varieties_for_list_tab.clear()
+
+    rows, total, matched_ids = variety_service.list_varieties_for_list_tab(
+        discovery_filter="発見済み",
+        sort_field="name",
+        sort_desc=False,
+        page=1,
+        page_size=2,
+    )
+
+    assert total == 3
+    assert matched_ids == ["id-1", "id-3", "id-5"]
+    assert [row["id"] for row in rows] == ["id-1", "id-3"]
