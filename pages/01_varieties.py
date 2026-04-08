@@ -191,6 +191,8 @@ _VARIETY_ASSET_CLEAR_TOKEN_KEY = "variety_asset_clear_token"
 _VARIETY_IMAGE_UPLOAD_QUEUE_KEY = "variety-image-upload-queue"
 _VARIETY_IMAGE_UPLOAD_REPLAY_EVENT = "ichigodb:variety-image-upload-replay-request"
 _VARIETY_PENDING_UPLOAD_INTENT_REMOVALS_KEY = "variety_pending_upload_intent_removals"
+_VARIETY_ACTIVE_SECTION_KEY = "variety_active_section"
+_VARIETY_ACTIVE_SECTION_REQUEST_KEY = "variety_active_section_requested"
 _VARIETY_EDIT_TARGET_KEY = "variety_edit_target_id"
 _VARIETY_EDIT_TARGET_REQUEST_KEY = "variety_edit_target_requested_id"
 _VARIETY_NEW_TARGET = "新規作成"
@@ -334,7 +336,23 @@ def _set_variety_edit_target(target_id: object, *, switch_section: bool = True) 
     if normalized:
         st.session_state["variety_selected_from_list"] = normalized
     if switch_section:
-        st.session_state["variety_active_section"] = "作成・編集"
+        _queue_variety_active_section("作成・編集")
+
+
+def _queue_variety_active_section(section: object) -> None:
+    normalized = str(section or "").strip()
+    if normalized in _VARIETY_SECTION_ORDER:
+        st.session_state[_VARIETY_ACTIVE_SECTION_REQUEST_KEY] = normalized
+
+
+def _consume_variety_active_section_request() -> None:
+    requested = str(st.session_state.pop(_VARIETY_ACTIVE_SECTION_REQUEST_KEY, "") or "").strip()
+    current = str(st.session_state.get(_VARIETY_ACTIVE_SECTION_KEY) or "").strip()
+    if requested in _VARIETY_SECTION_ORDER:
+        st.session_state[_VARIETY_ACTIVE_SECTION_KEY] = requested
+        return
+    if current not in _VARIETY_SECTION_ORDER:
+        st.session_state[_VARIETY_ACTIVE_SECTION_KEY] = _VARIETY_SECTION_ORDER[0]
 
 
 def _resolve_variety_edit_target(active_varieties: list[dict]) -> str:
@@ -897,9 +915,10 @@ render_offline_intent_queue_bridge(
 
 def _render_variety_section_switcher(*, mobile_client: bool) -> str:
     _ = mobile_client
+    _consume_variety_active_section_request()
     return render_section_switcher(
         _VARIETY_SECTION_ORDER,
-        key="variety_active_section",
+        key=_VARIETY_ACTIVE_SECTION_KEY,
         title="表示セクション",
         description=None,
         mobile_label="表示セクション",

@@ -29,7 +29,6 @@ from src.components.layout import (
     render_surface,
 )
 from src.components.pagination import render_pagination_controls
-from src.components.radar_input import render_radar_input
 from src.components.sidebar import render_primary_nav, render_sidebar
 from src.components.tables import is_mobile_client, render_table
 from src.constants.ui import EMPTY_STATE_MESSAGE
@@ -48,16 +47,6 @@ from src.utils.variety_options import filter_variety_selection_options
 _PENDING_DUPLICATE_PAYLOAD_KEY = "reviews_pending_duplicate_payload"
 _PENDING_DUPLICATE_FILES_KEY = "reviews_pending_duplicate_files"
 _SCORE_GUIDE_TEXT = "1=弱い / 3=普通 / 5=強い"
-_REVIEW_SCORE_BASELINE_KEY = "review_score_baseline"
-_REVIEW_SCORE_AXIS_KEYS = ("sweetness", "sourness", "aroma", "texture", "appearance")
-_REVIEW_SCORE_FIELD_KEYS = {axis_key: f"review_{axis_key}" for axis_key in _REVIEW_SCORE_AXIS_KEYS}
-_REVIEW_SCORE_RADAR_LABELS = {
-    "sweetness": "甘味",
-    "sourness": "酸味",
-    "aroma": "香り",
-    "texture": "食感",
-    "appearance": "見た目",
-}
 _REVIEW_DRAFT_KEY = "reviews-entry-form"
 _REVIEW_DRAFT_CLEAR_KEY = "reviews_clear_draft_on_render"
 _REVIEW_DRAFT_DISCARD_NOTICE_KEY = "reviews_draft_discard_notice"
@@ -83,13 +72,6 @@ _REVIEW_DRAFT_FIELDS = [
     {"name": "price_jpy", "label": "価格（円）", "kind": "number"},
     {"name": "comment", "label": "コメント", "kind": "textarea"},
 ]
-_SCORE_LEVEL_LABELS = {
-    1: "弱い",
-    2: "やや弱い",
-    3: "普通",
-    4: "やや強い",
-    5: "強い",
-}
 _REVIEWS_RETRIABLE_SAVE_ERROR_HINTS = (
     "connection",
     "connect",
@@ -264,59 +246,6 @@ def _normalize_pending_payload(payload: dict) -> dict:
     normalized_payload = payload.copy()
     normalized_payload["tasted_date"] = normalize_review_tasted_date(normalized_payload["tasted_date"])
     return normalized_payload
-
-
-def _score_level_label(value: int) -> str:
-    return _SCORE_LEVEL_LABELS.get(int(value), "普通")
-
-
-def _normalize_score_value(value: object, *, fallback: int = 3) -> int:
-    try:
-        numeric = int(round(float(value)))
-    except (TypeError, ValueError):
-        numeric = fallback
-    return max(1, min(5, numeric))
-
-
-def _coerce_score_map(raw_scores: Mapping[str, object] | None, *, fallback: dict[str, int]) -> dict[str, int]:
-    source = raw_scores if isinstance(raw_scores, Mapping) else {}
-    return {
-        axis_key: _normalize_score_value(source.get(axis_key), fallback=fallback[axis_key])
-        for axis_key in _REVIEW_SCORE_AXIS_KEYS
-    }
-
-
-def _score_state_snapshot() -> dict[str, int]:
-    return {
-        axis_key: _normalize_score_value(
-            st.session_state.get(_REVIEW_SCORE_FIELD_KEYS[axis_key]),
-            fallback=3,
-        )
-        for axis_key in _REVIEW_SCORE_AXIS_KEYS
-    }
-
-
-def _apply_score_state(scores: Mapping[str, object]) -> None:
-    for axis_key in _REVIEW_SCORE_AXIS_KEYS:
-        st.session_state[_REVIEW_SCORE_FIELD_KEYS[axis_key]] = _normalize_score_value(
-            scores.get(axis_key),
-            fallback=3,
-        )
-
-
-def _resolve_score_values(
-    *,
-    slider_scores: dict[str, int],
-    radar_scores: dict[str, int] | None,
-    baseline_scores: dict[str, int],
-) -> dict[str, int]:
-    if radar_scores is None:
-        return slider_scores
-    slider_changed = slider_scores != baseline_scores
-    radar_changed = radar_scores != baseline_scores
-    if radar_changed and not slider_changed:
-        return radar_scores
-    return slider_scores
 
 
 def _is_retriable_save_error(exc: Exception) -> bool:
@@ -703,46 +632,11 @@ with tab_edit:
                     )
 
                 st.markdown("##### 2) 味覚スコア（必須）")
-                slider_scores_from_state = _score_state_snapshot()
-                baseline_scores = _coerce_score_map(
-                    st.session_state.get(_REVIEW_SCORE_BASELINE_KEY),
-                    fallback=slider_scores_from_state,
-                )
-                radar_scores = _coerce_score_map(
-                    render_radar_input(
-                        key="review_score_radar",
-                        value=slider_scores_from_state,
-                        axis_keys=_REVIEW_SCORE_AXIS_KEYS,
-                        axis_labels=_REVIEW_SCORE_RADAR_LABELS,
-                        min_value=1,
-                        max_value=5,
-                        default_value=3,
-                        step=1,
-                        height=320 if mobile_client else 360,
-                        use_native_fallback=False,
-                    ),
-                    fallback=slider_scores_from_state,
-                )
-                resolved_scores = _resolve_score_values(
-                    slider_scores=slider_scores_from_state,
-                    radar_scores=radar_scores,
-                    baseline_scores=baseline_scores,
-                )
-                if resolved_scores != slider_scores_from_state:
-                    _apply_score_state(resolved_scores)
                 sweetness = st.slider("甘味 *", 1, 5, 3, key="review_sweetness", help=_SCORE_GUIDE_TEXT)
                 sourness = st.slider("酸味 *", 1, 5, 3, key="review_sourness", help=_SCORE_GUIDE_TEXT)
                 aroma = st.slider("香り *", 1, 5, 3, key="review_aroma", help=_SCORE_GUIDE_TEXT)
                 texture = st.slider("食感 *", 1, 5, 3, key="review_texture", help=_SCORE_GUIDE_TEXT)
                 appearance = st.slider("見た目 *", 1, 5, 3, key="review_appearance", help=_SCORE_GUIDE_TEXT)
-                score_snapshot = {
-                    "sweetness": sweetness,
-                    "sourness": sourness,
-                    "aroma": aroma,
-                    "texture": texture,
-                    "appearance": appearance,
-                }
-                st.session_state[_REVIEW_SCORE_BASELINE_KEY] = score_snapshot.copy()
                 overall = max(
                     1,
                     min(
